@@ -1,16 +1,35 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // ============================================
 // ARMS - SUPABASE CONFIGURATION
+// Lazy initialization to prevent build-time crashes
 // ============================================
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+let _supabase: SupabaseClient | null = null;
+export const supabase = new Proxy({} as SupabaseClient, {
+    get(_, prop) {
+        if (!_supabase) {
+            _supabase = createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+            );
+        }
+        return Reflect.get(_supabase, prop);
+    }
+});
 
-// C2B M-Pesa Supabase Client
-const c2bSupabaseUrl = process.env.NEXT_PUBLIC_C2B_SUPABASE_URL || 'https://pxcdaivlvltmdifxietb.supabase.co';
-const c2bSupabaseAnonKey = process.env.NEXT_PUBLIC_C2B_SUPABASE_ANON_KEY || '';
-export const c2bSupabase = createClient(c2bSupabaseUrl, c2bSupabaseAnonKey);
+// C2B M-Pesa Supabase Client (lazy)
+let _c2bSupabase: SupabaseClient | null = null;
+export const c2bSupabase = new Proxy({} as SupabaseClient, {
+    get(_, prop) {
+        if (!_c2bSupabase) {
+            _c2bSupabase = createClient(
+                process.env.NEXT_PUBLIC_C2B_SUPABASE_URL || 'https://pxcdaivlvltmdifxietb.supabase.co',
+                process.env.NEXT_PUBLIC_C2B_SUPABASE_ANON_KEY!
+            );
+        }
+        return Reflect.get(_c2bSupabase, prop);
+    }
+});
 
 // ==================== AUTHENTICATION ====================
 export async function loginUser(username: string, password: string) {
