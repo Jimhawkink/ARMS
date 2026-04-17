@@ -1,101 +1,114 @@
-import Image from "next/image";
+'use client';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { loginUser, getSettings } from '@/lib/supabase';
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+export default function LoginPage() {
+    const router = useRouter();
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [currentTime, setCurrentTime] = useState('');
+    const [currentDate, setCurrentDate] = useState('');
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    useEffect(() => {
+        const update = () => {
+            const now = new Date();
+            setCurrentTime(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }));
+            setCurrentDate(now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+        };
+        update();
+        const interval = setInterval(update, 1000);
+        const user = localStorage.getItem('arms_user');
+        if (user) router.push('/dashboard');
+        return () => clearInterval(interval);
+    }, [router]);
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setError('');
+        if (!username || !password) { setError('Please enter username and password'); setIsLoading(false); return; }
+        try {
+            const user = await loginUser(username, password);
+            if (user) {
+                localStorage.setItem('arms_user', JSON.stringify({ userId: user.user_id, userName: user.user_name, name: user.name, userType: user.user_type }));
+                router.push('/dashboard');
+            } else { setError('Invalid username or password'); }
+        } catch (err) { console.error(err); setError('Connection error. Please try again.'); }
+        setIsLoading(false);
+    };
+
+    return (
+        <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 30%, #f0f9ff 60%, #ecfdf5 100%)' }}>
+            {/* Animated orbs */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-pulse" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.12), transparent)' }}></div>
+                <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-pulse" style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1), transparent)', animationDelay: '1s' }}></div>
+                {/* Floating icons */}
+                <div className="absolute top-20 left-[10%] text-4xl opacity-[0.07] animate-bounce" style={{ animationDuration: '3s' }}>🏠</div>
+                <div className="absolute top-40 right-[15%] text-3xl opacity-[0.07] animate-bounce" style={{ animationDuration: '4s', animationDelay: '0.5s' }}>🔑</div>
+                <div className="absolute bottom-32 left-[20%] text-3xl opacity-[0.07] animate-bounce" style={{ animationDuration: '3.5s', animationDelay: '1s' }}>🏢</div>
+                <div className="absolute bottom-48 right-[10%] text-4xl opacity-[0.07] animate-bounce" style={{ animationDuration: '4.5s' }}>📋</div>
+            </div>
+
+            <div className="relative z-10 w-full max-w-md animate-fadeIn">
+                <div className="bg-white rounded-3xl shadow-xl shadow-indigo-500/5 border border-gray-100 overflow-hidden">
+                    {/* Header */}
+                    <div className="px-8 py-8 text-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1, #7c3aed)' }}>
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                        <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2"></div>
+                        <div className="relative inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4 shadow-lg border border-white/20 bg-white/15 backdrop-blur-sm">
+                            <span className="text-5xl">🏘️</span>
+                        </div>
+                        <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">ARMS</h1>
+                        <p className="text-indigo-200 text-sm font-medium">Alpha Rental Management System</p>
+                        <div className="mt-3 flex items-center justify-center gap-4 text-white/60 text-xs">
+                            <span>🕐 {currentTime}</span>
+                            <span className="w-1 h-1 rounded-full bg-white/30"></span>
+                            <span>📅 {currentDate}</span>
+                        </div>
+                    </div>
+
+                    {/* Form */}
+                    <div className="px-8 py-8">
+                        <form onSubmit={handleLogin} className="space-y-5">
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 mb-1.5 block">👤 Username</label>
+                                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Enter your username" className="input-field" />
+                            </div>
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 mb-1.5 block">🔐 Password</label>
+                                <div className="relative">
+                                    <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" className="input-field pr-12" />
+                                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xl p-1 hover:scale-110 transition-transform">
+                                        {showPassword ? '🙈' : '👁️'}
+                                    </button>
+                                </div>
+                            </div>
+                            {error && (
+                                <div className="flex items-center gap-2 p-3 rounded-xl text-sm font-medium animate-shake bg-red-50 border border-red-200 text-red-700">
+                                    ⚠️ {error}
+                                </div>
+                            )}
+                            <button type="submit" disabled={isLoading} className="btn-primary w-full py-3.5 text-base flex items-center justify-center gap-2 disabled:opacity-60">
+                                {isLoading ? <><div className="spinner" style={{ width: 20, height: 20 }}></div> Signing in...</> : <>🏘️ Sign In to ARMS →</>}
+                            </button>
+                        </form>
+                        <div className="mt-5 text-center text-xs text-gray-400 flex items-center justify-center gap-1.5">🔒 Secure Property Management</div>
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="mt-5 text-center">
+                    <div className="bg-white/70 backdrop-blur-sm rounded-2xl px-5 py-3 border border-gray-100 shadow-sm inline-block">
+                        <p className="text-gray-700 font-semibold text-sm">💎 Alpha Solutions</p>
+                        <p className="text-gray-400 text-xs mt-0.5">Developed by <span className="font-semibold text-indigo-600">Jimhawkins Korir</span> • 📞 0720316175</p>
+                    </div>
+                </div>
+            </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+    );
 }
