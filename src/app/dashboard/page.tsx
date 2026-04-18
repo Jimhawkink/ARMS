@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { getDashboardStats, getRecentPayments, getOverdueTenants, get12MonthAnalytics, getCurrentMonthGrid, getLocations, getTenants } from '@/lib/supabase';
+import { getDashboardStats, getRecentPayments, calculateUnpaidRent, get12MonthAnalytics, getCurrentMonthGrid, getLocations, getTenants } from '@/lib/supabase';
 import { FiUsers, FiHome, FiDollarSign, FiAlertTriangle, FiTrendingUp, FiPercent, FiCalendar, FiCreditCard, FiSearch, FiFilter, FiX, FiCheckCircle, FiFileText, FiSmartphone, FiRefreshCw, FiPlus } from 'react-icons/fi';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
@@ -12,7 +12,7 @@ export default function DashboardPage() {
     const router = useRouter();
     const [stats, setStats] = useState<any>(null);
     const [recentPayments, setRecentPayments] = useState<any[]>([]);
-    const [overdueTenants, setOverdueTenants] = useState<any[]>([]);
+    const [unpaidRentData, setUnpaidRentData] = useState<any[]>([]);
     const [analytics, setAnalytics] = useState<any[]>([]);
     const [monthGrid, setMonthGrid] = useState<any>(null);
     const [loading, setLoading] = useState(true);
@@ -113,7 +113,7 @@ export default function DashboardPage() {
     })();
 
     const filteredOverdue = (() => {
-        let items = overdueTenants;
+        let items = unpaidRentData;
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
             items = items.filter((t: any) =>
@@ -134,11 +134,11 @@ export default function DashboardPage() {
         setLoading(true);
         try {
             const lid = locId ?? undefined;
-            const [s, rp, od, an, mg] = await Promise.all([
-                getDashboardStats(lid), getRecentPayments(8, lid), getOverdueTenants(lid),
+            const [s, rp, ur, an, mg] = await Promise.all([
+                getDashboardStats(lid), getRecentPayments(8, lid), calculateUnpaidRent(lid),
                 get12MonthAnalytics(lid), getCurrentMonthGrid(lid)
             ]);
-            setStats(s); setRecentPayments(rp); setOverdueTenants(od); setAnalytics(an); setMonthGrid(mg);
+            setStats(s); setRecentPayments(rp); setUnpaidRentData(ur); setAnalytics(an); setMonthGrid(mg);
         } catch (err) { console.error(err); }
         setLoading(false);
     }, []);
@@ -158,15 +158,21 @@ export default function DashboardPage() {
 
     if (loading) return <div className="flex items-center justify-center h-96"><div className="spinner" style={{ width: 40, height: 40 }}></div></div>;
 
+    // Calculate totals from unpaid rent data
+    const totalArrearsFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalUnpaid || 0), 0);
+    const totalPenaltiesFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalPenalty || 0), 0);
+    const totalOwedFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalOwed || 0), 0);
+    const totalMonthsFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.monthsOwed || 0), 0);
+
     const statCards = [
         { label: 'TOTAL TENANTS', value: stats?.activeTenants || 0, icon: FiUsers, iconBg: '#eef2ff', iconColor: '#4f46e5', borderColor: '#818cf8' },
-        { label: 'OCCUPIED UNITS', value: `${stats?.occupiedUnits || 0} / ${stats?.totalUnits || 0}`, icon: FiHome, iconBg: '#ecfdf5', iconColor: '#059669', borderColor: '#34d399' },
+        { label: 'TOTAL UNITS', value: stats?.totalUnits || 0, icon: FiHome, iconBg: '#ecfdf5', iconColor: '#059669', borderColor: '#34d399' },
         { label: 'THIS MONTH COLLECTED', value: fmt(stats?.monthlyCollected), icon: FiDollarSign, iconBg: '#f0fdf4', iconColor: '#16a34a', borderColor: '#4ade80' },
         { label: 'THIS MONTH BILLED', value: fmt(stats?.monthlyBilled), icon: FiCalendar, iconBg: '#faf5ff', iconColor: '#7c3aed', borderColor: '#a78bfa' },
-        { label: 'TOTAL ARREARS', value: fmt(stats?.totalArrears), icon: FiAlertTriangle, iconBg: '#fef2f2', iconColor: '#dc2626', borderColor: '#f87171' },
-        { label: 'COLLECTION RATE', value: `${stats?.collectionRate || 0}%`, icon: FiPercent, iconBg: stats?.collectionRate >= 80 ? '#ecfdf5' : '#fffbeb', iconColor: stats?.collectionRate >= 80 ? '#059669' : '#d97706', borderColor: stats?.collectionRate >= 80 ? '#34d399' : '#fbbf24' },
-        { label: 'EXPECTED REVENUE', value: fmt(stats?.expectedRevenue), icon: FiTrendingUp, iconBg: '#eff6ff', iconColor: '#2563eb', borderColor: '#60a5fa' },
-        { label: 'CURRENT DUE', value: fmt(monthGrid?.totalDue || 0), icon: FiCreditCard, iconBg: '#fff7ed', iconColor: '#ea580c', borderColor: '#fb923c' },
+        { label: 'TOTAL ARREARS', value: fmt(totalArrearsFromCalc), icon: FiAlertTriangle, iconBg: '#fef2f2', iconColor: '#dc2626', borderColor: '#f87171' },
+        { label: 'TOTAL PENALTY', value: fmt(totalPenaltiesFromCalc), icon: FiPercent, iconBg: '#fffbeb', iconColor: '#d97706', borderColor: '#fbbf24' },
+        { label: 'COLLECTION RATE', value: `${stats?.collectionRate || 0}%`, icon: FiTrendingUp, iconBg: stats?.collectionRate >= 80 ? '#ecfdf5' : '#fffbeb', iconColor: stats?.collectionRate >= 80 ? '#059669' : '#d97706', borderColor: stats?.collectionRate >= 80 ? '#34d399' : '#fbbf24' },
+        { label: 'TOTAL OWED (incl. penalty)', value: fmt(totalOwedFromCalc), icon: FiCreditCard, iconBg: '#fff7ed', iconColor: '#ea580c', borderColor: '#fb923c' },
     ];
 
     const quickActions = [
@@ -514,7 +520,13 @@ export default function DashboardPage() {
                                         <p className="text-xs text-gray-400">{t.arms_units?.unit_name} • {t.arms_locations?.location_name}</p>
                                     </div>
                                 </div>
-                                <span className="text-sm font-bold text-red-600">{fmt(t.balance)}</span>
+                                <div className="text-right">
+                                    <span className="text-sm font-bold text-red-600">{fmt(t.totalOwed || t.balance)}</span>
+                                    <div className="flex items-center gap-1.5 mt-0.5 justify-end">
+                                        <span className="text-[10px] font-bold text-gray-400">{t.monthsOwed || 0} mo.</span>
+                                        {(t.totalPenalty || 0) > 0 && <span className="text-[10px] font-bold text-amber-500">+{fmt(t.totalPenalty)} pen.</span>}
+                                    </div>
+                                </div>
                             </div>
                         ))}
                     </div>

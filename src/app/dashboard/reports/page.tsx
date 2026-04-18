@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getTenants, getLocations, getTenantStatement, getBilling, getPayments } from '@/lib/supabase';
-import { FiPrinter, FiUser, FiMapPin, FiBarChart2, FiAlertTriangle } from 'react-icons/fi';
+import { getTenants, getLocations, getTenantStatement, getBilling, getPayments, calculateUnpaidRent } from '@/lib/supabase';
+import { FiPrinter, FiUser, FiMapPin, FiBarChart2, FiAlertTriangle, FiAlertCircle, FiCalendar, FiDollarSign } from 'react-icons/fi';
 
 type ReportType = 'statement' | 'location' | 'collection' | 'arrears';
 
@@ -92,17 +92,17 @@ export default function ReportsPage() {
         setLoading(false);
     };
 
-    // ARREARS REPORT
+    // ARREARS REPORT - uses calculateUnpaidRent for accurate month-by-month arrears with penalty
     const loadArrearsReport = async () => {
         setLoading(true);
         try {
-            const ts = await getTenants(selectedLocation || undefined);
-            setArrearsData(ts.filter((t: any) => t.status === 'Active' && (t.balance || 0) > 0).sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0)));
+            const data = await calculateUnpaidRent(selectedLocation || undefined);
+            setArrearsData(data.sort((a: any, b: any) => (b.totalOwed || 0) - (a.totalOwed || 0)));
         } catch { }
         setLoading(false);
     };
 
-    // LOCATION SUMMARY
+    // LOCATION SUMMARY - uses calculateUnpaidRent for accurate arrears
     const loadLocationSummary = async () => {
         setLoading(true);
         try {
@@ -110,7 +110,11 @@ export default function ReportsPage() {
             const results = [];
             for (const loc of locations) {
                 const summary = await getLocationSummary(loc.location_id);
-                results.push({ ...loc, ...summary });
+                const unpaidData = await calculateUnpaidRent(loc.location_id);
+                const totalArrears = unpaidData.reduce((s: number, t: any) => s + (t.totalUnpaid || 0), 0);
+                const totalPenalties = unpaidData.reduce((s: number, t: any) => s + (t.totalPenalty || 0), 0);
+                const totalOwed = unpaidData.reduce((s: number, t: any) => s + (t.totalOwed || 0), 0);
+                results.push({ ...loc, ...summary, totalArrears, totalPenalties, totalOwed });
             }
             setLocationSummary(results);
         } catch { }
@@ -275,7 +279,7 @@ export default function ReportsPage() {
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="data-table">
-                                    <thead><tr><th>Location</th><th>Total Units</th><th>Occupied</th><th>Vacant</th><th>Tenants</th><th>Expected Revenue</th><th>Total Arrears</th></tr></thead>
+                                    <thead><tr><th>Location</th><th>Total Units</th><th>Occupied</th><th>Vacant</th><th>Tenants</th><th>Expected Revenue</th><th>Total Arrears</th><th>Penalties</th><th>Total Owed</th></tr></thead>
                                     <tbody>
                                         {locationSummary.map((l, i) => (
                                             <tr key={i}>
@@ -286,6 +290,8 @@ export default function ReportsPage() {
                                                 <td className="text-gray-700">{l.activeTenants}</td>
                                                 <td className="text-gray-900 font-medium">{fmt(l.expectedRevenue)}</td>
                                                 <td className="font-semibold text-red-600">{fmt(l.totalArrears)}</td>
+                                                <td className="font-semibold text-amber-600">{fmt(l.totalPenalties || 0)}</td>
+                                                <td className="font-bold text-red-700">{fmt(l.totalOwed || 0)}</td>
                                             </tr>
                                         ))}
                                         <tr className="bg-gray-50 font-bold">
@@ -296,6 +302,8 @@ export default function ReportsPage() {
                                             <td>{locationSummary.reduce((s, l) => s + l.activeTenants, 0)}</td>
                                             <td>{fmt(locationSummary.reduce((s, l) => s + l.expectedRevenue, 0))}</td>
                                             <td className="text-red-600">{fmt(locationSummary.reduce((s, l) => s + l.totalArrears, 0))}</td>
+                                            <td className="text-amber-600">{fmt(locationSummary.reduce((s, l) => s + (l.totalPenalties || 0), 0))}</td>
+                                            <td className="text-red-700">{fmt(locationSummary.reduce((s, l) => s + (l.totalOwed || 0), 0))}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -357,32 +365,83 @@ export default function ReportsPage() {
                             <button onClick={loadArrearsReport} disabled={loading} className="btn-primary">⚠️ Generate</button>
                         </div>
                     </div>
-                    {arrearsData.length > 0 && (
+                    {arrearsData.length > 0 && (() => {
+                        const totalArrears = arrearsData.reduce((s, t) => s + (t.totalUnpaid || 0), 0);
+                        const totalPenalties = arrearsData.reduce((s, t) => s + (t.totalPenalty || 0), 0);
+                        const totalOwed = arrearsData.reduce((s, t) => s + (t.totalOwed || 0), 0);
+                        const totalMonths = arrearsData.reduce((s, t) => s + (t.monthsOwed || 0), 0);
+                        const monthName = (m: string) => { try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); } catch { return m; } };
+                        return (
                         <div className="space-y-4">
-                            <div className="bg-red-50 rounded-2xl p-4 border border-red-100 text-center"><p className="text-2xl font-bold text-red-700">{fmt(arrearsData.reduce((s, t) => s + (t.balance || 0), 0))}</p><p className="text-xs font-bold text-red-400">TOTAL OUTSTANDING ARREARS — {arrearsData.length} tenants</p></div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-red-50 rounded-2xl p-4 border border-red-100 text-center"><p className="text-2xl font-bold text-red-700">{fmt(totalArrears)}</p><p className="text-[10px] font-bold text-red-400">TOTAL ARREARS</p></div>
+                                <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 text-center"><p className="text-2xl font-bold text-amber-700">{fmt(totalPenalties)}</p><p className="text-[10px] font-bold text-amber-400">TOTAL PENALTIES (2%)</p></div>
+                                <div className="bg-red-100 rounded-2xl p-4 border border-red-200 text-center"><p className="text-2xl font-bold text-red-800">{fmt(totalOwed)}</p><p className="text-[10px] font-bold text-red-500">TOTAL OWED (incl. penalty)</p></div>
+                                <div className="bg-purple-50 rounded-2xl p-4 border border-purple-100 text-center"><p className="text-2xl font-bold text-purple-700">{totalMonths}</p><p className="text-[10px] font-bold text-purple-400">UNPAID MONTHS — {arrearsData.length} tenants</p></div>
+                            </div>
                             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                                 <div className="overflow-x-auto">
                                     <table className="data-table">
-                                        <thead><tr><th>#</th><th>Tenant</th><th>Phone</th><th>ID Number</th><th>Unit</th><th>Location</th><th>Rent</th><th>Balance</th></tr></thead>
+                                        <thead><tr><th>#</th><th>Tenant</th><th>Phone</th><th>Unit</th><th>Location</th><th>Rent</th><th>Arrears</th><th>Penalty</th><th>Total Owed</th><th>Months</th></tr></thead>
                                         <tbody>
                                             {arrearsData.map((t, i) => (
                                                 <tr key={i}>
                                                     <td className="text-gray-400 text-xs">{i + 1}</td>
                                                     <td className="font-semibold text-gray-900">{t.tenant_name}</td>
                                                     <td className="text-gray-600">{t.phone || '-'}</td>
-                                                    <td className="text-gray-600">{t.id_number || '-'}</td>
                                                     <td className="text-indigo-600 font-medium">{t.arms_units?.unit_name || '-'}</td>
                                                     <td className="text-gray-500">{t.arms_locations?.location_name || '-'}</td>
                                                     <td className="text-gray-900 font-medium">{fmt(t.monthly_rent)}</td>
-                                                    <td><span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded-lg">{fmt(t.balance)}</span></td>
+                                                    <td><span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded-lg">{fmt(t.totalUnpaid)}</span></td>
+                                                    <td>{(t.totalPenalty || 0) > 0 ? <span className="inline-flex items-center gap-1 font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-lg"><FiAlertCircle size={12} />{fmt(t.totalPenalty)}</span> : <span className="text-gray-300">—</span>}</td>
+                                                    <td><span className="font-bold text-red-700 bg-red-100 px-2 py-1 rounded-lg">{fmt(t.totalOwed)}</span></td>
+                                                    <td><span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${t.monthsOwed >= 3 ? 'bg-red-100 text-red-700' : t.monthsOwed >= 2 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{t.monthsOwed} mo.</span></td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
+                            {/* Monthly Breakdown per tenant */}
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
+                                    <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2"><FiCalendar size={14} className="text-indigo-500" /> Monthly Arrears Breakdown</h3>
+                                </div>
+                                <div className="divide-y divide-gray-100">
+                                    {arrearsData.map((t, ti) => (
+                                        <div key={ti} className="px-5 py-4">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white bg-gradient-to-br from-red-500 to-rose-600">{t.tenant_name?.charAt(0)}</div>
+                                                    <div>
+                                                        <p className="text-sm font-bold text-gray-900">{t.tenant_name}</p>
+                                                        <p className="text-xs text-gray-400">{t.arms_units?.unit_name} • {t.arms_locations?.location_name}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <span className="text-sm font-bold text-red-600">{fmt(t.totalOwed)}</span>
+                                                    <p className="text-[10px] text-gray-400">{t.monthsOwed} months • +{fmt(t.totalPenalty)} penalty</p>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                {t.unpaidMonths?.map((m: any, mi: number) => (
+                                                    <div key={mi} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                                                        <p className="text-xs font-bold text-gray-700">{monthName(m.month)}</p>
+                                                        <div className="flex items-center justify-between mt-1">
+                                                            <span className="text-xs text-red-600 font-semibold">{fmt(m.balance)}</span>
+                                                            {m.penalty > 0 && <span className="text-[10px] font-bold text-amber-600">+{fmt(m.penalty)}</span>}
+                                                        </div>
+                                                        <span className={`inline-flex items-center mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${m.status === 'Partial' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>{m.status}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
-                    )}
+                        );
+                    })()}
                 </div>
             )}
 
