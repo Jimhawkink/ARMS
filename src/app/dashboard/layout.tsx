@@ -10,7 +10,7 @@ const menuGroups = [
         name: 'main',
         collapsible: false,
         items: [
-            { href: '/dashboard', label: 'Dashboard', icon: FiHome },
+            { href: '/dashboard', label: 'Dashboard', icon: FiHome, emoji: '🏠' },
         ]
     },
     {
@@ -18,9 +18,10 @@ const menuGroups = [
         icon: FiMapPin,
         name: 'property',
         collapsible: true,
+        emoji: '🏢',
         items: [
-            { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin },
-            { href: '/dashboard/units', label: 'Units', icon: FiGrid },
+            { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin, emoji: '📍' },
+            { href: '/dashboard/units', label: 'Units', icon: FiGrid, emoji: '🚪' },
         ]
     },
     {
@@ -28,11 +29,12 @@ const menuGroups = [
         icon: FiUsers,
         name: 'tenants',
         collapsible: true,
+        emoji: '👥',
         items: [
-            { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers },
-            { href: '/dashboard/billing', label: 'Billing', icon: FiFileText },
-            { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign },
-            { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle },
+            { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers, emoji: '👤' },
+            { href: '/dashboard/billing', label: 'Billing', icon: FiFileText, emoji: '🧾' },
+            { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign, emoji: '💳' },
+            { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle, emoji: '⚠️' },
         ]
     },
     {
@@ -40,9 +42,10 @@ const menuGroups = [
         icon: FiCreditCard,
         name: 'finance',
         collapsible: true,
+        emoji: '💰',
         items: [
-            { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown },
-            { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart },
+            { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown, emoji: '📉' },
+            { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart, emoji: '📊' },
         ]
     },
     {
@@ -50,11 +53,23 @@ const menuGroups = [
         icon: FiSettings,
         name: 'system',
         collapsible: true,
+        emoji: '⚙️',
         items: [
-            { href: '/dashboard/settings', label: 'Settings', icon: FiSettings },
+            { href: '/dashboard/settings', label: 'Settings', icon: FiSettings, emoji: '🔧' },
         ]
     },
 ];
+
+function LiveClock() {
+    const [time, setTime] = useState('');
+    useEffect(() => {
+        const tick = () => setTime(new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        tick();
+        const id = setInterval(tick, 1000);
+        return () => clearInterval(id);
+    }, []);
+    return <span className="font-mono text-xs tabular-nums text-indigo-600 font-bold">{time}</span>;
+}
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -66,7 +81,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [showLocDropdown, setShowLocDropdown] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
-    // Auto-expand group containing current path
     useEffect(() => {
         menuGroups.forEach(group => {
             if (!group.collapsible) return;
@@ -110,50 +124,68 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setShowLocDropdown(false);
     };
 
-    const handleLogout = () => { localStorage.removeItem('arms_user'); localStorage.removeItem('arms_location'); router.push('/'); };
+    const handleLogout = () => {
+        localStorage.removeItem('arms_user');
+        localStorage.removeItem('arms_location');
+        router.push('/');
+    };
 
     const selectedLocName = locations.find(l => l.location_id === selectedLocation)?.location_name || 'All Locations';
 
+    const greeting = (() => {
+        const h = new Date().getHours();
+        if (h < 12) return { text: 'Good Morning', emoji: '☀️' };
+        if (h < 17) return { text: 'Good Afternoon', emoji: '🌤️' };
+        return { text: 'Good Evening', emoji: '🌙' };
+    })();
+
     return (
-        <div className="flex min-h-screen bg-[#f1f5f9]">
-            {/* WHITE SIDEBAR with chevron toggle */}
-            <aside className={`${collapsed ? 'w-[72px]' : 'w-[250px]'} bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50 shadow-sm`}>
-                {/* Logo + Collapse */}
-                <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-4 py-5 border-b border-gray-100`}>
+        <div className="flex min-h-screen" style={{ background: '#f1f5f9' }}>
+            {/* ─── SIDEBAR ─── */}
+            <aside className={`${collapsed ? 'w-[68px]' : 'w-[252px]'} flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50`}
+                style={{ background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 60%, #1a2744 100%)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+
+                {/* Logo */}
+                <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-4 py-5`}
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     {!collapsed && (
-                        <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
-                                <span className="text-white text-sm font-bold">A</span>
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
+                                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                                <span className="text-white text-sm font-black">A</span>
                             </div>
                             <div>
-                                <h2 className="text-[16px] font-bold text-gray-900 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>ARMS</h2>
-                                <p className="text-[9px] text-gray-400 font-medium">Rental Management</p>
+                                <h2 className="text-[15px] font-black text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.03em' }}>ARMS</h2>
+                                <p className="text-[9px] text-slate-400 font-medium tracking-widest uppercase">Rental Management</p>
                             </div>
                         </div>
                     )}
                     {collapsed && (
-                        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
-                            <span className="text-white text-sm font-bold">A</span>
+                        <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg"
+                            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                            <span className="text-white text-sm font-black">A</span>
                         </div>
                     )}
                 </div>
 
-                {/* Chevron toggle button */}
+                {/* Collapse toggle */}
                 <button
                     onClick={() => setCollapsed(!collapsed)}
-                    className="absolute -right-3 top-[68px] w-6 h-6 bg-white border border-gray-200 rounded-full flex items-center justify-center shadow-sm hover:shadow-md hover:border-indigo-300 transition-all z-50 text-gray-400 hover:text-indigo-600"
+                    className="absolute -right-3 top-[68px] w-6 h-6 rounded-full flex items-center justify-center shadow-md transition-all z-50"
+                    style={{ background: '#fff', border: '1.5px solid #e2e8f0', color: '#64748b' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#6366f1'; (e.currentTarget as HTMLButtonElement).style.color = '#6366f1'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'; (e.currentTarget as HTMLButtonElement).style.color = '#64748b'; }}
                 >
-                    {collapsed ? <FiChevronRight size={13} /> : <FiChevronLeft size={13} />}
+                    {collapsed ? <FiChevronRight size={12} /> : <FiChevronLeft size={12} />}
                 </button>
 
-                {/* Navigation */}
-                <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto overflow-x-hidden">
+                {/* Nav */}
+                <nav className="flex-1 py-4 px-2.5 space-y-0.5 overflow-y-auto overflow-x-hidden">
                     {menuGroups.map((group) => {
                         const isExpanded = expandedGroups[group.name];
                         const GroupIcon = group.icon;
                         const isGroupActive = group.items.some(item => isActive(item.href));
 
-                        // Non-collapsible (Dashboard)
                         if (!group.label || !group.collapsible) {
                             return group.items.map(item => {
                                 const ItemIcon = item.icon;
@@ -163,58 +195,60 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         key={item.href}
                                         onClick={() => router.push(item.href)}
                                         title={collapsed ? item.label : undefined}
-                                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all mb-1
-                                            ${active ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
+                                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all mb-1
+                                            ${active
+                                                ? 'text-white shadow-md'
+                                                : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'}
                                             ${collapsed ? 'justify-center' : ''}
                                         `}
+                                        style={active ? { background: 'linear-gradient(135deg, rgba(99,102,241,0.35), rgba(139,92,246,0.25))', border: '1px solid rgba(99,102,241,0.35)' } : {}}
                                     >
-                                        <ItemIcon size={18} className={active ? 'text-indigo-600' : 'text-gray-400'} />
+                                        <span className="text-base leading-none">{item.emoji}</span>
                                         {!collapsed && <span>{item.label}</span>}
-                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-600" />}
+                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />}
                                     </button>
                                 );
                             });
                         }
 
-                        // Collapsible Group
                         return (
                             <div key={group.name} className="mb-0.5">
                                 <button
                                     onClick={() => toggleGroup(group.name)}
-                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all
-                                        ${isGroupActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px] font-bold uppercase tracking-widest transition-all
+                                        ${isGroupActive ? 'text-indigo-300' : 'text-slate-500 hover:text-slate-300'}
                                         ${collapsed ? 'justify-center' : ''}
                                     `}
                                     title={collapsed ? group.label : undefined}
                                 >
-                                    {GroupIcon && <GroupIcon size={17} className={isGroupActive ? 'text-indigo-600' : 'text-gray-400'} />}
                                     {!collapsed && (
                                         <>
+                                            <span className="text-sm leading-none">{group.emoji}</span>
                                             <span className="flex-1 text-left">{group.label}</span>
-                                            <FiChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                                            <FiChevronDown size={13} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                                         </>
                                     )}
+                                    {collapsed && GroupIcon && <GroupIcon size={16} />}
                                 </button>
-                                {/* Sub Items */}
-                                <div className={`overflow-hidden transition-all duration-200 ease-in-out
-                                    ${isExpanded && !collapsed ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}
-                                `}>
-                                    <div className="ml-[22px] pl-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100">
+
+                                <div className={`overflow-hidden transition-all duration-250 ease-in-out
+                                    ${isExpanded && !collapsed ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                    <div className="ml-3 pl-3 mt-0.5 space-y-0.5" style={{ borderLeft: '1.5px solid rgba(99,102,241,0.2)' }}>
                                         {group.items.map(item => {
-                                            const ItemIcon = item.icon;
                                             const active = isActive(item.href);
                                             return (
                                                 <button
                                                     key={item.href}
                                                     onClick={() => router.push(item.href)}
-                                                    className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-md text-[12.5px] transition-all
+                                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12.5px] transition-all
                                                         ${active
-                                                            ? 'text-indigo-700 bg-indigo-50 font-semibold border-l-2 border-indigo-500 -ml-[3px] pl-[11px]'
-                                                            : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}
+                                                            ? 'text-indigo-300 font-bold'
+                                                            : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] font-medium'}
                                                     `}
                                                 >
-                                                    <ItemIcon size={14} className={active ? 'text-indigo-600' : 'text-gray-400'} />
+                                                    <span className="text-sm leading-none">{item.emoji}</span>
                                                     <span>{item.label}</span>
+                                                    {active && <div className="ml-auto w-1 h-4 rounded-full bg-indigo-400" />}
                                                 </button>
                                             );
                                         })}
@@ -225,62 +259,75 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     })}
                 </nav>
 
-                {/* User & Logout */}
-                <div className="p-3 border-t border-gray-100">
+                {/* User footer */}
+                <div className="p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                     {!collapsed ? (
-                        <div className="flex items-center gap-2.5 px-2 py-2">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
-                                {user?.name?.charAt(0) || 'A'}
+                        <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-white/[0.05] transition cursor-default">
+                            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black text-white flex-shrink-0"
+                                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                                {user?.name?.charAt(0)?.toUpperCase() || 'A'}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-gray-900 truncate">{user?.name || 'Admin'}</p>
-                                <p className="text-[10px] text-gray-400 truncate">{user?.userType || 'admin'}</p>
+                                <p className="text-xs font-bold text-white truncate">{user?.name || 'Admin'}</p>
+                                <p className="text-[10px] text-slate-400 truncate capitalize">{user?.userType || 'admin'}</p>
                             </div>
-                            <button onClick={handleLogout} className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition" title="Logout">
-                                <FiLogOut size={15} />
+                            <button onClick={handleLogout} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition" title="Logout">
+                                <FiLogOut size={14} />
                             </button>
                         </div>
                     ) : (
-                        <button onClick={handleLogout} className="w-full flex items-center justify-center py-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition" title="Logout">
-                            <FiLogOut size={18} />
+                        <button onClick={handleLogout} className="w-full flex items-center justify-center py-2.5 text-slate-500 hover:text-red-400 rounded-xl hover:bg-red-500/10 transition" title="Logout">
+                            <FiLogOut size={16} />
                         </button>
                     )}
                 </div>
             </aside>
 
-            {/* Main Content Area */}
-            <div className={`flex-1 flex flex-col transition-all duration-300 ${collapsed ? 'ml-[72px]' : 'ml-[250px]'}`}>
-                {/* Sticky Top Bar */}
-                <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-sm border-b border-gray-100 px-6 py-3.5 flex items-center justify-between shadow-sm">
+            {/* ─── MAIN ─── */}
+            <div className={`flex-1 flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[252px]'}`}>
+
+                {/* Topbar */}
+                <header className="sticky top-0 z-40 px-6 py-3 flex items-center justify-between"
+                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #e8edf5', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+
                     <div className="flex items-center gap-3">
-                        <h1 className="text-base font-bold text-gray-800">
-                            {(() => {
-                                const now = new Date();
-                                const hour = now.getHours();
-                                if (hour < 12) return '☀️ Good Morning';
-                                if (hour < 17) return '🌤️ Good Afternoon';
-                                return '🌙 Good Evening';
-                            })()}
-                        </h1>
-                        <span className="text-gray-300">|</span>
-                        <span className="text-xs text-gray-400 font-medium">ARMS v1.0</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">{greeting.emoji}</span>
+                            <span className="text-sm font-bold text-gray-800" style={{ fontFamily: 'Outfit, sans-serif' }}>{greeting.text}</span>
+                        </div>
+                        <div className="w-px h-4 bg-gray-200" />
+                        <span className="text-[11px] text-gray-400 font-medium">ARMS v1.0</span>
+                        <div className="w-px h-4 bg-gray-200" />
+                        <LiveClock />
                     </div>
-                    <div className="flex items-center gap-3">
+
+                    <div className="flex items-center gap-2">
                         {/* Location Selector */}
                         <div className="relative">
                             <button
                                 onClick={() => setShowLocDropdown(!showLocDropdown)}
-                                className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 transition"
+                                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all"
+                                style={{ background: '#f1f5f9', border: '1.5px solid #e2e8f0', color: '#374151' }}
+                                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#6366f1'}
+                                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'}
                             >
-                                <FiMapPin size={14} className="text-indigo-500" />
-                                <span className="max-w-[140px] truncate">{selectedLocName}</span>
-                                <FiChevronDown size={14} className={`text-gray-400 transition-transform ${showLocDropdown ? 'rotate-180' : ''}`} />
+                                <FiMapPin size={13} className="text-indigo-500" />
+                                <span className="max-w-[120px] truncate text-[13px]">{selectedLocName}</span>
+                                <FiChevronDown size={13} className={`text-gray-400 transition-transform ${showLocDropdown ? 'rotate-180' : ''}`} />
                             </button>
                             {showLocDropdown && (
-                                <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-50">
-                                    <button onClick={() => handleLocationChange(null)} className={`w-full text-left px-4 py-2.5 text-sm hover:bg-indigo-50 transition ${!selectedLocation ? 'text-indigo-700 font-semibold bg-indigo-50' : 'text-gray-600'}`}>📍 All Locations</button>
+                                <div className="absolute right-0 top-full mt-1.5 w-56 rounded-2xl overflow-hidden z-50"
+                                    style={{ background: '#fff', border: '1px solid #e2e8f0', boxShadow: '0 8px 30px rgba(0,0,0,0.1)' }}>
+                                    <div className="px-3 py-2 border-b border-gray-100">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Select Location</p>
+                                    </div>
+                                    <button onClick={() => handleLocationChange(null)}
+                                        className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                        📍 All Locations
+                                    </button>
                                     {locations.map(l => (
-                                        <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)} className={`w-full text-left px-4 py-2.5 text-sm hover:bg-indigo-50 transition ${selectedLocation === l.location_id ? 'text-indigo-700 font-semibold bg-indigo-50' : 'text-gray-600'}`}>
+                                        <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)}
+                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
                                             🏢 {l.location_name}
                                         </button>
                                     ))}
@@ -290,7 +337,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </div>
                 </header>
 
-                {/* Page Content */}
+                {/* Page content */}
                 <main className="flex-1 p-6 overflow-y-auto">
                     {children}
                 </main>
