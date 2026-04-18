@@ -398,6 +398,123 @@ export async function getOverdueTenants(locationId?: number) {
     return data || [];
 }
 
+// ==================== UNPAID RENT CALCULATOR ====================
+// Generates month-by-month unpaid rent with 2% late penalty (after 5th)
+// Only for active tenants who haven't moved out
+export async function calculateUnpaidRent(locationId?: number) {
+    // 1. Get all ACTIVE tenants (no move_out_date or move_out_date in future)
+    let tenantQuery = supabase.from('arms_tenants')
+        .select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)')
+        .eq('status', 'Active')
+        .order('tenant_name');
+    if (locationId) tenantQuery = tenantQuery.eq('location_id', locationId);
+    const { data: tenants, error: tErr } = await tenantQuery;
+    if (tErr) throw tErr;
+
+    // Filter out tenants who have moved out
+    const activeTenants = (tenants || []).filter(t => {
+        if (!t.move_out_date) return true;
+        return new Date(t.move_out_date) > new Date();
+    });
+
+    if (activeTenants.length === 0) return [];
+
+    // 2. Get all billing and payment records for these tenants
+    const tenantIds = activeTenants.map(t => t.tenant_id);
+    const [billRes, payRes] = await Promise.all([
+        supabase.from('arms_billing').select('*').in('tenant_id', tenantIds),
+        supabase.from('arms_payments').select('*').in('tenant_id', tenantIds),
+    ]);
+    const allBills = billRes.data || [];
+    const allPayments = payRes.data || [];
+
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7); // e.g. "2026-04"
+    const currentDay = now.getDate();
+
+    // 3. For each tenant, calculate unpaid months
+    const results = activeTenants.map(tenant => {
+        const moveIn = tenant.move_in_date || tenant.billing_start_month || tenant.created_at?.slice(0, 10);
+        if (!moveIn) return null;
+
+        const moveInDate = new Date(moveIn);
+        const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
+
+        // Generate all expected billing months from move-in to current month
+        const expectedMonths: string[] = [];
+        const startDate = new Date(moveInDate.getFullYear(), moveInDate.getMonth(), 1);
+        const endDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        let cursor = new Date(startDate);
+        while (cursor <= endDate) {
+            expectedMonths.push(cursor.toISOString().slice(0, 7));
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+
+        // Check existing bills for this tenant
+        const tenantBills = allBills.filter(b => b.tenant_id === tenant.tenant_id);
+        const tenantPayments = allPayments.filter(p => p.tenant_id === tenant.tenant_id);
+
+        let totalUnpaid = 0;
+        let totalPenalty = 0;
+        const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
+
+        for (const month of expectedMonths) {
+            const existingBill = tenantBills.find(b => b.billing_month === month);
+
+            if (existingBill) {
+                // Bill exists - use its data
+                const billBalance = existingBill.balance || 0;
+                if (existingBill.status !== 'Paid' && billBalance > 0) {
+                    // Calculate penalty: if past the 5th of the billed month and still unpaid
+                    const billMonthDate = new Date(month + '-05');
+                    const isLate = now > billMonthDate;
+                    const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
+
+                    unpaidMonths.push({
+                        month,
+                        rent: existingBill.rent_amount || monthlyRent,
+                        paid: existingBill.amount_paid || 0,
+                        balance: billBalance,
+                        penalty,
+                        status: existingBill.status,
+                    });
+                    totalUnpaid += billBalance;
+                    totalPenalty += penalty;
+                }
+            } else {
+                // No bill exists for this month - it's unpaid
+                const billMonthDate = new Date(month + '-05');
+                const isLate = now > billMonthDate;
+                const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
+
+                unpaidMonths.push({
+                    month,
+                    rent: monthlyRent,
+                    paid: 0,
+                    balance: monthlyRent,
+                    penalty,
+                    status: 'Unpaid',
+                });
+                totalUnpaid += monthlyRent;
+                totalPenalty += penalty;
+            }
+        }
+
+        if (unpaidMonths.length === 0) return null;
+
+        return {
+            ...tenant,
+            unpaidMonths,
+            totalUnpaid,
+            totalPenalty,
+            totalOwed: totalUnpaid + totalPenalty,
+            monthsOwed: unpaidMonths.length,
+        };
+    }).filter(Boolean) as any[];
+
+    return results;
+}
+
 // ==================== 12-MONTH ANALYTICS ====================
 export async function get12MonthAnalytics(locationId?: number) {
     const months: string[] = [];
