@@ -159,14 +159,30 @@ ALTER TABLE arms_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE arms_mpesa_transactions ENABLE ROW LEVEL SECURITY;
 
 -- Allow all access with anon key (same pattern as AlphaRetail)
-CREATE POLICY "Allow all arms_users" ON arms_users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_settings" ON arms_settings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_locations" ON arms_locations FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_units" ON arms_units FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_tenants" ON arms_tenants FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_billing" ON arms_billing FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_payments" ON arms_payments FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all arms_mpesa_transactions" ON arms_mpesa_transactions FOR ALL USING (true) WITH CHECK (true);
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_users" ON arms_users FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_settings" ON arms_settings FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_locations" ON arms_locations FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_units" ON arms_units FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_tenants" ON arms_tenants FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_billing" ON arms_billing FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_payments" ON arms_payments FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_mpesa_transactions" ON arms_mpesa_transactions FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ==================== SEED DATA ====================
 
