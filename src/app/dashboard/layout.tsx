@@ -2,18 +2,58 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLocations } from '@/lib/supabase';
-import { FiHome, FiMapPin, FiGrid, FiUsers, FiFileText, FiDollarSign, FiAlertTriangle, FiBarChart2, FiSettings, FiLogOut, FiChevronLeft, FiChevronRight, FiChevronDown } from 'react-icons/fi';
+import { FiHome, FiMapPin, FiGrid, FiUsers, FiFileText, FiDollarSign, FiAlertTriangle, FiBarChart2, FiSettings, FiLogOut, FiChevronLeft, FiChevronRight, FiChevronDown, FiTrendingDown, FiCreditCard, FiPieChart } from 'react-icons/fi';
 
-const navItems = [
-    { href: '/dashboard', label: 'Dashboard', icon: FiHome },
-    { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin },
-    { href: '/dashboard/units', label: 'Units', icon: FiGrid },
-    { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers },
-    { href: '/dashboard/billing', label: 'Billing', icon: FiFileText },
-    { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign },
-    { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle },
-    { href: '/dashboard/reports', label: 'Reports', icon: FiBarChart2 },
-    { href: '/dashboard/settings', label: 'Settings', icon: FiSettings },
+const menuGroups = [
+    {
+        label: '',
+        name: 'main',
+        collapsible: false,
+        items: [
+            { href: '/dashboard', label: 'Dashboard', icon: FiHome },
+        ]
+    },
+    {
+        label: 'Property',
+        icon: FiMapPin,
+        name: 'property',
+        collapsible: true,
+        items: [
+            { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin },
+            { href: '/dashboard/units', label: 'Units', icon: FiGrid },
+        ]
+    },
+    {
+        label: 'Tenants & Billing',
+        icon: FiUsers,
+        name: 'tenants',
+        collapsible: true,
+        items: [
+            { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers },
+            { href: '/dashboard/billing', label: 'Billing', icon: FiFileText },
+            { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign },
+            { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle },
+        ]
+    },
+    {
+        label: 'Finance',
+        icon: FiCreditCard,
+        name: 'finance',
+        collapsible: true,
+        items: [
+            { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown },
+            { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart },
+        ]
+    },
+    {
+        label: 'System',
+        icon: FiSettings,
+        name: 'system',
+        collapsible: true,
+        items: [
+            { href: '/dashboard/settings', label: 'Settings', icon: FiSettings },
+        ]
+    },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +64,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [selectedLocation, setSelectedLocation] = useState<number | null>(null);
     const [user, setUser] = useState<any>(null);
     const [showLocDropdown, setShowLocDropdown] = useState(false);
+    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+    // Auto-expand group containing current path
+    useEffect(() => {
+        menuGroups.forEach(group => {
+            if (!group.collapsible) return;
+            const isGroupActive = group.items.some(item =>
+                item.href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(item.href)
+            );
+            if (isGroupActive && !expandedGroups[group.name]) {
+                setExpandedGroups(prev => ({ ...prev, [group.name]: true }));
+            }
+        });
+    }, [pathname]);
+
+    const toggleGroup = (groupName: string) => {
+        if (collapsed) {
+            setCollapsed(false);
+            setExpandedGroups({ [groupName]: true });
+        } else {
+            setExpandedGroups(prev => ({ ...prev, [groupName]: !prev[groupName] }));
+        }
+    };
+
+    const isActive = (href: string) => {
+        if (href === '/dashboard') return pathname === '/dashboard';
+        return pathname.startsWith(href);
+    };
 
     useEffect(() => {
         const u = localStorage.getItem('arms_user');
@@ -58,7 +126,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <span className="text-white text-sm font-bold">A</span>
                             </div>
                             <div>
-                                <h2 className="text-sm font-extrabold text-gray-900 tracking-tight">ARMS</h2>
+                                <h2 className="text-[16px] font-bold text-gray-900 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>ARMS</h2>
                                 <p className="text-[9px] text-gray-400 font-medium">Rental Management</p>
                             </div>
                         </div>
@@ -80,25 +148,79 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 {/* Navigation */}
                 <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto overflow-x-hidden">
-                    {navItems.map(item => {
-                        const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
-                        const Icon = item.icon;
+                    {menuGroups.map((group) => {
+                        const isExpanded = expandedGroups[group.name];
+                        const GroupIcon = group.icon;
+                        const isGroupActive = group.items.some(item => isActive(item.href));
+
+                        // Non-collapsible (Dashboard)
+                        if (!group.label || !group.collapsible) {
+                            return group.items.map(item => {
+                                const ItemIcon = item.icon;
+                                const active = isActive(item.href);
+                                return (
+                                    <button
+                                        key={item.href}
+                                        onClick={() => router.push(item.href)}
+                                        title={collapsed ? item.label : undefined}
+                                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all mb-1
+                                            ${active ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
+                                            ${collapsed ? 'justify-center' : ''}
+                                        `}
+                                    >
+                                        <ItemIcon size={18} className={active ? 'text-indigo-600' : 'text-gray-400'} />
+                                        {!collapsed && <span>{item.label}</span>}
+                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-600" />}
+                                    </button>
+                                );
+                            });
+                        }
+
+                        // Collapsible Group
                         return (
-                            <button
-                                key={item.href}
-                                onClick={() => router.push(item.href)}
-                                title={collapsed ? item.label : undefined}
-                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
-                                    ${isActive
-                                        ? 'bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100'
-                                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-                                    }
-                                    ${collapsed ? 'justify-center px-0' : ''}
-                                `}
-                            >
-                                <Icon size={18} className={`flex-shrink-0 ${isActive ? 'text-indigo-600' : ''}`} />
-                                {!collapsed && <span className="truncate">{item.label}</span>}
-                            </button>
+                            <div key={group.name} className="mb-0.5">
+                                <button
+                                    onClick={() => toggleGroup(group.name)}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all
+                                        ${isGroupActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
+                                        ${collapsed ? 'justify-center' : ''}
+                                    `}
+                                    title={collapsed ? group.label : undefined}
+                                >
+                                    {GroupIcon && <GroupIcon size={17} className={isGroupActive ? 'text-indigo-600' : 'text-gray-400'} />}
+                                    {!collapsed && (
+                                        <>
+                                            <span className="flex-1 text-left">{group.label}</span>
+                                            <FiChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                                        </>
+                                    )}
+                                </button>
+                                {/* Sub Items */}
+                                <div className={`overflow-hidden transition-all duration-200 ease-in-out
+                                    ${isExpanded && !collapsed ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}
+                                `}>
+                                    <div className="ml-[22px] pl-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100">
+                                        {group.items.map(item => {
+                                            const ItemIcon = item.icon;
+                                            const active = isActive(item.href);
+                                            return (
+                                                <button
+                                                    key={item.href}
+                                                    onClick={() => router.push(item.href)}
+                                                    className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-md text-[12.5px] transition-all
+                                                        ${active
+                                                            ? 'text-indigo-700 bg-indigo-50 font-semibold border-l-2 border-indigo-500 -ml-[3px] pl-[11px]'
+                                                            : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}
+                                                    `}
+                                                >
+                                                    <ItemIcon size={14} className={active ? 'text-indigo-600' : 'text-gray-400'} />
+                                                    <span>{item.label}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
                         );
                     })}
                 </nav>

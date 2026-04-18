@@ -184,6 +184,32 @@ DO $$ BEGIN
     CREATE POLICY "Allow all arms_mpesa_transactions" ON arms_mpesa_transactions FOR ALL USING (true) WITH CHECK (true);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- ==================== EXPENSES ====================
+CREATE TABLE IF NOT EXISTS arms_expenses (
+    expense_id SERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES arms_locations(location_id),
+    expense_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    category VARCHAR(100) NOT NULL,
+    description TEXT,
+    amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+    payment_method VARCHAR(50) DEFAULT 'Cash',
+    vendor VARCHAR(200),
+    receipt_number VARCHAR(100),
+    recorded_by VARCHAR(100),
+    recurring BOOLEAN DEFAULT FALSE,
+    recurring_interval VARCHAR(20),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_location ON arms_expenses(location_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON arms_expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_category ON arms_expenses(category);
+
+DO $$ BEGIN
+    CREATE POLICY "Allow all arms_expenses" ON arms_expenses FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- ==================== SEED DATA ====================
 
 -- Default admin user (password: admin123)

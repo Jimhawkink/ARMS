@@ -373,7 +373,7 @@ export default function DashboardPage() {
                                 <c.icon size={16} style={{ color: c.iconColor }} />
                             </div>
                         </div>
-                        <p className="text-xl font-extrabold text-gray-900" style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}>{c.value}</p>
+                        <p className="text-xl font-extrabold text-gray-900" style={{ fontFamily: "'Outfit', 'Inter', sans-serif" }}>{c.value}</p>
                         <div className="absolute -bottom-8 -right-8 w-20 h-20 rounded-full opacity-5 group-hover:opacity-10 transition-opacity" style={{ background: c.borderColor }}></div>
                     </div>
                 ))}

@@ -1,9 +1,11 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { getOverdueTenants, getLocations, getBilling } from '@/lib/supabase';
-import { FiSearch, FiEye, FiPrinter, FiAlertTriangle, FiMapPin, FiUsers, FiDollarSign, FiCalendar, FiX } from 'react-icons/fi';
+import { FiSearch, FiEye, FiPrinter, FiAlertTriangle, FiMapPin, FiUsers, FiDollarSign, FiCalendar, FiX, FiCreditCard } from 'react-icons/fi';
 
 export default function UnpaidRentPage() {
+    const router = useRouter();
     const [tenants, setTenants] = useState<any[]>([]);
     const [bills, setBills] = useState<any[]>([]);
     const [locations, setLocations] = useState<any[]>([]);
@@ -11,6 +13,9 @@ export default function UnpaidRentPage() {
     const [locationId, setLocationId] = useState<number | null>(null);
     const [search, setSearch] = useState('');
     const [filterLocation, setFilterLocation] = useState<number | 0>(0);
+    const [filterAmount, setFilterAmount] = useState<string>('');
+    const [filterAmountMin, setFilterAmountMin] = useState<string>('');
+    const [filterAmountMax, setFilterAmountMax] = useState<string>('');
     const [viewTenant, setViewTenant] = useState<any>(null);
     const [viewBills, setViewBills] = useState<any[]>([]);
 
@@ -37,6 +42,15 @@ export default function UnpaidRentPage() {
         if (!search) return true;
         const s = search.toLowerCase();
         return t.tenant_name?.toLowerCase().includes(s) || t.phone?.includes(s) || t.id_number?.includes(s) || t.arms_units?.unit_name?.toLowerCase().includes(s);
+    }).filter(t => {
+        const bal = t.balance || 0;
+        if (filterAmount === 'below5k' && bal >= 5000) return false;
+        if (filterAmount === '5kto10k' && (bal < 5000 || bal >= 10000)) return false;
+        if (filterAmount === '10kto20k' && (bal < 10000 || bal >= 20000)) return false;
+        if (filterAmount === 'above20k' && bal < 20000) return false;
+        if (filterAmount === 'between' && filterAmountMin && bal < parseFloat(filterAmountMin)) return false;
+        if (filterAmount === 'between' && filterAmountMax && bal > parseFloat(filterAmountMax)) return false;
+        return true;
     });
 
     const totalArrears = filtered.reduce((s, t) => s + (t.balance || 0), 0);
@@ -75,6 +89,26 @@ export default function UnpaidRentPage() {
                     <option value={0}>📍 All Locations</option>
                     {locations.map(l => <option key={l.location_id} value={l.location_id}>{l.location_name}</option>)}
                 </select>
+                <select value={filterAmount} onChange={e => { setFilterAmount(e.target.value); if (e.target.value !== 'between') { setFilterAmountMin(''); setFilterAmountMax(''); } }} className="select-field" style={{ width: 'auto', minWidth: 180 }}>
+                    <option value="">💰 All Amounts</option>
+                    <option value="below5k">Below KES 5,000</option>
+                    <option value="5kto10k">KES 5,000 - 10,000</option>
+                    <option value="10kto20k">KES 10,000 - 20,000</option>
+                    <option value="above20k">Above KES 20,000</option>
+                    <option value="between">Custom Range...</option>
+                </select>
+                {filterAmount === 'between' && (
+                    <>
+                        <input type="number" value={filterAmountMin} onChange={e => setFilterAmountMin(e.target.value)} placeholder="Min KES" className="input-field" style={{ width: 120 }} />
+                        <span className="text-gray-400 text-sm">to</span>
+                        <input type="number" value={filterAmountMax} onChange={e => setFilterAmountMax(e.target.value)} placeholder="Max KES" className="input-field" style={{ width: 120 }} />
+                    </>
+                )}
+                {(filterAmount || filterLocation || search) && (
+                    <button onClick={() => { setFilterAmount(''); setFilterAmountMin(''); setFilterAmountMax(''); setFilterLocation(0); setSearch(''); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-red-500 bg-red-50 border border-red-100 hover:bg-red-100 transition-all">
+                        <FiX size={12} /> Clear
+                    </button>
+                )}
             </div>
 
             {/* Premium Summary Cards */}
@@ -121,7 +155,7 @@ export default function UnpaidRentPage() {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="data-table">
-                        <thead><tr><th>#</th><th>Tenant Name</th><th>📞 Phone</th><th>🪪 ID Number</th><th>🏠 House</th><th>📍 Location</th><th>Rent</th><th>Total Arrears</th><th>Months</th><th>View</th></tr></thead>
+                        <thead><tr><th>#</th><th>Tenant Name</th><th>📞 Phone</th><th>🪪 ID Number</th><th>🏠 House</th><th>📍 Location</th><th>Rent</th><th>Total Arrears</th><th>Months</th><th>Actions</th></tr></thead>
                         <tbody>
                             {filtered.length === 0 ? (
                                 <tr><td colSpan={10} className="text-center py-10">
@@ -135,7 +169,7 @@ export default function UnpaidRentPage() {
                                     <tr key={t.tenant_id} className="hover:bg-indigo-50/30 transition-colors">
                                         <td className="text-gray-400 text-xs font-mono">{idx + 1}</td>
                                         <td><span className="font-semibold text-gray-900">{t.tenant_name}</span></td>
-                                        <td className="text-gray-600 text-sm">{t.phone || '-'}</td>
+                                        <td className="text-gray-600 text-sm font-mono">{t.phone || '-'}</td>
                                         <td className="text-gray-600 text-sm">{t.id_number || '-'}</td>
                                         <td className="text-indigo-600 font-medium text-sm">{t.arms_units?.unit_name || '-'}</td>
                                         <td className="text-gray-500 text-sm">{t.arms_locations?.location_name || '-'}</td>
@@ -147,9 +181,14 @@ export default function UnpaidRentPage() {
                                             </span>
                                         </td>
                                         <td>
-                                            <button onClick={() => openView(t)} className="p-2 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-all shadow-sm" title="View Monthly Breakdown">
-                                                <FiEye size={16} />
-                                            </button>
+                                            <div className="flex items-center gap-1.5">
+                                                <button onClick={() => openView(t)} className="p-2 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-all shadow-sm" title="View Monthly Breakdown">
+                                                    <FiEye size={16} />
+                                                </button>
+                                                <button onClick={() => router.push(`/dashboard/payments?tenant_id=${t.tenant_id}`)} className="p-2 rounded-xl bg-green-50 text-green-600 hover:bg-green-100 hover:text-green-700 transition-all shadow-sm" title="Record Payment">
+                                                    <FiCreditCard size={16} />
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 );

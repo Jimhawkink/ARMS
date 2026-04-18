@@ -454,3 +454,51 @@ export async function updateSetting(key: string, value: string) {
     const { error } = await supabase.from('arms_settings').upsert({ setting_key: key, setting_value: value }, { onConflict: 'setting_key' });
     if (error) throw error;
 }
+
+// ==================== EXPENSES ====================
+export async function getExpenses(filters?: { locationId?: number; category?: string; startDate?: string; endDate?: string }) {
+    let query = supabase.from('arms_expenses').select('*, arms_locations(location_name)').order('expense_date', { ascending: false });
+    if (filters?.locationId) query = query.eq('location_id', filters.locationId);
+    if (filters?.category) query = query.eq('category', filters.category);
+    if (filters?.startDate) query = query.gte('expense_date', filters.startDate);
+    if (filters?.endDate) query = query.lte('expense_date', filters.endDate);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+}
+
+export async function addExpense(expense: { location_id?: number; expense_date: string; category: string; description?: string; amount: number; payment_method?: string; vendor?: string; receipt_number?: string; recorded_by?: string; recurring?: boolean; recurring_interval?: string; notes?: string }) {
+    const { data, error } = await supabase.from('arms_expenses').insert(expense).select().single();
+    if (error) throw error;
+    return data;
+}
+
+export async function updateExpense(id: number, updates: Record<string, any>) {
+    const { data, error } = await supabase.from('arms_expenses').update(updates).eq('expense_id', id).select().single();
+    if (error) throw error;
+    return data;
+}
+
+export async function deleteExpense(id: number) {
+    const { error } = await supabase.from('arms_expenses').delete().eq('expense_id', id);
+    if (error) throw error;
+}
+
+export async function getExpenseCategories() {
+    const { data, error } = await supabase.from('arms_expenses').select('category');
+    if (error) throw error;
+    const cats = Array.from(new Set(data?.map(d => d.category) || []));
+    return cats.sort();
+}
+
+export async function getExpenseSummary(locationId?: number) {
+    const expenses = await getExpenses(locationId ? { locationId } : undefined);
+    const totalAmount = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const byCategory: Record<string, number> = {};
+    expenses.forEach(e => { byCategory[e.category] = (byCategory[e.category] || 0) + (e.amount || 0); });
+    const byLocation: Record<string, number> = {};
+    expenses.forEach(e => { const loc = e.arms_locations?.location_name || 'Unknown'; byLocation[loc] = (byLocation[loc] || 0) + (e.amount || 0); });
+    const thisMonth = expenses.filter(e => e.expense_date?.startsWith(new Date().toISOString().slice(0, 7)));
+    const thisMonthTotal = thisMonth.reduce((s, e) => s + (e.amount || 0), 0);
+    return { totalAmount, byCategory, byLocation, thisMonthTotal, count: expenses.length };
+}
