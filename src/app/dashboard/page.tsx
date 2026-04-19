@@ -243,10 +243,13 @@ export default function DashboardPage() {
     const totalOwedFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalOwed || 0), 0);
     const collRate = stats?.collectionRate || 0;
     const occupancyRate = stats?.totalUnits > 0 ? Math.round(((stats?.activeTenants || 0) / stats?.totalUnits) * 100) : 0;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const tenantsNewToday = stats?.tenantsNewToday || 0;
 
     const kpiCards = [
         { label: 'Total Tenants', value: stats?.activeTenants || 0, emoji: '👤', bg: '#eef2ff', color: '#4338ca', border: '#818cf8', sub: `${occupancyRate}% occupancy` },
-        { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '🚪', bg: '#f0fdf4', color: '#15803d', border: '#4ade80', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant` },
+        { label: '🆕 New Today', value: tenantsNewToday, emoji: '🎉', bg: '#f0fdf4', color: '#059669', border: '#34d399', sub: tenantsNewToday > 0 ? 'Moved in today!' : 'No new tenants today', pulse: tenantsNewToday > 0 },
+        { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '🚪', bg: '#ecfdf5', color: '#15803d', border: '#6ee7b7', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant` },
         { label: 'This Month Collected', value: fmt(stats?.monthlyCollected), emoji: '💵', bg: '#ecfdf5', color: '#059669', border: '#34d399', sub: 'Cash + M-Pesa' },
         { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '🧾', bg: '#faf5ff', color: '#7c3aed', border: '#a78bfa', sub: 'Total invoiced' },
         { label: 'Total Arrears', value: fmt(totalArrearsFromCalc), emoji: '⏰', bg: '#fef2f2', color: '#b91c1c', border: '#f87171', pulse: totalArrearsFromCalc > 0, sub: `${unpaidRentData.length} tenants` },
@@ -255,6 +258,7 @@ export default function DashboardPage() {
         { label: 'Collection Rate', value: `${collRate}%`, emoji: collRate >= 80 ? '🌟' : collRate >= 50 ? '📈' : '📉', bg: collRate >= 80 ? '#ecfdf5' : collRate >= 50 ? '#fffbeb' : '#fef2f2', color: collRate >= 80 ? '#059669' : collRate >= 50 ? '#b45309' : '#b91c1c', border: collRate >= 80 ? '#34d399' : collRate >= 50 ? '#fbbf24' : '#f87171', sub: collRate >= 80 ? 'Excellent' : collRate >= 50 ? 'Needs attention' : 'Critical', pulse: collRate < 50 && totalArrearsFromCalc > 0 },
         { label: 'Total Owed', value: fmt(totalOwedFromCalc), emoji: '💰', bg: '#fff7ed', color: '#c2410c', border: '#fb923c', sub: 'Incl. penalties', pulse: totalOwedFromCalc > 0 },
     ];
+
 
     /* ─── Charts ─── */
     const labels = analytics.map(a => a.label);

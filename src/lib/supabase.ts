@@ -116,13 +116,51 @@ export async function getTenantById(id: number) {
 export async function addTenant(tenant: {
     tenant_name: string; phone?: string; email?: string; id_number?: string;
     unit_id: number; location_id: number; monthly_rent: number;
-    deposit_paid?: number; move_in_date?: string; notes?: string;
-    emergency_contact?: string; emergency_phone?: string;
+    deposit_paid?: number; move_in_date?: string; billing_start_month?: string;
+    notes?: string; emergency_contact?: string; emergency_phone?: string;
 }) {
-    const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenant, status: 'Active' }]).select().single();
+    const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenant, status: 'Active', balance: 0 }]).select().single();
     if (error) throw error;
     // Mark unit as Occupied
     await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
+
+    // ── Auto-generate backdated bills from move_in_date to current month ──────
+    // This ensures the tenant's balance reflects real arrears immediately.
+    const rawMoveIn = tenant.move_in_date || tenant.billing_start_month;
+    const monthlyRent = tenant.monthly_rent || 0;
+    if (rawMoveIn && monthlyRent > 0) {
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const earliestMonth = rawMoveIn.slice(0, 7);
+        const billsToCreate: any[] = [];
+        let totalBalance = 0;
+        let cursor = new Date(earliestMonth + '-01');
+        const endDate = new Date(currentMonth + '-01');
+        while (cursor <= endDate) {
+            const curM = cursor.toISOString().slice(0, 7);
+            billsToCreate.push({
+                tenant_id: data.tenant_id,
+                location_id: tenant.location_id,
+                unit_id: tenant.unit_id,
+                billing_month: curM,
+                billing_date: `${curM}-01`,
+                due_date: `${curM}-05`,
+                rent_amount: monthlyRent,
+                amount_paid: 0,
+                balance: monthlyRent,
+                status: 'Unpaid',
+            });
+            totalBalance += monthlyRent;
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+        if (billsToCreate.length > 0) {
+            await supabase.from('arms_billing').insert(billsToCreate);
+            await supabase.from('arms_tenants').update({
+                balance: totalBalance,
+                updated_at: new Date().toISOString(),
+            }).eq('tenant_id', data.tenant_id);
+            return { ...data, balance: totalBalance };
+        }
+    }
     return data;
 }
 
@@ -239,35 +277,83 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
 }
 
 // ==================== ACCUMULATED ARREARS FOR TENANT ====================
-// Returns real unpaid bills for a tenant so the payment modal shows accurate data
+// Computes REAL arrears from move_in_date → today, even if bills were never generated.
+// Unbilled months are treated as fully owed (virtual) and shown with _virtual:true.
 export async function getAccumulatedArrearsForTenant(tenantId: number) {
     const currentMonth = new Date().toISOString().slice(0, 7);
-    const { data: bills, error } = await supabase
-        .from('arms_billing')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .gt('balance', 0)
+
+    // 1. Load tenant (we need monthly_rent and move_in_date)
+    const { data: tenant, error: tenantErr } = await supabase
+        .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance').eq('tenant_id', tenantId).single();
+    if (tenantErr || !tenant) throw tenantErr || new Error('Tenant not found');
+
+    const monthlyRent = Math.round((tenant.monthly_rent || 0) * 100) / 100;
+    const rawMoveIn = tenant.move_in_date || tenant.created_at?.slice(0, 10);
+    const earliestMonth = rawMoveIn ? rawMoveIn.slice(0, 7) : currentMonth;
+
+    // 2. Load ALL billing records for this tenant (any status)
+    const { data: allBills, error: billsErr } = await supabase
+        .from('arms_billing').select('*').eq('tenant_id', tenantId)
         .order('billing_date', { ascending: true });
-    if (error) throw error;
+    if (billsErr) throw billsErr;
 
-    const unpaidBills = bills || [];
-    let arrearsTotal = 0;    // old months
-    let currentMonthDue = 0; // current month
-    let totalDue = 0;
+    const billsByMonth = new Map<string, any>((allBills || []).map(b => [b.billing_month, b]));
 
-    for (const bill of unpaidBills) {
-        const bal = Math.round((bill.balance || 0) * 100) / 100;
-        totalDue += bal;
-        if (bill.billing_month < currentMonth) arrearsTotal += bal;
-        else currentMonthDue += bal;
+    // 3. Walk month-by-month from move_in to current, building unified bill list
+    const resultBills: any[] = [];
+    let arrearsTotal = 0;
+    let currentMonthDue = 0;
+
+    let cursor = new Date(earliestMonth + '-01');
+    const endDate = new Date(currentMonth + '-01');
+
+    while (cursor <= endDate) {
+        const curMonth = cursor.toISOString().slice(0, 7);
+        const bill = billsByMonth.get(curMonth);
+
+        if (bill) {
+            // Real bill exists — use its remaining balance
+            const balance = Math.round((bill.balance || 0) * 100) / 100;
+            if (balance > 0) {
+                resultBills.push({ ...bill, _virtual: false });
+                if (curMonth < currentMonth) arrearsTotal += balance;
+                else currentMonthDue += balance;
+            }
+        } else {
+            // No bill generated for this month — whole rent is owed (virtual)
+            if (monthlyRent > 0) {
+                resultBills.push({
+                    billing_id: null,
+                    tenant_id: tenantId,
+                    billing_month: curMonth,
+                    billing_date: `${curMonth}-01`,
+                    due_date: `${curMonth}-05`,
+                    rent_amount: monthlyRent,
+                    amount_paid: 0,
+                    balance: monthlyRent,
+                    status: 'Unbilled',
+                    _virtual: true,
+                });
+                if (curMonth < currentMonth) arrearsTotal += monthlyRent;
+                else currentMonthDue += monthlyRent;
+            }
+        }
+        cursor.setMonth(cursor.getMonth() + 1);
     }
 
+    const totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
+    const arrearsMonths = resultBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month);
+    const hasVirtualBills = resultBills.some(b => b._virtual);
+    const virtualMonths = resultBills.filter(b => b._virtual).map(b => b.billing_month);
+
     return {
-        bills: unpaidBills,
+        bills: resultBills,
         arrearsTotal: Math.round(arrearsTotal * 100) / 100,
         currentMonthDue: Math.round(currentMonthDue * 100) / 100,
-        totalDue: Math.round(totalDue * 100) / 100,
-        arrearsMonths: unpaidBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month),
+        totalDue,
+        arrearsMonths,
+        hasVirtualBills,
+        virtualMonths,
     };
 }
 
@@ -311,22 +397,59 @@ export async function recordPayment(payment: {
         .from('arms_tenants').select('*').eq('tenant_id', payment.tenant_id).single();
     if (tenantErr || !tenant) throw new Error('Tenant not found');
 
-    const currentMonth = new Date().toISOString().slice(0, 7); // e.g. "2026-04"
+    const currentMonth = new Date().toISOString().slice(0, 7);
 
-    // ── 2. Fetch ALL bills with outstanding balance, oldest first (FIFO) ────
+    // ── 2. Auto-generate missing bills from move_in_date to current month ────
+    //      This ensures backdated tenants always have bill records for FIFO.
+    const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
+    const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : currentMonth;
+
+    // Find which months already have bills
+    const { data: existingBills } = await supabase
+        .from('arms_billing').select('billing_month').eq('tenant_id', payment.tenant_id);
+    const existingMonths = new Set((existingBills || []).map((b: any) => b.billing_month));
+
+    // Generate any missing month bills up to current month
+    const billsToCreate: any[] = [];
+    let autoBalanceIncrease = 0;
+    let cursor2 = new Date(earliestMonth + '-01');
+    const endDate2 = new Date(currentMonth + '-01');
+    while (cursor2 <= endDate2) {
+        const curM = cursor2.toISOString().slice(0, 7);
+        if (!existingMonths.has(curM) && (tenant.monthly_rent || 0) > 0) {
+            billsToCreate.push({
+                tenant_id: payment.tenant_id,
+                location_id: tenant.location_id,
+                unit_id: tenant.unit_id,
+                billing_month: curM, billing_date: `${curM}-01`, due_date: `${curM}-05`,
+                rent_amount: tenant.monthly_rent, amount_paid: 0,
+                balance: tenant.monthly_rent, status: 'Unpaid',
+            });
+            autoBalanceIncrease += tenant.monthly_rent;
+        }
+        cursor2.setMonth(cursor2.getMonth() + 1);
+    }
+    if (billsToCreate.length > 0) {
+        await supabase.from('arms_billing').insert(billsToCreate);
+        // Reflect newly generated bills in tenant balance
+        const { data: freshT } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
+        const updatedBal = Math.round(((freshT?.balance || 0) + autoBalanceIncrease) * 100) / 100;
+        await supabase.from('arms_tenants').update({ balance: updatedBal, updated_at: new Date().toISOString() }).eq('tenant_id', payment.tenant_id);
+    }
+
+    // ── 3. Fetch ALL bills with outstanding balance, oldest first (FIFO) ─────
     const { data: bills, error: billsErr } = await supabase
-        .from('arms_billing')
-        .select('*')
+        .from('arms_billing').select('*')
         .eq('tenant_id', payment.tenant_id)
         .gt('balance', 0)
         .order('billing_date', { ascending: true });
     if (billsErr) throw billsErr;
 
-    // ── 3. Strict FIFO allocation with precise arithmetic ───────────────────
+    // ── 4. Strict FIFO allocation with precise cent-level arithmetic ──────────
     let remaining = paymentAmount;
     let arrearsPaid = 0;
     let currentRentPaid = 0;
-    let creditAmount = 0; // overpayment beyond all bills
+    let creditAmount = 0;
 
     interface Alloc {
         billingId: number; billing_month: string;
@@ -570,6 +693,8 @@ export async function getLocationSummary(locationId?: number) {
 export async function getDashboardStats(locationId?: number) {
     const summary = await getLocationSummary(locationId);
     const currentMonth = new Date().toISOString().slice(0, 7);
+    const todayStr = new Date().toISOString().split('T')[0];
+
     let billQuery = supabase.from('arms_billing').select('*').eq('billing_month', currentMonth);
     if (locationId) billQuery = billQuery.eq('location_id', locationId);
     const { data: bills } = await billQuery;
@@ -585,11 +710,16 @@ export async function getDashboardStats(locationId?: number) {
     const totalArrearsPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'ArrearsPaid'), 0);
     const totalCurrentRentPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'CurrentRentPaid'), 0);
 
+    // Tenants who moved in today
+    let todayQ = supabase.from('arms_tenants').select('tenant_id', { count: 'exact', head: true }).eq('status', 'Active').gte('move_in_date', todayStr).lte('move_in_date', todayStr);
+    if (locationId) todayQ = todayQ.eq('location_id', locationId);
+    const { count: tenantsNewToday } = await todayQ;
+
     const monthlyCollected = payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
     const monthlyBilled = bills?.reduce((sum, b) => sum + (b.rent_amount || 0), 0) || 0;
     const collectionRate = monthlyBilled > 0 ? Math.round((monthlyCollected / monthlyBilled) * 100) : 0;
 
-    return { ...summary, monthlyCollected, monthlyBilled, collectionRate, totalArrearsPaid, totalCurrentRentPaid };
+    return { ...summary, monthlyCollected, monthlyBilled, collectionRate, totalArrearsPaid, totalCurrentRentPaid, tenantsNewToday: tenantsNewToday || 0 };
 }
 
 export async function getRecentPayments(limit = 10, locationId?: number) {
