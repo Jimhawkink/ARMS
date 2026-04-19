@@ -153,49 +153,122 @@ export async function getBilling(filters?: { locationId?: number; month?: string
     return data || [];
 }
 
-export async function generateMonthlyBills(month: string, locationId?: number) {
-    // Get all active tenants, optionally filtered by location
+export async function generateMonthlyBills(month: string, locationId?: number): Promise<{
+    bills: any[]; generated: number; skipped: number; catchUpMonths: number; errors: string[];
+}> {
+    // ── 1. Load all active tenants ───────────────────────────────────────────
     let query = supabase.from('arms_tenants').select('*').eq('status', 'Active');
     if (locationId) query = query.eq('location_id', locationId);
     const { data: tenants, error } = await query;
     if (error) throw error;
-    if (!tenants || tenants.length === 0) return [];
+    if (!tenants?.length) return { bills: [], generated: 0, skipped: 0, catchUpMonths: 0, errors: [] };
 
-    const bills: any[] = [];
+    const allBills: any[] = [];
+    let skipped = 0, catchUpMonths = 0;
+    const errors: string[] = [];
+
     for (const tenant of tenants) {
-        // Check if bill already exists for this month
-        const { data: existing } = await supabase
-            .from('arms_billing')
-            .select('billing_id')
-            .eq('tenant_id', tenant.tenant_id)
-            .eq('billing_month', month)
-            .single();
+        try {
+            const monthlyRent = tenant.monthly_rent || 0;
+            if (monthlyRent <= 0) { skipped++; continue; }
 
-        if (!existing) {
-            const billingDate = `${month}-01`;
-            const dueDate = `${month}-05`;
-            const bill = {
-                tenant_id: tenant.tenant_id,
-                location_id: tenant.location_id,
-                unit_id: tenant.unit_id,
-                billing_month: month,
-                billing_date: billingDate,
-                due_date: dueDate,
-                rent_amount: tenant.monthly_rent,
-                balance: tenant.monthly_rent,
-                status: 'Unpaid'
-            };
-            const { data, error: insertErr } = await supabase.from('arms_billing').insert([bill]).select().single();
-            if (!insertErr && data) bills.push(data);
+            // Determine earliest billing month from move_in_date
+            const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
+            const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : month;
 
-            // Update tenant balance
+            // Skip if tenant hadn't moved in by this month  
+            if (earliestMonth > month) { skipped++; continue; }
+
+            // ── 2. Find ALL existing bill months for this tenant ─────────────
+            const { data: existingBills } = await supabase
+                .from('arms_billing').select('billing_month')
+                .eq('tenant_id', tenant.tenant_id);
+            const existingMonths = new Set((existingBills || []).map((b: any) => b.billing_month));
+
+            // ── 3. Generate all missing months from move-in to target (catch-up) ─
+            const newBillsToInsert: any[] = [];
+            let balanceIncrease = 0;
+
+            let cursor = new Date(earliestMonth + '-01');
+            const endDate = new Date(month + '-01');
+
+            while (cursor <= endDate) {
+                const curMonth = cursor.toISOString().slice(0, 7);
+                if (!existingMonths.has(curMonth)) {
+                    newBillsToInsert.push({
+                        tenant_id: tenant.tenant_id,
+                        location_id: tenant.location_id,
+                        unit_id: tenant.unit_id,
+                        billing_month: curMonth,
+                        billing_date: `${curMonth}-01`,
+                        due_date: `${curMonth}-05`,
+                        rent_amount: monthlyRent,
+                        amount_paid: 0,
+                        balance: monthlyRent,
+                        status: 'Unpaid',
+                    });
+                    balanceIncrease += monthlyRent;
+                    if (curMonth < month) catchUpMonths++;
+                }
+                cursor.setMonth(cursor.getMonth() + 1);
+            }
+
+            if (newBillsToInsert.length === 0) { skipped++; continue; }
+
+            // ── 4. Batch insert bills ─────────────────────────────────────────
+            const { data: inserted, error: insertErr } = await supabase
+                .from('arms_billing').insert(newBillsToInsert).select();
+            if (insertErr) { errors.push(`${tenant.tenant_name}: ${insertErr.message}`); continue; }
+            if (inserted) allBills.push(...inserted);
+
+            // ── 5. Update tenant balance (re-fetch to avoid race) ─────────────
+            const { data: freshTenant } = await supabase
+                .from('arms_tenants').select('balance').eq('tenant_id', tenant.tenant_id).single();
+            const newBalance = Math.round(((freshTenant?.balance || 0) + balanceIncrease) * 100) / 100;
             await supabase.from('arms_tenants').update({
-                balance: (tenant.balance || 0) + tenant.monthly_rent,
-                updated_at: new Date().toISOString()
+                balance: newBalance,
+                updated_at: new Date().toISOString(),
             }).eq('tenant_id', tenant.tenant_id);
+
+        } catch (err: any) {
+            errors.push(`${tenant.tenant_name}: ${err.message}`);
         }
     }
-    return bills;
+
+    return { bills: allBills, generated: allBills.length, skipped, catchUpMonths, errors };
+}
+
+// ==================== ACCUMULATED ARREARS FOR TENANT ====================
+// Returns real unpaid bills for a tenant so the payment modal shows accurate data
+export async function getAccumulatedArrearsForTenant(tenantId: number) {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const { data: bills, error } = await supabase
+        .from('arms_billing')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .gt('balance', 0)
+        .order('billing_date', { ascending: true });
+    if (error) throw error;
+
+    const unpaidBills = bills || [];
+    let arrearsTotal = 0;    // old months
+    let currentMonthDue = 0; // current month
+    let totalDue = 0;
+
+    for (const bill of unpaidBills) {
+        const bal = Math.round((bill.balance || 0) * 100) / 100;
+        totalDue += bal;
+        if (bill.billing_month < currentMonth) arrearsTotal += bal;
+        else currentMonthDue += bal;
+    }
+
+    return {
+        bills: unpaidBills,
+        arrearsTotal: Math.round(arrearsTotal * 100) / 100,
+        currentMonthDue: Math.round(currentMonthDue * 100) / 100,
+        totalDue: Math.round(totalDue * 100) / 100,
+        arrearsMonths: unpaidBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month),
+    };
 }
 
 // ==================== PAYMENTS ====================

@@ -1,39 +1,42 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase } from '@/lib/supabase';
+import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiPhone } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 
-// ── helpers ──────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const parseNoteTag = (notes: string, tag: string): number => {
     if (!notes) return 0;
     const m = notes.match(new RegExp(`\\[${tag}:(\\d+(?:\\.\\d+)?)\\]`));
     return m ? parseFloat(m[1]) : 0;
 };
-const cleanNoteDisplay = (notes: string) => {
-    return (notes || '')
-        .replace(/\[Month:[^\]]+\]/g, '')
-        .replace(/\[Time:[^\]]+\]/g, '')
-        .replace(/\[ArrearsPaid:[^\]]+\]/g, '')
-        .replace(/\[CurrentRentPaid:[^\]]+\]/g, '')
-        .trim();
+const cleanNoteDisplay = (notes: string) =>
+    (notes || '').replace(/\[Month:[^\]]+\]/g, '').replace(/\[Time:[^\]]+\]/g, '').replace(/\[ArrearsPaid:[^\]]+\]/g, '').replace(/\[CurrentRentPaid:[^\]]+\]/g, '').replace(/\[BillsCleared:[^\]]+\]/g, '').replace(/\[ArrearMonths:[^\]]+\]/g, '').replace(/\[Credit:[^\]]+\]/g, '').trim();
+
+const buildWhatsAppLink = (phone: string, tenantName: string, amount: number, months: string[]) => {
+    const fmt = (n: number) => `KES ${n.toLocaleString()}`;
+    const monthLabels = months.map(m => { try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); } catch { return m; } });
+    const msg = [`🏠 *ARMS Rent Reminder*`, `━━━━━━━━━━━━━━━━`, `Dear *${tenantName}*,`, ``, `You have an outstanding rent balance:`, `💰 Amount: *${fmt(amount)}*`, `📅 Period: ${monthLabels.join(', ') || 'current period'}`, ``, `Please pay via M-Pesa or cash. Thank you! 🙏`, `━━━━━━━━━━━━━━━━`, `📞 Alpha Rental Management`].join('\n');
+    const waPhone = phone.replace(/^0/, '254').replace(/[^0-9]/g, '');
+    return `https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`;
 };
 
-// ── Column color tokens ───────────────────────────────────
+// ── Column color tokens ───────────────────────────────────────────────────────
 const COL = {
-    date:         { bg: '#eef2ff', text: '#4338ca', head: '#c7d2fe' },
-    tenant:       { bg: '#f8fafc', text: '#1e293b', head: '#e2e8f0' },
-    location:     { bg: '#f1f5f9', text: '#475569', head: '#e2e8f0' },
-    month:        { bg: '#faf5ff', text: '#7c3aed', head: '#e9d5ff' },
-    totalPaid:    { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
-    arrearsPaid:  { bg: '#fff7ed', text: '#c2410c', head: '#fed7aa' },
-    currentRent:  { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
-    arrearsRem:   { bg: '#fef9c3', text: '#92400e', head: '#fde68a' },
-    method:       { bg: '#f0fdfa', text: '#0f766e', head: '#99f6e4' },
-    receipt:      { bg: '#fafafa', text: '#6b7280', head: '#f3f4f6' },
-    by:           { bg: '#fafafa', text: '#9ca3af', head: '#f3f4f6' },
-    actions:      { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
+    date: { bg: '#eef2ff', text: '#4338ca', head: '#c7d2fe' },
+    tenant: { bg: '#f8fafc', text: '#1e293b', head: '#e2e8f0' },
+    location: { bg: '#f1f5f9', text: '#475569', head: '#e2e8f0' },
+    month: { bg: '#faf5ff', text: '#7c3aed', head: '#e9d5ff' },
+    totalPaid: { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
+    arrearsPaid: { bg: '#fff7ed', text: '#c2410c', head: '#fed7aa' },
+    currentRent: { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
+    arrearsRem: { bg: '#fef9c3', text: '#92400e', head: '#fde68a' },
+    method: { bg: '#f0fdfa', text: '#0f766e', head: '#99f6e4' },
+    receipt: { bg: '#fafafa', text: '#6b7280', head: '#f3f4f6' },
+    by: { bg: '#fafafa', text: '#9ca3af', head: '#f3f4f6' },
+    remind: { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
+    actions: { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
 };
 
 export default function PaymentsPage() {
@@ -48,12 +51,19 @@ export default function PaymentsPage() {
     const [matching, setMatching] = useState(false);
     const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [showReceipt, setShowReceipt] = useState<any>(null);
-
-    // Edit / Delete state
     const [editingPayment, setEditingPayment] = useState<any>(null);
     const [editForm, setEditForm] = useState({ reference_no: '', notes_display: '' });
     const [deletingPayment, setDeletingPayment] = useState<any>(null);
     const [actionLoading, setActionLoading] = useState(false);
+
+    // ── Callback-to-tenant linking ────────────────────────────────────────────
+    const [linkingCallback, setLinkingCallback] = useState<any>(null); // M-Pesa or Jenga callback
+    const [linkTenantId, setLinkTenantId] = useState(0);
+    const [linkLoading, setLinkLoading] = useState(false);
+
+    // ── Real arrears data for selected tenant ─────────────────────────────────
+    const [tenantArrearData, setTenantArrearData] = useState<any>(null);
+    const [loadingArrears, setLoadingArrears] = useState(false);
 
     const [payForm, setPayForm] = useState({
         tenant_id: 0, amount: '', payment_method: 'Cash',
@@ -70,10 +80,7 @@ export default function PaymentsPage() {
                 getLocations(),
                 getMpesaTransactions(false)
             ]);
-            setPayments(p);
-            setTenants(t.filter((te: any) => te.status === 'Active'));
-            setLocations(l);
-            setMpesaTxns(m);
+            setPayments(p); setTenants(t.filter((te: any) => te.status === 'Active')); setLocations(l); setMpesaTxns(m);
         } catch { toast.error('Failed to load payments'); }
         setLoading(false);
     }, []);
@@ -81,18 +88,27 @@ export default function PaymentsPage() {
     useEffect(() => {
         const saved = localStorage.getItem('arms_location');
         const lid = saved ? parseInt(saved) : null;
-        setLocationId(lid);
-        loadData(lid);
+        setLocationId(lid); loadData(lid);
         const handler = (e: any) => { setLocationId(e.detail); loadData(e.detail); };
         window.addEventListener('arms-location-change', handler);
         return () => window.removeEventListener('arms-location-change', handler);
     }, [loadData]);
 
+    // ── Fetch real accumulated arrears when tenant changes ────────────────────
+    useEffect(() => {
+        if (!payForm.tenant_id) { setTenantArrearData(null); return; }
+        setLoadingArrears(true);
+        getAccumulatedArrearsForTenant(payForm.tenant_id)
+            .then(data => setTenantArrearData(data))
+            .catch(() => setTenantArrearData(null))
+            .finally(() => setLoadingArrears(false));
+    }, [payForm.tenant_id]);
+
     const loadC2B = async () => {
         try {
             const { data } = await c2bSupabase.from('c2b_transactions').select('*').order('created_at', { ascending: false }).limit(50);
             setC2bPayments(data || []);
-            toast.success(`${data?.length || 0} C2B loaded`);
+            toast.success(`${data?.length || 0} C2B transactions loaded`);
         } catch { setC2bPayments([]); }
     };
 
@@ -115,10 +131,8 @@ export default function PaymentsPage() {
                 location_id: tenant?.location_id
             });
             toast.success('Payment recorded! Generating receipt…');
-
-            const balanceBefore = tenant.balance || 0;
+            const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
             const newBalance = Math.max(0, balanceBefore - parseFloat(payForm.amount));
-
             setShowReceipt({
                 tenant_name: tenant.tenant_name,
                 phone: tenant.phone || '',
@@ -137,18 +151,47 @@ export default function PaymentsPage() {
                 arrears_paid: result.arrearsPaid ?? 0,
                 current_rent_paid: result.currentRentPaid ?? 0,
             });
-
             setShowPayModal(false);
             setPayForm({ tenant_id: 0, amount: '', payment_method: 'Cash', mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '', payment_month: new Date().toISOString().slice(0, 7) });
+            setTenantArrearData(null);
             loadData(locationId);
-        } catch (err: any) { toast.error(err.message || 'Failed'); }
+        } catch (err: any) { toast.error(err.message || 'Failed to record payment'); }
+    };
+
+    // ── Link callback to tenant ───────────────────────────────────────────────
+    const handleLinkCallback = async () => {
+        if (!linkingCallback || !linkTenantId) { toast.error('Select a tenant to link'); return; }
+        const tenant = tenants.find(t => t.tenant_id === linkTenantId);
+        if (!tenant) return;
+        setLinkLoading(true);
+        try {
+            const user = JSON.parse(localStorage.getItem('arms_user') || '{}');
+            const amount = linkingCallback.trans_amount || linkingCallback.amount || 0;
+            const receipt = linkingCallback.trans_id || linkingCallback.mpesa_receipt || linkingCallback.reference || '';
+            const phone = linkingCallback.msisdn || linkingCallback.phone || '';
+            await recordPayment({
+                tenant_id: linkTenantId,
+                amount,
+                payment_method: 'M-Pesa',
+                mpesa_receipt: receipt,
+                mpesa_phone: phone,
+                notes: `[Month: ${new Date().toISOString().slice(0, 7)}] [Time: ${new Date().toLocaleTimeString()}] Linked from M-Pesa callback`,
+                recorded_by: user.name || 'Admin',
+                location_id: tenant.location_id,
+            });
+            toast.success(`Payment of KES ${amount.toLocaleString()} linked to ${tenant.tenant_name}!`);
+            setLinkingCallback(null);
+            setLinkTenantId(0);
+            loadData(locationId);
+        } catch (err: any) { toast.error(err.message || 'Link failed'); }
+        setLinkLoading(false);
     };
 
     const handleAutoMatch = async (id: number) => {
         try {
             const r = await autoMatchMpesa(id);
             if (r) { toast.success(`Matched to ${r.tenant.tenant_name}!`); loadData(locationId); }
-            else toast.error('No match found');
+            else toast.error('No automatic match found. Use manual link instead.');
         } catch { toast.error('Failed'); }
     };
 
@@ -163,9 +206,8 @@ export default function PaymentsPage() {
         setActionLoading(true);
         try {
             await deletePayment(deletingPayment.payment_id);
-            toast.success('Payment deleted and balances restored.');
-            setDeletingPayment(null);
-            loadData(locationId);
+            toast.success('Payment deleted — balances restored.');
+            setDeletingPayment(null); loadData(locationId);
         } catch (err: any) { toast.error(err.message || 'Delete failed'); }
         setActionLoading(false);
     };
@@ -174,60 +216,47 @@ export default function PaymentsPage() {
         if (!editingPayment) return;
         setActionLoading(true);
         try {
-            await updatePaymentNotes(editingPayment.payment_id, {
-                reference_no: editForm.reference_no || undefined,
-                notes: editForm.notes_display
-            });
-            toast.success('Payment updated.');
-            setEditingPayment(null);
-            loadData(locationId);
+            await updatePaymentNotes(editingPayment.payment_id, { reference_no: editForm.reference_no || undefined, notes: editForm.notes_display });
+            toast.success('Payment updated.'); setEditingPayment(null); loadData(locationId);
         } catch (err: any) { toast.error(err.message || 'Update failed'); }
         setActionLoading(false);
     };
 
-    const openEdit = (p: any) => {
-        setEditingPayment(p);
-        setEditForm({ reference_no: p.reference_no || '', notes_display: cleanNoteDisplay(p.notes) });
-    };
+    const openEdit = (p: any) => { setEditingPayment(p); setEditForm({ reference_no: p.reference_no || '', notes_display: cleanNoteDisplay(p.notes) }); };
 
     const viewReceipt = (p: any) => {
         const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
         const arrearsPaid = parseNoteTag(p.notes, 'ArrearsPaid');
         const currentRentPaid = parseNoteTag(p.notes, 'CurrentRentPaid');
         setShowReceipt({
-            payment_id: p.payment_id,
-            tenant_name: p.arms_tenants?.tenant_name || '-',
-            phone: p.arms_tenants?.phone || '',
-            id_number: p.arms_tenants?.id_number || '',
-            unit_name: p.arms_tenants?.arms_units?.unit_name || '-',
-            location_name: p.arms_locations?.location_name || '-',
-            monthly_rent: p.arms_tenants?.monthly_rent || 0,
-            amount: p.amount,
-            payment_method: p.payment_method,
-            mpesa_receipt: p.mpesa_receipt || '',
-            payment_date: p.payment_date,
-            payment_month: monthMatch ? monthMatch[1] : '',
-            balance_before: p.amount + (p.arms_tenants?.balance || 0),
-            balance_after: p.arms_tenants?.balance || 0,
-            recorded_by: p.recorded_by || '',
-            arrears_paid: arrearsPaid,
+            payment_id: p.payment_id, tenant_name: p.arms_tenants?.tenant_name || '-',
+            phone: p.arms_tenants?.phone || '', id_number: p.arms_tenants?.id_number || '',
+            unit_name: p.arms_tenants?.arms_units?.unit_name || '-', location_name: p.arms_locations?.location_name || '-',
+            monthly_rent: p.arms_tenants?.monthly_rent || 0, amount: p.amount,
+            payment_method: p.payment_method, mpesa_receipt: p.mpesa_receipt || '',
+            payment_date: p.payment_date, payment_month: monthMatch ? monthMatch[1] : '',
+            balance_before: p.amount + (p.arms_tenants?.balance || 0), balance_after: p.arms_tenants?.balance || 0,
+            recorded_by: p.recorded_by || '', arrears_paid: arrearsPaid,
             current_rent_paid: currentRentPaid || p.amount - arrearsPaid,
         });
     };
 
     const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
-    const todayTotal = payments.filter(p => p.payment_date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s, p) => s + (p.amount || 0), 0);
     const totalAll = payments.reduce((s, p) => s + (p.amount || 0), 0);
+    const todayTotal = payments.filter(p => p.payment_date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s, p) => s + (p.amount || 0), 0);
     const totalArrearsPaid = payments.reduce((s, p) => s + (p.arrears_paid || 0), 0);
     const totalCurrentRentPaid = payments.reduce((s, p) => s + (p.current_rent_paid || 0), 0);
     const selectedTenant = tenants.find((t: any) => t.tenant_id === payForm.tenant_id);
 
-    // Live breakdown for payment modal
+    // ── Live breakdown using REAL bill data ───────────────────────────────────
     const liveAmount = parseFloat(payForm.amount) || 0;
-    const tenantArrears = selectedTenant ? Math.max(0, (selectedTenant.balance || 0) - (selectedTenant.monthly_rent || 0)) : 0;
-    const liveArrearsPaid = Math.min(liveAmount, tenantArrears);
-    const liveCurrentRentPaid = Math.max(0, liveAmount - liveArrearsPaid);
-    const liveBalanceAfter = Math.max(0, (selectedTenant?.balance || 0) - liveAmount);
+    const realArrearsTotal = tenantArrearData?.arrearsTotal ?? 0;
+    const realCurrentMonthDue = tenantArrearData?.currentMonthDue ?? 0;
+    const realTotalDue = tenantArrearData?.totalDue ?? (selectedTenant?.balance || 0);
+    const liveArrearsPaid = Math.min(liveAmount, realArrearsTotal);
+    const liveCurrentRentPaid = Math.max(0, Math.min(liveAmount - liveArrearsPaid, realCurrentMonthDue));
+    const liveCredit = Math.max(0, liveAmount - realTotalDue);
+    const liveBalanceAfter = Math.max(0, realTotalDue - liveAmount);
 
     if (loading) return (
         <div className="flex flex-col items-center justify-center h-64 gap-3">
@@ -245,14 +274,16 @@ export default function PaymentsPage() {
             <div className="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 className="page-title">💰 Payments</h1>
-                    <p className="text-sm text-gray-500 mt-1">Record, track and manage tenant rent payments</p>
+                    <p className="text-sm text-gray-500 mt-1">Record, track and manage tenant rent payments with full arrears-first allocation</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                     <button onClick={() => loadData(locationId)} className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition">
                         <FiRefreshCw size={16} />
                     </button>
-                    <button onClick={() => setShowMpesaPanel(!showMpesaPanel)} className="btn-outline flex items-center gap-2 text-green-700 border-green-200 hover:bg-green-50">📱 M-Pesa C2B</button>
-                    <button onClick={() => { setPayForm({ tenant_id: 0, amount: '', payment_method: 'Cash', mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '', payment_month: new Date().toISOString().slice(0, 7) }); setShowPayModal(true); }} className="btn-primary flex items-center gap-2">
+                    <button onClick={() => { setShowMpesaPanel(!showMpesaPanel); if (!showMpesaPanel) loadC2B(); }} className="btn-outline flex items-center gap-2 text-green-700 border-green-200 hover:bg-green-50">
+                        📱 M-Pesa / Jenga Callbacks
+                    </button>
+                    <button onClick={() => { setPayForm({ tenant_id: 0, amount: '', payment_method: 'Cash', mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '', payment_month: new Date().toISOString().slice(0, 7) }); setTenantArrearData(null); setShowPayModal(true); }} className="btn-primary flex items-center gap-2">
                         <FiPlus size={16} /> Record Payment
                     </button>
                 </div>
@@ -265,15 +296,13 @@ export default function PaymentsPage() {
                     { label: "Today's Collection", value: fmt(todayTotal), icon: FiDollarSign, color: '#10b981', bg: '#f0fdf4', sub: 'Collected today' },
                     { label: 'Total Collected', value: fmt(totalAll), icon: FiCreditCard, color: '#3b82f6', bg: '#eff6ff', sub: 'All payments' },
                     { label: 'Arrears Paid', value: fmt(totalArrearsPaid), icon: FiAlertTriangle, color: '#c2410c', bg: '#fff7ed', sub: '⬇ Old balances cleared' },
-                    { label: 'Current Rent Paid', value: fmt(totalCurrentRentPaid), icon: FiSmartphone, color: '#7c3aed', bg: '#faf5ff', sub: '✅ This month rent' },
+                    { label: 'Current Rent Paid', value: fmt(totalCurrentRentPaid), icon: FiSmartphone, color: '#7c3aed', bg: '#faf5ff', sub: '✅ Monthly rent' },
                 ].map((card, i) => (
                     <div key={i} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all relative overflow-hidden"
                         style={{ borderLeftWidth: 4, borderLeftColor: card.color }}>
                         <div className="flex items-center justify-between mb-2">
                             <p className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">{card.label}</p>
-                            <div className="p-2.5 rounded-xl" style={{ background: card.bg }}>
-                                <card.icon size={18} style={{ color: card.color }} />
-                            </div>
+                            <div className="p-2.5 rounded-xl" style={{ background: card.bg }}><card.icon size={18} style={{ color: card.color }} /></div>
                         </div>
                         <p className="text-xl font-extrabold text-gray-900">{card.value}</p>
                         <p className="text-xs text-gray-400 mt-1">{card.sub}</p>
@@ -282,48 +311,78 @@ export default function PaymentsPage() {
                 ))}
             </div>
 
-            {/* M-Pesa C2B Panel */}
+            {/* M-Pesa / Jenga Callback Panel */}
             {showMpesaPanel && (
                 <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><FiSmartphone className="text-green-500" /> M-Pesa C2B Transactions</h2>
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                        <div>
+                            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">📱 M-Pesa / Jenga Callback Transactions</h2>
+                            <p className="text-xs text-gray-400 mt-0.5">Auto-match or manually link callbacks to tenants</p>
+                        </div>
                         <div className="flex gap-2">
                             <button onClick={handleAutoMatchAll} disabled={matching} className="btn-success text-sm px-3 py-2 flex items-center gap-2">
-                                {matching ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiLink size={14} />} Match All
+                                {matching ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiLink size={14} />} Auto-Match All
                             </button>
                             <button onClick={loadC2B} className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"><FiRefreshCw size={16} /></button>
                         </div>
                     </div>
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    <div className="space-y-2 max-h-[360px] overflow-y-auto">
                         {mpesaTxns.length === 0 && c2bPayments.length === 0 ? (
-                            <div className="text-center py-6"><p className="text-sm text-gray-400">No unmatched transactions</p><button onClick={loadC2B} className="mt-2 text-xs text-indigo-600 hover:text-indigo-700">Load C2B →</button></div>
-                        ) : <>
-                            {mpesaTxns.map(txn => (
-                                <div key={txn.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition">
-                                    <div><p className="text-sm font-medium text-gray-900">{txn.first_name} {txn.last_name}</p><p className="text-xs text-gray-400">{txn.msisdn} • {txn.trans_id}</p></div>
-                                    <div className="flex items-center gap-3"><span className="text-sm font-bold text-green-600">{fmt(txn.trans_amount)}</span><button onClick={() => handleAutoMatch(txn.id)} className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"><FiCheck size={16} /></button></div>
-                                </div>
-                            ))}
-                            {c2bPayments.map(p => (
-                                <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-green-50">
-                                    <div><p className="text-sm font-medium text-gray-900">{p.first_name || 'Unknown'} {p.last_name || ''}</p><p className="text-xs text-gray-400">{p.msisdn || p.phone} • C2B</p></div>
-                                    <span className="text-sm font-bold text-green-600">{fmt(p.trans_amount || p.amount)}</span>
-                                </div>
-                            ))}
-                        </>}
+                            <div className="text-center py-8">
+                                <p className="text-sm text-gray-400 font-medium">No unmatched callbacks</p>
+                                <p className="text-xs text-gray-300 mt-1">All transactions have been matched to tenants</p>
+                            </div>
+                        ) : (
+                            <>
+                                {mpesaTxns.map((txn: any) => (
+                                    <div key={txn.id} className="flex items-center justify-between p-3 rounded-xl bg-green-50 border border-green-100 flex-wrap gap-2">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">{txn.first_name} {txn.last_name}</p>
+                                            <p className="text-xs text-gray-500">{txn.msisdn} • {txn.trans_id} • M-Pesa</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-bold text-green-700">{fmt(txn.trans_amount)}</span>
+                                            <button onClick={() => handleAutoMatch(txn.id)} title="Auto-match"
+                                                className="p-1.5 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition" title="Auto-match by phone">
+                                                <FiCheck size={14} />
+                                            </button>
+                                            <button onClick={() => { setLinkingCallback(txn); setLinkTenantId(0); }}
+                                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-blue-100 text-blue-700 hover:bg-blue-200 transition flex items-center gap-1">
+                                                <FiLink size={12} /> Link
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                                {c2bPayments.map((p: any) => (
+                                    <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-blue-50 border border-blue-100 flex-wrap gap-2">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">{p.first_name || 'Unknown'} {p.last_name || ''}</p>
+                                            <p className="text-xs text-gray-500">{p.msisdn || p.phone} • C2B • Jenga/Daraja</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-bold text-blue-700">{fmt(p.trans_amount || p.amount)}</span>
+                                            <button onClick={() => { setLinkingCallback(p); setLinkTenantId(0); }}
+                                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition flex items-center gap-1">
+                                                <FiLink size={12} /> Link
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )}
                     </div>
                 </div>
             )}
 
             {/* ── Ultra Color-Coded Payments DataGrid ── */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
                     <div>
                         <h2 className="text-sm font-bold text-gray-900">🗂️ Payment Records</h2>
-                        <p className="text-[11px] text-gray-400 mt-0.5">{payments.length} total · Color-coded by field type</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">{payments.length} total · Color-coded · Arrears-first FIFO</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
-                        {[{ label: 'Arrears Paid', color: COL.arrearsPaid.text }, { label: 'Current Rent', color: COL.currentRent.text }, { label: 'Remaining Arrears', color: COL.arrearsRem.text }].map(l => (
+                        {[{ label: 'Arrears Paid', color: COL.arrearsPaid.text }, { label: 'Current Rent', color: COL.currentRent.text }, { label: 'Rem. Arrears', color: COL.arrearsRem.text }].map(l => (
                             <span key={l.label} className="text-[10px] font-bold px-2 py-1 rounded-lg border" style={{ color: l.color, borderColor: l.color + '40', background: l.color + '10' }}>{l.label}</span>
                         ))}
                     </div>
@@ -333,17 +392,12 @@ export default function PaymentsPage() {
                         <thead>
                             <tr>
                                 {[
-                                    { label: 'Date & Time', col: COL.date },
-                                    { label: 'Tenant', col: COL.tenant },
-                                    { label: 'Location', col: COL.location },
-                                    { label: 'Month', col: COL.month },
-                                    { label: 'Total Paid', col: COL.totalPaid },
-                                    { label: '⬇ Arrears Paid', col: COL.arrearsPaid },
-                                    { label: '🏠 Current Rent Paid', col: COL.currentRent },
-                                    { label: '⏳ Arrears Remaining', col: COL.arrearsRem },
-                                    { label: 'Method', col: COL.method },
-                                    { label: 'Receipt/Ref', col: COL.receipt },
-                                    { label: 'By', col: COL.by },
+                                    { label: 'Date & Time', col: COL.date }, { label: 'Tenant', col: COL.tenant },
+                                    { label: 'Location', col: COL.location }, { label: 'Month', col: COL.month },
+                                    { label: 'Total Paid', col: COL.totalPaid }, { label: '⬇ Arrears Paid', col: COL.arrearsPaid },
+                                    { label: '🏠 Current Rent', col: COL.currentRent }, { label: '⏳ Arrears Rem.', col: COL.arrearsRem },
+                                    { label: 'Method', col: COL.method }, { label: 'Receipt/Ref', col: COL.receipt },
+                                    { label: 'By', col: COL.by }, { label: '📱 Remind', col: COL.remind },
                                     { label: 'Actions', col: COL.actions },
                                 ].map((h, i) => (
                                     <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
@@ -355,7 +409,7 @@ export default function PaymentsPage() {
                         </thead>
                         <tbody>
                             {payments.length === 0 ? (
-                                <tr><td colSpan={12} className="text-center py-12 text-gray-400">
+                                <tr><td colSpan={13} className="text-center py-12 text-gray-400">
                                     <div className="flex flex-col items-center gap-2"><span className="text-4xl">📭</span><p className="text-sm font-medium">No payments recorded yet</p></div>
                                 </td></tr>
                             ) : payments.map(p => {
@@ -368,84 +422,60 @@ export default function PaymentsPage() {
                                 const tenantBalance = p.arms_tenants?.balance || 0;
                                 const monthlyRent = p.arms_tenants?.monthly_rent || 0;
                                 const arrearsRemaining = Math.max(0, tenantBalance - monthlyRent);
+                                const tenantPhone = p.arms_tenants?.phone;
+                                const unpaidMonths = p.notes?.match(/\[ArrearMonths:([^\]]+)\]/)?.[1]?.split(',') || [];
 
                                 return (
                                     <tr key={p.payment_id} className="transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}
                                         onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = '#fafbff'}
                                         onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background = ''}>
-                                        {/* Date/Time */}
                                         <td className="px-3 py-3" style={{ background: COL.date.bg + '80' }}>
                                             <div className="font-semibold text-xs" style={{ color: COL.date.text }}>{new Date(p.payment_date).toLocaleDateString()}</div>
                                             <div className="text-[10px] text-gray-400 flex items-center gap-1"><FiClock size={9} /> {payTime}</div>
                                         </td>
-                                        {/* Tenant */}
                                         <td className="px-3 py-3" style={{ background: COL.tenant.bg + '80' }}>
                                             <span className="font-semibold text-xs text-gray-900">{p.arms_tenants?.tenant_name || '-'}</span>
                                         </td>
-                                        {/* Location */}
-                                        <td className="px-3 py-3 text-[11px]" style={{ background: COL.location.bg + '80', color: COL.location.text }}>
-                                            {p.arms_locations?.location_name || '-'}
-                                        </td>
-                                        {/* Month */}
+                                        <td className="px-3 py-3 text-[11px]" style={{ background: COL.location.bg + '80', color: COL.location.text }}>{p.arms_locations?.location_name || '-'}</td>
                                         <td className="px-3 py-3" style={{ background: COL.month.bg + '80' }}>
                                             <span className="text-[11px] font-bold" style={{ color: COL.month.text }}>
                                                 {payMonth !== '-' ? new Date(payMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '-'}
                                             </span>
                                         </td>
-                                        {/* Total Paid */}
                                         <td className="px-3 py-3" style={{ background: COL.totalPaid.bg + '80' }}>
                                             <span className="text-xs font-extrabold" style={{ color: COL.totalPaid.text }}>{fmt(p.amount)}</span>
                                         </td>
-                                        {/* Arrears Paid */}
                                         <td className="px-3 py-3" style={{ background: COL.arrearsPaid.bg + '80' }}>
-                                            {arrearsPaid > 0
-                                                ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.arrearsPaid.head, color: COL.arrearsPaid.text }}>{fmt(arrearsPaid)}</span>
-                                                : <span className="text-[10px] text-gray-300">—</span>}
+                                            {arrearsPaid > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.arrearsPaid.head, color: COL.arrearsPaid.text }}>{fmt(arrearsPaid)}</span> : <span className="text-[10px] text-gray-300">—</span>}
                                         </td>
-                                        {/* Current Month Rent Paid */}
                                         <td className="px-3 py-3" style={{ background: COL.currentRent.bg + '80' }}>
-                                            {currentRentPaid > 0
-                                                ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.currentRent.head, color: COL.currentRent.text }}>{fmt(currentRentPaid)}</span>
-                                                : <span className="text-[10px] text-gray-300">—</span>}
+                                            {currentRentPaid > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.currentRent.head, color: COL.currentRent.text }}>{fmt(currentRentPaid)}</span> : <span className="text-[10px] text-gray-300">—</span>}
                                         </td>
-                                        {/* Arrears Remaining */}
                                         <td className="px-3 py-3" style={{ background: COL.arrearsRem.bg + '80' }}>
-                                            {arrearsRemaining > 0
-                                                ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.arrearsRem.head, color: COL.arrearsRem.text }}>{fmt(arrearsRemaining)}</span>
-                                                : <span className="text-[10px] font-bold text-green-600">✓ Clear</span>}
+                                            {arrearsRemaining > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: COL.arrearsRem.head, color: COL.arrearsRem.text }}>{fmt(arrearsRemaining)}</span> : <span className="text-[10px] font-bold text-green-600">✓ Clear</span>}
                                         </td>
-                                        {/* Method */}
                                         <td className="px-3 py-3" style={{ background: COL.method.bg + '80' }}>
                                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${p.payment_method === 'M-Pesa' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                                                 {p.payment_method === 'M-Pesa' ? '📱' : '💵'} {p.payment_method}
                                             </span>
                                         </td>
-                                        {/* Receipt/Ref */}
-                                        <td className="px-3 py-3 text-[10px]" style={{ background: COL.receipt.bg + '80', color: COL.receipt.text }}>
-                                            {p.mpesa_receipt || p.reference_no || '-'}
+                                        <td className="px-3 py-3 text-[10px]" style={{ background: COL.receipt.bg + '80', color: COL.receipt.text }}>{p.mpesa_receipt || p.reference_no || '-'}</td>
+                                        <td className="px-3 py-3 text-[10px]" style={{ background: COL.by.bg + '80', color: COL.by.text }}>{p.recorded_by || '-'}</td>
+                                        <td className="px-3 py-3" style={{ background: COL.remind.bg + '80' }}>
+                                            {tenantPhone && arrearsRemaining > 0 ? (
+                                                <a href={buildWhatsAppLink(tenantPhone, p.arms_tenants?.tenant_name, arrearsRemaining, unpaidMonths)}
+                                                    target="_blank" rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-white transition hover:opacity-90"
+                                                    style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}>
+                                                    📱 WA
+                                                </a>
+                                            ) : <span className="text-[10px] text-gray-300">—</span>}
                                         </td>
-                                        {/* By */}
-                                        <td className="px-3 py-3 text-[10px]" style={{ background: COL.by.bg + '80', color: COL.by.text }}>
-                                            {p.recorded_by || '-'}
-                                        </td>
-                                        {/* Actions */}
                                         <td className="px-3 py-3" style={{ background: COL.actions.bg + '80' }}>
                                             <div className="flex items-center gap-1.5">
-                                                <button onClick={() => viewReceipt(p)} title="View Receipt"
-                                                    className="p-1.5 rounded-lg transition hover:scale-110"
-                                                    style={{ background: COL.month.head, color: COL.month.text }}>
-                                                    <FiPrinter size={13} />
-                                                </button>
-                                                <button onClick={() => openEdit(p)} title="Edit Payment"
-                                                    className="p-1.5 rounded-lg transition hover:scale-110"
-                                                    style={{ background: COL.currentRent.head, color: COL.currentRent.text }}>
-                                                    <FiEdit2 size={13} />
-                                                </button>
-                                                <button onClick={() => setDeletingPayment(p)} title="Delete Payment"
-                                                    className="p-1.5 rounded-lg transition hover:scale-110"
-                                                    style={{ background: '#fee2e2', color: '#b91c1c' }}>
-                                                    <FiTrash2 size={13} />
-                                                </button>
+                                                <button onClick={() => viewReceipt(p)} title="View Receipt" className="p-1.5 rounded-lg transition hover:scale-110" style={{ background: COL.month.head, color: COL.month.text }}><FiPrinter size={13} /></button>
+                                                <button onClick={() => openEdit(p)} title="Edit" className="p-1.5 rounded-lg transition hover:scale-110" style={{ background: COL.currentRent.head, color: COL.currentRent.text }}><FiEdit2 size={13} /></button>
+                                                <button onClick={() => setDeletingPayment(p)} title="Delete" className="p-1.5 rounded-lg transition hover:scale-110" style={{ background: '#fee2e2', color: '#b91c1c' }}><FiTrash2 size={13} /></button>
                                             </div>
                                         </td>
                                     </tr>
@@ -457,7 +487,7 @@ export default function PaymentsPage() {
                 {payments.length > 0 && (
                     <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
                         <p className="text-xs text-gray-400">{payments.length} record{payments.length !== 1 ? 's' : ''}</p>
-                        <div className="flex items-center gap-4 text-xs font-bold">
+                        <div className="flex items-center gap-4 text-xs font-bold flex-wrap">
                             <span style={{ color: COL.totalPaid.text }}>Total: {fmt(totalAll)}</span>
                             <span style={{ color: COL.arrearsPaid.text }}>Arrears Paid: {fmt(totalArrearsPaid)}</span>
                             <span style={{ color: COL.currentRent.text }}>Current Rent: {fmt(totalCurrentRentPaid)}</span>
@@ -469,12 +499,12 @@ export default function PaymentsPage() {
             {/* ── Record Payment Modal ── */}
             {showPayModal && (
                 <div className="modal-overlay" onClick={() => setShowPayModal(false)}>
-                    <div className="modal-content" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+                    <div className="modal-content" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
                         <div className="px-6 py-5 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
                             <h2 className="text-lg font-bold text-white flex items-center gap-2">💰 Record Rent Payment</h2>
-                            <p className="text-indigo-200 text-sm mt-0.5">Arrears are cleared first, then current month rent</p>
+                            <p className="text-indigo-200 text-sm mt-0.5">Arrears cleared first (FIFO), then current month rent</p>
                         </div>
-                        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                        <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
                             {/* Tenant select */}
                             <div>
                                 <label className="text-sm font-medium text-gray-700 mb-1 block">👤 Select Tenant *</label>
@@ -482,23 +512,65 @@ export default function PaymentsPage() {
                                     <option value={0}>Choose tenant…</option>
                                     {tenants.map((t: any) => (
                                         <option key={t.tenant_id} value={t.tenant_id}>
-                                            {t.tenant_name} — {t.arms_units?.unit_name} ({t.arms_locations?.location_name}) [Bal: KES {(t.balance || 0).toLocaleString()}]
+                                            {t.tenant_name} — {t.arms_units?.unit_name} ({t.arms_locations?.location_name})
                                         </option>
                                     ))}
                                 </select>
                             </div>
 
-                            {/* Tenant info card */}
+                            {/* Tenant info with REAL accumulated arrears */}
                             {selectedTenant && (
-                                <div className="rounded-2xl p-4 border" style={{ background: 'linear-gradient(135deg,#eff6ff,#faf5ff)', borderColor: '#c7d2fe' }}>
-                                    <div className="grid grid-cols-2 gap-3 text-sm">
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">👤 Tenant</span><span className="font-semibold text-gray-900">{selectedTenant.tenant_name}</span></div>
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">📞 Phone</span><span className="font-medium text-gray-700">{selectedTenant.phone || '-'}</span></div>
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">🏠 Unit</span><span className="font-medium text-gray-700">{selectedTenant.arms_units?.unit_name || '-'}</span></div>
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">💰 Monthly Rent</span><span className="font-semibold text-gray-900">{fmt(selectedTenant.monthly_rent)}</span></div>
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">⚠️ Total Balance</span><span className={`font-bold ${(selectedTenant.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>{fmt(selectedTenant.balance)}</span></div>
-                                        <div><span className="text-gray-400 text-[10px] font-bold uppercase block">🕐 Prev. Arrears</span><span className="font-bold text-orange-600">{fmt(tenantArrears)}</span></div>
+                                <div className="rounded-2xl overflow-hidden border" style={{ borderColor: '#c7d2fe' }}>
+                                    <div className="px-4 py-2.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#4f46e5,#7c3aed)' }}>
+                                        📊 Tenant Account Summary — Accumulated Arrears
                                     </div>
+                                    {loadingArrears ? (
+                                        <div className="flex items-center justify-center p-6 gap-2">
+                                            <div className="spinner" style={{ width: 16, height: 16 }} />
+                                            <span className="text-xs text-gray-400">Calculating actual arrears from bills…</span>
+                                        </div>
+                                    ) : tenantArrearData ? (
+                                        <>
+                                            <div className="grid grid-cols-2 gap-0">
+                                                <div className="p-3 border-r border-b" style={{ background: '#fef2f2' }}>
+                                                    <p className="text-[9px] font-bold uppercase tracking-widest text-red-500 mb-1">⏰ Previous Months Arrears</p>
+                                                    <p className="text-xl font-extrabold text-red-700">{fmt(tenantArrearData.arrearsTotal)}</p>
+                                                    <p className="text-[10px] text-gray-400 mt-0.5">{tenantArrearData.arrearsMonths.length} month{tenantArrearData.arrearsMonths.length !== 1 ? 's' : ''} overdue</p>
+                                                </div>
+                                                <div className="p-3 border-b" style={{ background: '#eff6ff' }}>
+                                                    <p className="text-[9px] font-bold uppercase tracking-widest text-blue-500 mb-1">🏠 Current Month Due</p>
+                                                    <p className="text-xl font-extrabold text-blue-700">{fmt(tenantArrearData.currentMonthDue)}</p>
+                                                    <p className="text-[10px] text-gray-400 mt-0.5">Monthly rent: {fmt(selectedTenant.monthly_rent)}</p>
+                                                </div>
+                                            </div>
+                                            {/* Month-by-month breakdown */}
+                                            {tenantArrearData.bills.length > 0 && (
+                                                <div className="p-3 border-b bg-gray-50">
+                                                    <p className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-2">📅 Unpaid Bills Breakdown</p>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {tenantArrearData.bills.map((bill: any) => (
+                                                            <div key={bill.billing_id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-semibold"
+                                                                style={bill.billing_month < new Date().toISOString().slice(0, 7) ? { background: '#fee2e2', borderColor: '#fca5a5', color: '#b91c1c' } : { background: '#dbeafe', borderColor: '#93c5fd', color: '#1d4ed8' }}>
+                                                                <span>{bill.billing_month < new Date().toISOString().slice(0, 7) ? '⏰' : '🏠'}</span>
+                                                                <span>{new Date(bill.billing_month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
+                                                                <span className="font-extrabold">{fmt(bill.balance)}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <div className="p-3" style={{ background: '#fef9c3' }}>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-bold text-amber-800">💰 TOTAL OUTSTANDING</span>
+                                                    <span className="text-base font-extrabold text-amber-900">{fmt(tenantArrearData.totalDue)}</span>
+                                                </div>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="p-3 bg-gray-50">
+                                            <p className="text-xs text-gray-400">No unpaid bills found — tenant is up to date! ✅</p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -519,40 +591,49 @@ export default function PaymentsPage() {
                                     <select value={payForm.payment_method} onChange={e => setPayForm({ ...payForm, payment_method: e.target.value })} className="select-field">
                                         <option value="Cash">💵 Cash</option>
                                         <option value="M-Pesa">📱 M-Pesa</option>
+                                        <option value="Bank Transfer">🏦 Bank Transfer</option>
+                                        <option value="Jenga">🔗 Jenga</option>
                                     </select>
                                 </div>
                             </div>
 
-                            {payForm.payment_method === 'M-Pesa' && (
+                            {(payForm.payment_method === 'M-Pesa' || payForm.payment_method === 'Jenga') && (
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">📝 M-Pesa Receipt</label><input value={payForm.mpesa_receipt} onChange={e => setPayForm({ ...payForm, mpesa_receipt: e.target.value })} className="input-field" placeholder="SJ12ABC456" /></div>
-                                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">📞 Phone</label><input value={payForm.mpesa_phone} onChange={e => setPayForm({ ...payForm, mpesa_phone: e.target.value })} className="input-field" placeholder="07XXXXXXXX" /></div>
+                                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">📝 Transaction Code</label><input value={payForm.mpesa_receipt} onChange={e => setPayForm({ ...payForm, mpesa_receipt: e.target.value })} className="input-field" placeholder="e.g. SJ12ABC456" /></div>
+                                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">📞 Phone Number</label><input value={payForm.mpesa_phone} onChange={e => setPayForm({ ...payForm, mpesa_phone: e.target.value })} className="input-field" placeholder="07XXXXXXXX" /></div>
                                 </div>
                             )}
+                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📋 Reference / Notes</label><textarea value={payForm.notes} onChange={e => setPayForm({ ...payForm, notes: e.target.value })} className="input-field" rows={2} placeholder="Optional notes" /></div>
 
-                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📋 Notes</label><textarea value={payForm.notes} onChange={e => setPayForm({ ...payForm, notes: e.target.value })} className="input-field" rows={2} placeholder="Payment notes (optional)" /></div>
-
-                            {/* Live payment breakdown */}
+                            {/* Live payment breakdown (from real bill data) */}
                             {selectedTenant && liveAmount > 0 && (
                                 <div className="rounded-2xl overflow-hidden border" style={{ borderColor: '#a5b4fc' }}>
                                     <div className="px-4 py-2.5 text-xs font-bold text-white flex items-center gap-2" style={{ background: 'linear-gradient(90deg,#6366f1,#8b5cf6)' }}>
-                                        💡 Live Payment Allocation (FIFO — Arrears First)
+                                        💡 Live Allocation Preview (FIFO — Arrears First)
                                     </div>
                                     <div className="grid grid-cols-2 gap-0">
                                         <div className="p-3 border-r" style={{ background: COL.arrearsPaid.bg }}>
-                                            <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: COL.arrearsPaid.text }}>⬇ Arrears Paid</p>
+                                            <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: COL.arrearsPaid.text }}>⬇ Arrears Being Cleared</p>
                                             <p className="text-lg font-extrabold" style={{ color: COL.arrearsPaid.text }}>{fmt(liveArrearsPaid)}</p>
-                                            <p className="text-[10px] text-gray-400 mt-0.5">of {fmt(tenantArrears)} owed</p>
+                                            <p className="text-[10px] text-gray-400 mt-0.5">of {fmt(realArrearsTotal)} overdue</p>
                                         </div>
                                         <div className="p-3" style={{ background: COL.currentRent.bg }}>
                                             <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: COL.currentRent.text }}>🏠 Current Month Rent</p>
                                             <p className="text-lg font-extrabold" style={{ color: COL.currentRent.text }}>{fmt(liveCurrentRentPaid)}</p>
-                                            <p className="text-[10px] text-gray-400 mt-0.5">of {fmt(selectedTenant.monthly_rent)} due</p>
+                                            <p className="text-[10px] text-gray-400 mt-0.5">of {fmt(realCurrentMonthDue)} due</p>
                                         </div>
+                                        {liveCredit > 0 && (
+                                            <div className="p-3 col-span-2 border-t" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-bold text-green-700">💳 Overpayment / Credit</span>
+                                                    <span className="text-sm font-extrabold text-green-700">{fmt(liveCredit)}</span>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div className="p-3 col-span-2 border-t" style={{ background: liveBalanceAfter > 0 ? '#fef2f2' : '#f0fdf4', borderColor: liveBalanceAfter > 0 ? '#fecaca' : '#bbf7d0' }}>
                                             <div className="flex items-center justify-between">
                                                 <span className="text-xs font-bold" style={{ color: liveBalanceAfter > 0 ? '#b91c1c' : '#15803d' }}>
-                                                    {liveBalanceAfter > 0 ? '⚠️ Balance After Payment' : '✅ Fully Settled'}
+                                                    {liveBalanceAfter > 0 ? '⚠️ Balance Remaining After Payment' : '✅ Account Fully Settled'}
                                                 </span>
                                                 <span className="text-sm font-extrabold" style={{ color: liveBalanceAfter > 0 ? '#b91c1c' : '#15803d' }}>{fmt(liveBalanceAfter)}</span>
                                             </div>
@@ -569,7 +650,51 @@ export default function PaymentsPage() {
                 </div>
             )}
 
-            {/* ── Edit Payment Modal ── */}
+            {/* ── Callback Link Modal ── */}
+            {linkingCallback && (
+                <div className="modal-overlay" onClick={() => setLinkingCallback(null)}>
+                    <div className="modal-content" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+                        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between" style={{ background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)' }}>
+                            <h2 className="text-base font-bold text-green-900 flex items-center gap-2"><FiLink className="text-green-600" /> Link Payment to Tenant</h2>
+                            <button onClick={() => setLinkingCallback(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><FiX size={16} /></button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            {/* Callback info */}
+                            <div className="rounded-xl p-4 border border-green-200 bg-green-50">
+                                <p className="text-xs font-bold text-green-700 uppercase tracking-widest mb-2">📱 Callback Details</p>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                    <div><span className="text-[10px] text-gray-400 block">Name</span><span className="font-semibold">{linkingCallback.first_name} {linkingCallback.last_name || ''}</span></div>
+                                    <div><span className="text-[10px] text-gray-400 block">Amount</span><span className="font-bold text-green-700">{fmt(linkingCallback.trans_amount || linkingCallback.amount || 0)}</span></div>
+                                    <div><span className="text-[10px] text-gray-400 block">Phone</span><span className="font-medium">{linkingCallback.msisdn || linkingCallback.phone || '-'}</span></div>
+                                    <div><span className="text-[10px] text-gray-400 block">Code</span><span className="font-medium">{linkingCallback.trans_id || linkingCallback.mpesa_receipt || '-'}</span></div>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 mb-2 block">👤 Select Tenant to Link *</label>
+                                <select value={linkTenantId} onChange={e => setLinkTenantId(parseInt(e.target.value))} className="select-field">
+                                    <option value={0}>Choose tenant…</option>
+                                    {tenants.map((t: any) => (
+                                        <option key={t.tenant_id} value={t.tenant_id}>
+                                            {t.tenant_name} — {t.arms_units?.unit_name || '?'} [{fmt(t.balance || 0)} owed]
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-gray-400 mt-1.5">⚡ Payment will be allocated FIFO (arrears first, then current month)</p>
+                            </div>
+                        </div>
+                        <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
+                            <button onClick={() => setLinkingCallback(null)} className="btn-outline">Cancel</button>
+                            <button onClick={handleLinkCallback} disabled={linkLoading || !linkTenantId}
+                                className="btn-success flex items-center gap-2">
+                                {linkLoading ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiLink size={14} />}
+                                Link & Record Payment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Modal */}
             {editingPayment && (
                 <div className="modal-overlay" onClick={() => setEditingPayment(null)}>
                     <div className="modal-content" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
@@ -582,40 +707,30 @@ export default function PaymentsPage() {
                                 <p className="font-bold text-blue-900">{editingPayment.arms_tenants?.tenant_name}</p>
                                 <p className="text-blue-600 text-xs mt-0.5">{fmt(editingPayment.amount)} • {new Date(editingPayment.payment_date).toLocaleDateString()}</p>
                             </div>
-                            <div>
-                                <label className="text-sm font-medium text-gray-700 mb-1 block">📝 Reference / Receipt No</label>
-                                <input value={editForm.reference_no} onChange={e => setEditForm({ ...editForm, reference_no: e.target.value })} className="input-field" placeholder="Reference number" />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-gray-700 mb-1 block">📋 Notes</label>
-                                <textarea value={editForm.notes_display} onChange={e => setEditForm({ ...editForm, notes_display: e.target.value })} className="input-field" rows={3} />
-                            </div>
+                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📝 Reference / Receipt No</label><input value={editForm.reference_no} onChange={e => setEditForm({ ...editForm, reference_no: e.target.value })} className="input-field" placeholder="Reference number" /></div>
+                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📋 Notes</label><textarea value={editForm.notes_display} onChange={e => setEditForm({ ...editForm, notes_display: e.target.value })} className="input-field" rows={3} /></div>
                         </div>
                         <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
                             <button onClick={() => setEditingPayment(null)} className="btn-outline">Cancel</button>
                             <button onClick={handleEditSave} disabled={actionLoading} className="btn-primary flex items-center gap-2">
-                                {actionLoading ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSave size={14} />} Save Changes
+                                {actionLoading ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSave size={14} />} Save
                             </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* ── Delete Confirm Modal ── */}
+            {/* Delete Confirm */}
             {deletingPayment && (
                 <div className="modal-overlay" onClick={() => setDeletingPayment(null)}>
                     <div className="modal-content" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
                         <div className="p-6 text-center">
-                            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                                <FiTrash2 size={28} className="text-red-600" />
-                            </div>
+                            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4"><FiTrash2 size={28} className="text-red-600" /></div>
                             <h2 className="text-lg font-bold text-gray-900 mb-2">Delete Payment?</h2>
                             <p className="text-sm text-gray-500 mb-1">This will permanently delete the payment of</p>
                             <p className="text-xl font-extrabold text-red-600 mb-1">{fmt(deletingPayment.amount)}</p>
                             <p className="text-sm text-gray-500 mb-1">for <strong>{deletingPayment.arms_tenants?.tenant_name}</strong></p>
-                            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mt-3 border border-amber-100">
-                                ⚠️ Tenant balance and billing records will be restored automatically.
-                            </p>
+                            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mt-3 border border-amber-100">⚠️ Tenant balance and billing records will be restored automatically.</p>
                         </div>
                         <div className="px-6 pb-6 flex gap-3">
                             <button onClick={() => setDeletingPayment(null)} className="btn-outline flex-1">Cancel</button>
@@ -628,7 +743,6 @@ export default function PaymentsPage() {
                 </div>
             )}
 
-            {/* Receipt Modal */}
             {showReceipt && <RentReceipt payment={showReceipt} onClose={() => setShowReceipt(null)} />}
         </div>
     );
