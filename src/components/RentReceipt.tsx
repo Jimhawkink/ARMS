@@ -20,6 +20,9 @@ interface ReceiptProps {
         balance_after: number;    // balance AFTER this payment
         recorded_by?: string;
         notes?: string;
+        // Explicit FIFO breakdown (preferred over computed)
+        arrears_paid?: number;
+        current_rent_paid?: number;
     };
     onClose: () => void;
 }
@@ -37,15 +40,18 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
     // ===== FIFO Allocation Breakdown =====
     const totalDue = payment.balance_before;  // total outstanding before payment
     const rent = payment.monthly_rent;
-    const arrears = Math.max(0, totalDue - rent);  // arrears from previous months
-    const currentMonthDue = Math.min(rent, totalDue);  // current month portion of the debt
     const amountPaid = payment.amount;
-
-    // How the payment was allocated (FIFO: arrears first)
-    const arrearsPaid = Math.min(amountPaid, arrears);
-    const remainAfterArrears = amountPaid - arrearsPaid;
-    const currentRentPaid = Math.min(remainAfterArrears, currentMonthDue);
     const remainingBalance = payment.balance_after;
+
+    // Use explicit values from payment record (most accurate).
+    // Fall back to computed estimate for older payments without tags.
+    const arrearsPaid = payment.arrears_paid !== undefined
+        ? payment.arrears_paid
+        : Math.min(amountPaid, Math.max(0, totalDue - rent));
+    const currentRentPaid = payment.current_rent_paid !== undefined
+        ? payment.current_rent_paid
+        : Math.max(0, amountPaid - arrearsPaid);
+    const arrears = Math.max(0, totalDue - rent); // display: previous arrears before payment
 
     const handlePrint = () => {
         const printContent = receiptRef.current?.innerHTML;

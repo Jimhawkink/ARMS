@@ -200,7 +200,9 @@ export async function generateMonthlyBills(month: string, locationId?: number) {
 
 // ==================== PAYMENTS ====================
 export async function getPayments(filters?: { locationId?: number; tenantId?: number; startDate?: string; endDate?: string; method?: string }) {
-    let query = supabase.from('arms_payments').select('*, arms_tenants(tenant_name, phone), arms_locations(location_name)').order('payment_date', { ascending: false });
+    let query = supabase.from('arms_payments')
+        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, id_number, arms_units(unit_name)), arms_locations(location_name)')
+        .order('payment_date', { ascending: false });
     if (filters?.locationId) query = query.eq('location_id', filters.locationId);
     if (filters?.tenantId) query = query.eq('tenant_id', filters.tenantId);
     if (filters?.method) query = query.eq('payment_method', filters.method);
@@ -208,79 +210,207 @@ export async function getPayments(filters?: { locationId?: number; tenantId?: nu
     if (filters?.endDate) query = query.lte('payment_date', filters.endDate);
     const { data, error } = await query;
     if (error) throw error;
-    return data || [];
+    // Parse arrears tags from notes
+    return (data || []).map(p => ({
+        ...p,
+        arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+        current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+    }));
+}
+
+// Helper to parse numeric tags from payment notes, e.g. [ArrearsPaid:3000]
+function parseNoteTag(notes: string | null, tag: string): number {
+    if (!notes) return 0;
+    const m = notes.match(new RegExp(`\\[${tag}:(\\d+(?:\\.\\d+)?)\\]`));
+    return m ? parseFloat(m[1]) : 0;
 }
 
 export async function recordPayment(payment: {
     tenant_id: number; amount: number; payment_method: string;
     mpesa_receipt?: string; mpesa_phone?: string; reference_no?: string;
     recorded_by?: string; notes?: string; location_id?: number;
-}) {
-    // Get tenant info
-    const { data: tenant } = await supabase.from('arms_tenants').select('*').eq('tenant_id', payment.tenant_id).single();
-    if (!tenant) throw new Error('Tenant not found');
+}): Promise<any> {
+    // ── 1. Validate and fetch fresh tenant data ──────────────────────────────
+    const paymentAmount = Math.round(payment.amount * 100) / 100;
+    if (paymentAmount <= 0) throw new Error('Payment amount must be greater than zero');
 
-    // Get unpaid bills sorted by oldest first (FIFO)
-    const { data: unpaidBills } = await supabase
+    const { data: tenant, error: tenantErr } = await supabase
+        .from('arms_tenants').select('*').eq('tenant_id', payment.tenant_id).single();
+    if (tenantErr || !tenant) throw new Error('Tenant not found');
+
+    const currentMonth = new Date().toISOString().slice(0, 7); // e.g. "2026-04"
+
+    // ── 2. Fetch ALL bills with outstanding balance, oldest first (FIFO) ────
+    const { data: bills, error: billsErr } = await supabase
         .from('arms_billing')
         .select('*')
         .eq('tenant_id', payment.tenant_id)
         .gt('balance', 0)
         .order('billing_date', { ascending: true });
+    if (billsErr) throw billsErr;
 
-    let remainingAmount = payment.amount;
-    const allocations: { billingId: number; amount: number }[] = [];
+    // ── 3. Strict FIFO allocation with precise arithmetic ───────────────────
+    let remaining = paymentAmount;
+    let arrearsPaid = 0;
+    let currentRentPaid = 0;
+    let creditAmount = 0; // overpayment beyond all bills
 
-    // Allocate payment to oldest bills first
-    if (unpaidBills) {
-        for (const bill of unpaidBills) {
-            if (remainingAmount <= 0) break;
-            const allocAmount = Math.min(remainingAmount, bill.balance);
-            allocations.push({ billingId: bill.billing_id, amount: allocAmount });
-            remainingAmount -= allocAmount;
-        }
+    interface Alloc {
+        billingId: number; billing_month: string;
+        amountAllocated: number;
+        newAmountPaid: number; newBalance: number; newStatus: string;
+        isArrear: boolean;
+    }
+    const allocations: Alloc[] = [];
+
+    for (const bill of (bills || [])) {
+        if (remaining <= 0) break;
+        const billBalance = Math.round((bill.balance || 0) * 100) / 100;
+        if (billBalance <= 0) continue;
+
+        const allocAmount = Math.min(remaining, billBalance);
+        const newAmountPaid = Math.round(((bill.amount_paid || 0) + allocAmount) * 100) / 100;
+        const newBalance = Math.max(0, Math.round((bill.rent_amount - newAmountPaid) * 100) / 100);
+        const newStatus: string = newBalance <= 0 ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+        const isArrear = bill.billing_month < currentMonth;
+
+        allocations.push({ billingId: bill.billing_id, billing_month: bill.billing_month, amountAllocated: allocAmount, newAmountPaid, newBalance, newStatus, isArrear });
+
+        if (isArrear) arrearsPaid = Math.round((arrearsPaid + allocAmount) * 100) / 100;
+        else currentRentPaid = Math.round((currentRentPaid + allocAmount) * 100) / 100;
+
+        remaining = Math.round((remaining - allocAmount) * 100) / 100;
     }
 
-    // Record the payment (link to first bill if applicable)
-    const { data: paymentRecord, error: payError } = await supabase.from('arms_payments').insert([{
-        tenant_id: payment.tenant_id,
-        billing_id: allocations.length > 0 ? allocations[0].billingId : null,
-        location_id: payment.location_id || tenant.location_id,
-        amount: payment.amount,
-        payment_method: payment.payment_method,
-        mpesa_receipt: payment.mpesa_receipt,
-        mpesa_phone: payment.mpesa_phone,
-        reference_no: payment.reference_no,
-        recorded_by: payment.recorded_by,
-        notes: payment.notes,
-        payment_date: new Date().toISOString()
-    }]).select().single();
+    // Any leftover is credit (overpayment)
+    creditAmount = Math.round(remaining * 100) / 100;
+
+    // ── 4. Build rich notes with allocation metadata ────────────────────────
+    const nbMonths = allocations.length;
+    const arrearsMonths = allocations.filter(a => a.isArrear).map(a => a.billing_month).join(',');
+    const metaTags = [
+        `[ArrearsPaid:${arrearsPaid}]`,
+        `[CurrentRentPaid:${currentRentPaid}]`,
+        nbMonths > 0 ? `[BillsCleared:${nbMonths}]` : '',
+        arrearsMonths ? `[ArrearMonths:${arrearsMonths}]` : '',
+        creditAmount > 0 ? `[Credit:${creditAmount}]` : '',
+    ].filter(Boolean).join('');
+    const finalNotes = payment.notes ? `${payment.notes} ${metaTags}` : metaTags;
+
+    // ── 5. Insert payment record ─────────────────────────────────────────────
+    const { data: paymentRecord, error: payError } = await supabase
+        .from('arms_payments').insert([{
+            tenant_id: payment.tenant_id,
+            billing_id: allocations.length > 0 ? allocations[0].billingId : null,
+            location_id: payment.location_id || tenant.location_id,
+            amount: paymentAmount,
+            payment_method: payment.payment_method,
+            mpesa_receipt: payment.mpesa_receipt || null,
+            mpesa_phone: payment.mpesa_phone || null,
+            reference_no: payment.reference_no || null,
+            recorded_by: payment.recorded_by || null,
+            notes: finalNotes,
+            payment_date: new Date().toISOString(),
+        }]).select().single();
     if (payError) throw payError;
 
-    // Update each bill allocation
-    for (const alloc of allocations) {
-        const bill = unpaidBills?.find(b => b.billing_id === alloc.billingId);
-        if (bill) {
-            const newAmountPaid = (bill.amount_paid || 0) + alloc.amount;
-            const newBalance = bill.rent_amount - newAmountPaid;
-            const newStatus = newBalance <= 0 ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
-            await supabase.from('arms_billing').update({
-                amount_paid: newAmountPaid,
-                balance: Math.max(0, newBalance),
-                status: newStatus,
-                updated_at: new Date().toISOString()
-            }).eq('billing_id', alloc.billingId);
-        }
-    }
+    // ── 6. Update billing records in parallel ────────────────────────────────
+    await Promise.all(
+        allocations.map(alloc =>
+            supabase.from('arms_billing').update({
+                amount_paid: alloc.newAmountPaid,
+                balance: alloc.newBalance,
+                status: alloc.newStatus,
+                updated_at: new Date().toISOString(),
+            }).eq('billing_id', alloc.billingId)
+        )
+    );
 
-    // Update tenant balance
-    const newTenantBalance = Math.max(0, (tenant.balance || 0) - payment.amount);
+    // ── 7. Update tenant balance (re-fetch to avoid stale data race) ─────────
+    const { data: freshTenant } = await supabase
+        .from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
+    const latestBalance = Math.round(((freshTenant?.balance || 0)) * 100) / 100;
+    const newTenantBalance = Math.max(0, Math.round((latestBalance - paymentAmount) * 100) / 100);
     await supabase.from('arms_tenants').update({
         balance: newTenantBalance,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
     }).eq('tenant_id', payment.tenant_id);
 
-    return paymentRecord;
+    // ── 8. Return full breakdown for receipt & UI ────────────────────────────
+    return {
+        ...paymentRecord,
+        arrearsPaid,
+        currentRentPaid,
+        creditAmount,
+        billsCleared: allocations.filter(a => a.newStatus === 'Paid').length,
+        arrearsMonthsCleared: allocations.filter(a => a.isArrear && a.newStatus === 'Paid').length,
+        newTenantBalance,
+        allocations,
+    };
+}
+
+// ==================== DELETE PAYMENT ====================
+export async function deletePayment(paymentId: number) {
+    const { data: payment, error } = await supabase.from('arms_payments').select('*').eq('payment_id', paymentId).single();
+    if (error || !payment) throw new Error('Payment not found');
+
+    // Get all bills for tenant ordered oldest first to reverse FIFO in reverse order
+    const { data: bills } = await supabase
+        .from('arms_billing').select('*')
+        .eq('tenant_id', payment.tenant_id)
+        .order('billing_date', { ascending: false }); // newest first for reversal
+
+    let amountToReverse = payment.amount;
+    // Reverse from most recently paid bills first (reverse FIFO)
+    const paidBills = (bills || []).filter(b => (b.amount_paid || 0) > 0);
+    for (const bill of paidBills) {
+        if (amountToReverse <= 0) break;
+        const reverseAmount = Math.min(amountToReverse, bill.amount_paid || 0);
+        const newAmountPaid = Math.max(0, (bill.amount_paid || 0) - reverseAmount);
+        const newBalance = bill.rent_amount - newAmountPaid;
+        const newStatus = newBalance <= 0 ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+        await supabase.from('arms_billing').update({
+            amount_paid: newAmountPaid,
+            balance: Math.max(0, newBalance),
+            status: newStatus,
+            updated_at: new Date().toISOString()
+        }).eq('billing_id', bill.billing_id);
+        amountToReverse -= reverseAmount;
+    }
+
+    // Restore tenant balance
+    const { data: tenant } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
+    if (tenant) {
+        await supabase.from('arms_tenants').update({
+            balance: (tenant.balance || 0) + payment.amount,
+            updated_at: new Date().toISOString()
+        }).eq('tenant_id', payment.tenant_id);
+    }
+
+    const { error: delErr } = await supabase.from('arms_payments').delete().eq('payment_id', paymentId);
+    if (delErr) throw delErr;
+}
+
+// ==================== UPDATE PAYMENT ====================
+export async function updatePaymentNotes(paymentId: number, updates: { reference_no?: string; notes?: string }) {
+    const { data, error } = await supabase.from('arms_payments').update(updates).eq('payment_id', paymentId).select().single();
+    if (error) throw error;
+    return data;
+}
+
+// ==================== ARREARS PAYMENTS DETAIL ====================
+export async function getArrearsPaymentsDetail(locationId?: number) {
+    let query = supabase.from('arms_payments')
+        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, arms_units(unit_name)), arms_locations(location_name)')
+        .order('payment_date', { ascending: false });
+    if (locationId) query = query.eq('location_id', locationId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).map(p => ({
+        ...p,
+        arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+        current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+    })).filter(p => p.arrears_paid > 0);
 }
 
 // ==================== M-PESA C2B ====================
@@ -375,11 +505,18 @@ export async function getDashboardStats(locationId?: number) {
     if (locationId) paymentQuery = paymentQuery.eq('location_id', locationId);
     const { data: payments } = await paymentQuery;
 
+    // All-time arrears paid: parse from notes
+    let allPayQuery = supabase.from('arms_payments').select('amount, notes');
+    if (locationId) allPayQuery = allPayQuery.eq('location_id', locationId);
+    const { data: allPayments } = await allPayQuery;
+    const totalArrearsPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'ArrearsPaid'), 0);
+    const totalCurrentRentPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'CurrentRentPaid'), 0);
+
     const monthlyCollected = payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
     const monthlyBilled = bills?.reduce((sum, b) => sum + (b.rent_amount || 0), 0) || 0;
     const collectionRate = monthlyBilled > 0 ? Math.round((monthlyCollected / monthlyBilled) * 100) : 0;
 
-    return { ...summary, monthlyCollected, monthlyBilled, collectionRate };
+    return { ...summary, monthlyCollected, monthlyBilled, collectionRate, totalArrearsPaid, totalCurrentRentPaid };
 }
 
 export async function getRecentPayments(limit = 10, locationId?: number) {

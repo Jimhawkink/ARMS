@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { getDashboardStats, getRecentPayments, calculateUnpaidRent, get12MonthAnalytics, getCurrentMonthGrid, getLocations, getTenants } from '@/lib/supabase';
+import { getDashboardStats, getRecentPayments, calculateUnpaidRent, get12MonthAnalytics, getCurrentMonthGrid, getLocations, getTenants, getArrearsPaymentsDetail } from '@/lib/supabase';
 import { FiUsers, FiHome, FiDollarSign, FiAlertTriangle, FiTrendingUp, FiPercent, FiCalendar, FiCreditCard, FiSearch, FiFilter, FiX, FiCheckCircle, FiFileText, FiSmartphone, FiRefreshCw, FiPlus, FiPhone, FiTrendingDown, FiActivity, FiArrowUpRight, FiArrowDownRight, FiBarChart2 } from 'react-icons/fi';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
@@ -108,6 +108,8 @@ export default function DashboardPage() {
     const [unpaidRentData, setUnpaidRentData] = useState<any[]>([]);
     const [analytics, setAnalytics] = useState<any[]>([]);
     const [monthGrid, setMonthGrid] = useState<any>(null);
+    const [arrearsPaymentsDetail, setArrearsPaymentsDetail] = useState<any[]>([]);
+    const [showArrearsGrid, setShowArrearsGrid] = useState(false);
     const [loading, setLoading] = useState(true);
     const [gridTab, setGridTab] = useState<'paid' | 'unpaid'>('unpaid');
 
@@ -198,11 +200,11 @@ export default function DashboardPage() {
         setLoading(true);
         try {
             const lid = locId ?? undefined;
-            const [s, rp, ur, an, mg] = await Promise.all([
+            const [s, rp, ur, an, mg, apd] = await Promise.all([
                 getDashboardStats(lid), getRecentPayments(8, lid), calculateUnpaidRent(lid),
-                get12MonthAnalytics(lid), getCurrentMonthGrid(lid)
+                get12MonthAnalytics(lid), getCurrentMonthGrid(lid), getArrearsPaymentsDetail(lid)
             ]);
-            setStats(s); setRecentPayments(rp); setUnpaidRentData(ur); setAnalytics(an); setMonthGrid(mg);
+            setStats(s); setRecentPayments(rp); setUnpaidRentData(ur); setAnalytics(an); setMonthGrid(mg); setArrearsPaymentsDetail(apd);
         } catch (err) { console.error(err); }
         setLoading(false);
     }, []);
@@ -249,6 +251,7 @@ export default function DashboardPage() {
         { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '🧾', bg: '#faf5ff', color: '#7c3aed', border: '#a78bfa', sub: 'Total invoiced' },
         { label: 'Total Arrears', value: fmt(totalArrearsFromCalc), emoji: '⏰', bg: '#fef2f2', color: '#b91c1c', border: '#f87171', pulse: totalArrearsFromCalc > 0, sub: `${unpaidRentData.length} tenants` },
         { label: 'Total Penalty', value: fmt(totalPenaltiesFromCalc), emoji: '💢', bg: '#fffbeb', color: '#b45309', border: '#fbbf24', sub: 'Late fees' },
+        { label: 'Arrears Paid (All-Time)', value: fmt(stats?.totalArrearsPaid || 0), emoji: '✅', bg: '#fff7ed', color: '#c2410c', border: '#fb923c', sub: `${arrearsPaymentsDetail.length} payments cleared`, pulse: false },
         { label: 'Collection Rate', value: `${collRate}%`, emoji: collRate >= 80 ? '🌟' : collRate >= 50 ? '📈' : '📉', bg: collRate >= 80 ? '#ecfdf5' : collRate >= 50 ? '#fffbeb' : '#fef2f2', color: collRate >= 80 ? '#059669' : collRate >= 50 ? '#b45309' : '#b91c1c', border: collRate >= 80 ? '#34d399' : collRate >= 50 ? '#fbbf24' : '#f87171', sub: collRate >= 80 ? 'Excellent' : collRate >= 50 ? 'Needs attention' : 'Critical', pulse: collRate < 50 && totalArrearsFromCalc > 0 },
         { label: 'Total Owed', value: fmt(totalOwedFromCalc), emoji: '💰', bg: '#fff7ed', color: '#c2410c', border: '#fb923c', sub: 'Incl. penalties', pulse: totalOwedFromCalc > 0 },
     ];
@@ -735,6 +738,114 @@ export default function DashboardPage() {
                             })}
                     </div>
                 </div>
+            </div>
+
+            {/* ── Arrears Cleared Payments Detail ── */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-50">
+                    <div>
+                        <h2 className="text-sm font-bold text-gray-900">🧹 Arrears Cleared — Payment Detail</h2>
+                        <p className="text-[11px] text-gray-400 mt-0.5">{arrearsPaymentsDetail.length} payment{arrearsPaymentsDetail.length !== 1 ? 's' : ''} that cleared previous arrears</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' }}>
+                            Total: {fmt(arrearsPaymentsDetail.reduce((s, p) => s + (p.arrears_paid || 0), 0))}
+                        </div>
+                        <button onClick={() => setShowArrearsGrid(!showArrearsGrid)}
+                            className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all border"
+                            style={showArrearsGrid ? { background: '#fff7ed', color: '#c2410c', borderColor: '#fed7aa' } : { background: '#f8fafc', color: '#64748b', borderColor: '#e2e8f0' }}>
+                            {showArrearsGrid ? '▲ Hide' : '▼ Show'}
+                        </button>
+                    </div>
+                </div>
+
+                {showArrearsGrid && (
+                    <div className="overflow-x-auto">
+                        {arrearsPaymentsDetail.length === 0 ? (
+                            <div className="flex flex-col items-center gap-2 py-12 text-gray-400">
+                                <span className="text-3xl">🎉</span>
+                                <p className="text-sm font-medium">No arrears payments recorded yet</p>
+                                <p className="text-xs">Payments that clear previous-month balances will appear here</p>
+                            </div>
+                        ) : (
+                            <table className="w-full" style={{ fontSize: 12 }}>
+                                <thead>
+                                    <tr className="bg-orange-50 border-b border-orange-100">
+                                        {['Date', 'Tenant', 'Location', 'Total Paid', '⬇ Arrears Cleared', '🏠 Current Rent Paid', 'Method', 'Months Cleared'].map(h => (
+                                            <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-orange-700">{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-orange-50">
+                                    {arrearsPaymentsDetail.map((p: any, i: number) => {
+                                        const arrMonths = p.notes?.match(/\[ArrearMonths:([^\]]+)\]/)?.[1] || '';
+                                        const monthsArr = arrMonths ? arrMonths.split(',').map((m: string) => {
+                                            try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); } catch { return m; }
+                                        }).filter(Boolean) : [];
+                                        return (
+                                            <tr key={i} className="hover:bg-orange-50/40 transition-colors">
+                                                <td className="px-4 py-3">
+                                                    <div className="text-xs font-semibold text-gray-800">{new Date(p.payment_date).toLocaleDateString()}</div>
+                                                    <div className="text-[10px] text-gray-400">{new Date(p.payment_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black text-white flex-shrink-0"
+                                                            style={{ background: 'linear-gradient(135deg,#f97316,#ef4444)' }}>
+                                                            {p.arms_tenants?.tenant_name?.charAt(0)?.toUpperCase() || '?'}
+                                                        </div>
+                                                        <span className="text-xs font-semibold text-gray-900">{p.arms_tenants?.tenant_name || '—'}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-xs text-gray-500">{p.arms_locations?.location_name || '—'}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className="text-xs font-bold text-green-700">{fmt(p.amount)}</span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="text-xs font-extrabold px-2 py-0.5 rounded-lg" style={{ background: '#fed7aa', color: '#c2410c' }}>
+                                                        {fmt(p.arrears_paid)}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: '#bfdbfe', color: '#1d4ed8' }}>
+                                                        {fmt(p.current_rent_paid || 0)}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                        p.payment_method === 'M-Pesa' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                                    }`}>
+                                                        {p.payment_method === 'M-Pesa' ? '📱' : '💵'} {p.payment_method}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    {monthsArr.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {monthsArr.map((m: string, mi: number) => (
+                                                                <span key={mi} className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#fef3c7', color: '#92400e' }}>{m}</span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400">—</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-orange-50 border-t-2 border-orange-200">
+                                        <td colSpan={3} className="px-4 py-3 text-xs font-bold text-orange-800">TOTALS ({arrearsPaymentsDetail.length} payments)</td>
+                                        <td className="px-4 py-3 text-xs font-extrabold text-green-700">{fmt(arrearsPaymentsDetail.reduce((s, p) => s + (p.amount || 0), 0))}</td>
+                                        <td className="px-4 py-3 text-xs font-extrabold" style={{ color: '#c2410c' }}>{fmt(arrearsPaymentsDetail.reduce((s, p) => s + (p.arrears_paid || 0), 0))}</td>
+                                        <td className="px-4 py-3 text-xs font-extrabold text-blue-700">{fmt(arrearsPaymentsDetail.reduce((s, p) => s + (p.current_rent_paid || 0), 0))}</td>
+                                        <td colSpan={2} />
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        )}
+                    </div>
+                )}
             </div>
 
         </div>
