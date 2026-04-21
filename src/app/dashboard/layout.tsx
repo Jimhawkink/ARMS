@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLocations } from '@/lib/supabase';
-import { FiHome, FiMapPin, FiGrid, FiUsers, FiFileText, FiDollarSign, FiAlertTriangle, FiBarChart2, FiSettings, FiLogOut, FiChevronLeft, FiChevronRight, FiChevronDown, FiTrendingDown, FiCreditCard, FiPieChart } from 'react-icons/fi';
+import { FiHome, FiMapPin, FiGrid, FiUsers, FiFileText, FiDollarSign, FiAlertTriangle, FiBarChart2, FiSettings, FiLogOut, FiChevronLeft, FiChevronRight, FiChevronDown, FiTrendingDown, FiCreditCard, FiPieChart, FiMessageSquare, FiDroplet, FiShield, FiClipboard, FiUserCheck, FiSend, FiZap } from 'react-icons/fi';
 
 const menuGroups = [
     {
@@ -35,6 +35,29 @@ const menuGroups = [
             { href: '/dashboard/billing', label: 'Billing', icon: FiFileText, emoji: '🧾' },
             { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign, emoji: '💳' },
             { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle, emoji: '⚠️' },
+            { href: '/dashboard/checklists', label: 'Checklists', icon: FiClipboard, emoji: '📋' },
+        ]
+    },
+    {
+        label: 'Communication',
+        icon: FiSend,
+        name: 'comms',
+        collapsible: true,
+        emoji: '📱',
+        items: [
+            { href: '/dashboard/sms', label: 'Bulk SMS', icon: FiMessageSquare, emoji: '💬' },
+            { href: '/dashboard/demand-letters', label: 'Demand Letters', icon: FiFileText, emoji: '📜' },
+        ]
+    },
+    {
+        label: 'Utilities',
+        icon: FiDroplet,
+        name: 'utilities',
+        collapsible: true,
+        emoji: '💡',
+        items: [
+            { href: '/dashboard/utilities', label: 'Water & Utility Billing', icon: FiDroplet, emoji: '💧' },
+            { href: '/dashboard/prepaid', label: 'Prepaid Tokens', icon: FiZap, emoji: '⚡' },
         ]
     },
     {
@@ -49,12 +72,24 @@ const menuGroups = [
         ]
     },
     {
+        label: 'Staff',
+        icon: FiUserCheck,
+        name: 'staff',
+        collapsible: true,
+        emoji: '👷',
+        items: [
+            { href: '/dashboard/caretakers', label: 'Caretakers', icon: FiUserCheck, emoji: '🧑‍🔧' },
+            { href: '/dashboard/petty-cash', label: 'Petty Cash', icon: FiDollarSign, emoji: '💵' },
+        ]
+    },
+    {
         label: 'System',
-        icon: FiSettings,
+        icon: FiShield,
         name: 'system',
         collapsible: true,
         emoji: '⚙️',
         items: [
+            { href: '/dashboard/users', label: 'Users & Access', icon: FiShield, emoji: '🔐' },
             { href: '/dashboard/settings', label: 'Settings', icon: FiSettings, emoji: '🔧' },
         ]
     },

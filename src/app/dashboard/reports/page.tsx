@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getTenants, getLocations, getTenantStatement, getPayments, calculateUnpaidRent, getLocationSummary, getUnits } from '@/lib/supabase';
+import { getTenants, getLocations, getTenantStatement, getPayments, calculateUnpaidRent, getLocationSummary, getUnits, getProfitAndLoss, getCashFlowStatement, getOccupancyAndROI } from '@/lib/supabase';
 import { FiPrinter, FiRefreshCw, FiChevronRight, FiTrendingUp, FiTrendingDown, FiBarChart2, FiMapPin, FiUsers, FiDollarSign, FiAlertTriangle, FiCalendar, FiHome, FiCheckCircle } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
@@ -9,7 +9,7 @@ const pct = (a: number, b: number) => b > 0 ? Math.round((a / b) * 100) : 0;
 const monthLabel = (m: string) => { try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }); } catch { return m; } };
 const monthFull = (m: string) => { try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); } catch { return m; } };
 
-type Tab = 'occupancy' | 'payments' | 'arrears' | 'rent' | 'statement';
+type Tab = 'occupancy' | 'payments' | 'arrears' | 'rent' | 'statement' | 'pnl' | 'cashflow' | 'roi';
 
 const LOC_COLORS = [
     { bg: '#eef2ff', border: '#818cf8', text: '#4338ca', grad: 'linear-gradient(135deg,#6366f1,#8b5cf6)', light: '#ddd6fe' },
@@ -86,6 +86,11 @@ export default function ReportsPage() {
 
     // Month filter for payment tab
     const [payMonthFilter, setPayMonthFilter] = useState(new Date().toISOString().slice(0, 7));
+
+    // P&L / Cash Flow / ROI
+    const [pnlData, setPnlData] = useState<any>(null);
+    const [cashFlowData, setCashFlowData] = useState<any>(null);
+    const [roiData, setRoiData] = useState<any>(null);
 
     const loadAll = useCallback(async () => {
         setLoading(true);
@@ -221,6 +226,9 @@ export default function ReportsPage() {
         { id: 'payments', label: 'Payments', emoji: '💰', color: '#10b981' },
         { id: 'arrears', label: 'Arrears & Risk', emoji: '⚠️', color: '#ef4444' },
         { id: 'rent', label: 'Rent Overview', emoji: '📊', color: '#8b5cf6' },
+        { id: 'pnl', label: 'P&L', emoji: '📈', color: '#059669' },
+        { id: 'cashflow', label: 'Cash Flow', emoji: '💸', color: '#0284c7' },
+        { id: 'roi', label: 'ROI', emoji: '🎯', color: '#d97706' },
         { id: 'statement', label: 'Tenant Statement', emoji: '📄', color: '#0891b2' },
     ];
 
@@ -934,6 +942,183 @@ export default function ReportsPage() {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ══════════════════ TAB 6: P&L ══════════════════ */}
+            {tab === 'pnl' && (
+                <div className="space-y-5">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-bold text-gray-800">📈 Profit & Loss Statement</h3>
+                        <button onClick={async () => { try { const d = await getProfitAndLoss(); setPnlData(d); } catch(e: any) { toast.error(e.message); } }}
+                            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition">Load P&L</button>
+                    </div>
+                    {pnlData ? (
+                        <>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Total Revenue</p>
+                                    <p className="text-2xl font-black text-green-600 mt-1">{fmt(pnlData.totalRevenue)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Total Expenses</p>
+                                    <p className="text-2xl font-black text-red-600 mt-1">{fmt(pnlData.totalExpenses)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Net Profit</p>
+                                    <p className={`text-2xl font-black mt-1 ${pnlData.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(pnlData.totalProfit)}</p>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                <table className="w-full text-sm">
+                                    <thead><tr className="bg-gray-50">
+                                        <th className="text-left px-4 py-3 text-xs font-bold text-gray-500 uppercase">Month</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Revenue</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Expenses</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Profit</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Margin</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        {Object.keys(pnlData.monthly).sort().map(m => (
+                                            <tr key={m} className="border-t border-gray-50">
+                                                <td className="px-4 py-3 font-semibold">{monthLabel(m)}</td>
+                                                <td className="px-4 py-3 text-right text-green-600 font-bold">{fmt(pnlData.monthly[m].revenue)}</td>
+                                                <td className="px-4 py-3 text-right text-red-600 font-bold">{fmt(pnlData.monthly[m].expenses)}</td>
+                                                <td className={`px-4 py-3 text-right font-bold ${pnlData.monthly[m].profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(pnlData.monthly[m].profit)}</td>
+                                                <td className="px-4 py-3 text-right text-gray-600">{pnlData.monthly[m].revenue > 0 ? Math.round((pnlData.monthly[m].profit / pnlData.monthly[m].revenue) * 100) : 0}%</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="bg-white rounded-2xl p-12 border border-gray-100 shadow-sm text-center">
+                            <p className="text-gray-400">Click "Load P&L" to generate your Profit & Loss statement</p>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ══════════════════ TAB 7: CASH FLOW ══════════════════ */}
+            {tab === 'cashflow' && (
+                <div className="space-y-5">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-bold text-gray-800">💸 Cash Flow Statement</h3>
+                        <button onClick={async () => { try { const d = await getCashFlowStatement(); setCashFlowData(d); } catch(e: any) { toast.error(e.message); } }}
+                            className="px-4 py-2 rounded-xl bg-sky-600 text-white text-sm font-bold hover:bg-sky-700 transition">Load Cash Flow</button>
+                    </div>
+                    {cashFlowData ? (
+                        <>
+                            <div className="grid grid-cols-4 gap-4">
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Cash Inflows</p>
+                                    <p className="text-xl font-black text-green-600 mt-1">{fmt(cashFlowData.cashInflows)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">M-Pesa Inflows</p>
+                                    <p className="text-xl font-black text-green-600 mt-1">{fmt(cashFlowData.mpesaInflows)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Outstanding</p>
+                                    <p className="text-xl font-black text-red-600 mt-1">{fmt(cashFlowData.outstandingReceivables)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Net from Ops</p>
+                                    <p className={`text-xl font-black mt-1 ${cashFlowData.netCashFromOps >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(cashFlowData.netCashFromOps)}</p>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+                                <h4 className="font-bold text-gray-800 mb-4">Cash Flow Breakdown</h4>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                                        <span className="text-sm text-gray-600">Total Inflows (Cash + M-Pesa)</span>
+                                        <span className="font-bold text-green-600">{fmt(cashFlowData.totalInflows)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                                        <span className="text-sm text-gray-600">Total Expenses</span>
+                                        <span className="font-bold text-red-600">{fmt(cashFlowData.totalExpenses)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                                        <span className="text-sm text-gray-600">Net Cash from Operations</span>
+                                        <span className={`font-bold ${cashFlowData.netCashFromOps >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmt(cashFlowData.netCashFromOps)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center py-2">
+                                        <span className="text-sm font-bold text-gray-800">Outstanding Receivables</span>
+                                        <span className="font-bold text-amber-600">{fmt(cashFlowData.outstandingReceivables)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="bg-white rounded-2xl p-12 border border-gray-100 shadow-sm text-center">
+                            <p className="text-gray-400">Click "Load Cash Flow" to generate your Cash Flow statement</p>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ══════════════════ TAB 8: ROI ══════════════════ */}
+            {tab === 'roi' && (
+                <div className="space-y-5">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-bold text-gray-800">🎯 ROI & Vacancy Cost Analysis</h3>
+                        <button onClick={async () => { try { const d = await getOccupancyAndROI(); setRoiData(d); } catch(e: any) { toast.error(e.message); } }}
+                            className="px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 transition">Load ROI</button>
+                    </div>
+                    {roiData ? (
+                        <>
+                            <div className="grid grid-cols-4 gap-4">
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Occupancy Rate</p>
+                                    <p className="text-2xl font-black text-indigo-600 mt-1">{roiData.occupancyRate}%</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Monthly Rent</p>
+                                    <p className="text-2xl font-black text-green-600 mt-1">{fmt(roiData.totalMonthlyRent)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Vacancy Cost/mo</p>
+                                    <p className="text-2xl font-black text-red-600 mt-1">{fmt(roiData.vacancyCost)}</p>
+                                </div>
+                                <div className="rounded-2xl p-5 bg-white border border-gray-100 shadow-sm">
+                                    <p className="text-xs font-bold text-gray-400 uppercase">Annual ROI</p>
+                                    <p className={`text-2xl font-black mt-1 ${roiData.roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>{roiData.roi}%</p>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                                <div className="p-4 border-b border-gray-100">
+                                    <h4 className="font-bold text-gray-800">Per-Location Breakdown</h4>
+                                </div>
+                                <table className="w-full text-sm">
+                                    <thead><tr className="bg-gray-50">
+                                        <th className="text-left px-4 py-3 text-xs font-bold text-gray-500 uppercase">Location</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Units</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Occupied</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Revenue/mo</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Vacancy Cost</th>
+                                        <th className="text-right px-4 py-3 text-xs font-bold text-gray-500 uppercase">Occ. Rate</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        {Object.entries(roiData.locationROI).map(([name, d]: [string, any]) => (
+                                            <tr key={name} className="border-t border-gray-50">
+                                                <td className="px-4 py-3 font-semibold">{name}</td>
+                                                <td className="px-4 py-3 text-right">{d.units}</td>
+                                                <td className="px-4 py-3 text-right">{d.occupied}</td>
+                                                <td className="px-4 py-3 text-right text-green-600 font-bold">{fmt(d.revenue)}</td>
+                                                <td className="px-4 py-3 text-right text-red-600 font-bold">{fmt(d.vacancyCost)}</td>
+                                                <td className="px-4 py-3 text-right font-bold">{d.units > 0 ? Math.round((d.occupied / d.units) * 100) : 0}%</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="bg-white rounded-2xl p-12 border border-gray-100 shadow-sm text-center">
+                            <p className="text-gray-400">Click "Load ROI" to analyze your Return on Investment</p>
                         </div>
                     )}
                 </div>
