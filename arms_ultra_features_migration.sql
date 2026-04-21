@@ -8,7 +8,7 @@
 
 -- Utility types (Water, Electricity, Gas, etc.)
 CREATE TABLE IF NOT EXISTS public.arms_utility_types (
-    utility_type_id integer NOT NULL DEFAULT nextval('arms_utility_types_utility_type_id_seq'::regclass),
+    utility_type_id SERIAL,
     utility_name character varying NOT NULL,
     unit_of_measure character varying DEFAULT 'Units'::character varying,
     billing_method character varying DEFAULT 'postpaid'::character varying, -- postpaid / prepaid
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.arms_utility_types (
 
 -- Meter readings per unit
 CREATE TABLE IF NOT EXISTS public.arms_meter_readings (
-    reading_id integer NOT NULL DEFAULT nextval('arms_meter_readings_reading_id_seq'::regclass),
+    reading_id SERIAL,
     unit_id integer NOT NULL,
     utility_type_id integer NOT NULL,
     location_id integer,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.arms_meter_readings (
 
 -- Utility bills (generated from meter readings)
 CREATE TABLE IF NOT EXISTS public.arms_utility_bills (
-    utility_bill_id integer NOT NULL DEFAULT nextval('arms_utility_bills_utility_bill_id_seq'::regclass),
+    utility_bill_id SERIAL,
     tenant_id integer NOT NULL,
     unit_id integer NOT NULL,
     location_id integer,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS public.arms_utility_bills (
 
 -- Prepaid tokens (for electricity sub-metering)
 CREATE TABLE IF NOT EXISTS public.arms_prepaid_tokens (
-    token_id integer NOT NULL DEFAULT nextval('arms_prepaid_tokens_token_id_seq'::regclass),
+    token_id SERIAL,
     tenant_id integer NOT NULL,
     unit_id integer NOT NULL,
     location_id integer,
@@ -102,7 +102,7 @@ ON CONFLICT DO NOTHING;
 -- ==================== CARETAKER MANAGEMENT ====================
 
 CREATE TABLE IF NOT EXISTS public.arms_caretakers (
-    caretaker_id integer NOT NULL DEFAULT nextval('arms_caretakers_caretaker_id_seq'::regclass),
+    caretaker_id SERIAL,
     caretaker_name character varying NOT NULL,
     phone character varying NOT NULL,
     email character varying,
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS public.arms_caretakers (
 
 -- Caretaker salary payments
 CREATE TABLE IF NOT EXISTS public.arms_caretaker_salaries (
-    salary_id integer NOT NULL DEFAULT nextval('arms_caretaker_salaries_salary_id_seq'::regclass),
+    salary_id SERIAL,
     caretaker_id integer NOT NULL,
     location_id integer,
     pay_period character varying NOT NULL, -- e.g. '2026-04'
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS public.arms_caretaker_salaries (
 
 -- Petty cash
 CREATE TABLE IF NOT EXISTS public.arms_petty_cash (
-    petty_cash_id integer NOT NULL DEFAULT nextval('arms_petty_cash_petty_cash_id_seq'::regclass),
+    petty_cash_id SERIAL,
     location_id integer,
     transaction_type character varying NOT NULL, -- Income / Expense
     amount numeric NOT NULL,
@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS public.arms_petty_cash (
 
 -- SMS configuration (AfricasTalking)
 CREATE TABLE IF NOT EXISTS public.arms_sms_config (
-    config_id integer NOT NULL DEFAULT nextval('arms_sms_config_config_id_seq'::regclass),
+    config_id SERIAL,
     provider character varying DEFAULT 'AfricasTalking'::character varying,
     api_key character varying NOT NULL,
     username character varying NOT NULL,
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS public.arms_sms_config (
 
 -- SMS logs
 CREATE TABLE IF NOT EXISTS public.arms_sms_logs (
-    sms_id integer NOT NULL DEFAULT nextval('arms_sms_logs_sms_id_seq'::regclass),
+    sms_id SERIAL,
     recipient_phone character varying NOT NULL,
     recipient_name character varying,
     message text NOT NULL,
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS public.arms_sms_logs (
 
 -- Automated reminder rules
 CREATE TABLE IF NOT EXISTS public.arms_reminder_rules (
-    rule_id integer NOT NULL DEFAULT nextval('arms_reminder_rules_rule_id_seq'::regclass),
+    rule_id SERIAL,
     rule_name character varying NOT NULL,
     trigger_type character varying NOT NULL, -- before_due / after_due / on_arrears
     days_offset integer DEFAULT 0, -- e.g. -3 = 3 days before due, +5 = 5 days after due
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS public.arms_reminder_rules (
 
 -- WhatsApp Business API config
 CREATE TABLE IF NOT EXISTS public.arms_whatsapp_config (
-    config_id integer NOT NULL DEFAULT nextval('arms_whatsapp_config_config_id_seq'::regclass),
+    config_id SERIAL,
     business_phone_number character varying NOT NULL,
     access_token text NOT NULL,
     phone_number_id character varying,
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS public.arms_whatsapp_config (
 -- ==================== DEMAND LETTERS & DOCUMENTS ====================
 
 CREATE TABLE IF NOT EXISTS public.arms_demand_letters (
-    letter_id integer NOT NULL DEFAULT nextval('arms_demand_letters_letter_id_seq'::regclass),
+    letter_id SERIAL,
     tenant_id integer NOT NULL,
     location_id integer,
     unit_id integer,
@@ -263,7 +263,7 @@ CREATE TABLE IF NOT EXISTS public.arms_demand_letters (
 -- ==================== MOVE-IN / MOVE-OUT CHECKLISTS ====================
 
 CREATE TABLE IF NOT EXISTS public.arms_checklists (
-    checklist_id integer NOT NULL DEFAULT nextval('arms_checklists_checklist_id_seq'::regclass),
+    checklist_id SERIAL,
     checklist_type character varying NOT NULL, -- MoveIn / MoveOut
     tenant_id integer NOT NULL,
     unit_id integer NOT NULL,
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS public.arms_checklists (
 
 -- Checklist items
 CREATE TABLE IF NOT EXISTS public.arms_checklist_items (
-    item_id integer NOT NULL DEFAULT nextval('arms_checklist_items_item_id_seq'::regclass),
+    item_id SERIAL,
     checklist_id integer NOT NULL,
     item_name character varying NOT NULL,
     category character varying DEFAULT 'General'::character varying, -- Keys / Furniture / Fixtures / Appliances / Walls / Plumbing / Electrical / General
@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS public.arms_checklist_items (
 
 -- Default checklist templates
 CREATE TABLE IF NOT EXISTS public.arms_checklist_templates (
-    template_id integer NOT NULL DEFAULT nextval('arms_checklist_templates_template_id_seq'::regclass),
+    template_id SERIAL,
     template_type character varying NOT NULL, -- MoveIn / MoveOut
     item_name character varying NOT NULL,
     category character varying DEFAULT 'General'::character varying,
@@ -346,7 +346,7 @@ ALTER TABLE public.arms_users ADD COLUMN IF NOT EXISTS allowed_location_ids inte
 
 -- Role permissions definition
 CREATE TABLE IF NOT EXISTS public.arms_role_permissions (
-    id integer NOT NULL DEFAULT nextval('arms_role_permissions_id_seq'::regclass),
+    id SERIAL,
     role_name character varying NOT NULL,
     can_manage_tenants boolean DEFAULT false,
     can_manage_units boolean DEFAULT false,
@@ -380,7 +380,7 @@ ON CONFLICT (role_name) DO NOTHING;
 -- ==================== TENANT SELF-SERVICE PORTAL ====================
 
 CREATE TABLE IF NOT EXISTS public.arms_portal_users (
-    portal_user_id integer NOT NULL DEFAULT nextval('arms_portal_users_portal_user_id_seq'::regclass),
+    portal_user_id SERIAL,
     tenant_id integer NOT NULL,
     username character varying NOT NULL UNIQUE,
     password_hash character varying NOT NULL,
@@ -397,7 +397,7 @@ CREATE TABLE IF NOT EXISTS public.arms_portal_users (
 
 -- Tenant issues/maintenance requests
 CREATE TABLE IF NOT EXISTS public.arms_tenant_issues (
-    issue_id integer NOT NULL DEFAULT nextval('arms_tenant_issues_issue_id_seq'::regclass),
+    issue_id SERIAL,
     tenant_id integer NOT NULL,
     unit_id integer,
     location_id integer,
@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS public.arms_tenant_issues (
 -- ==================== UTILITY RATE CONFIG PER LOCATION ====================
 
 CREATE TABLE IF NOT EXISTS public.arms_utility_rates (
-    rate_id integer NOT NULL DEFAULT nextval('arms_utility_rates_rate_id_seq'::regclass),
+    rate_id SERIAL,
     utility_type_id integer NOT NULL,
     location_id integer, -- null = default rate for all locations
     rate_per_unit numeric NOT NULL DEFAULT 0,
