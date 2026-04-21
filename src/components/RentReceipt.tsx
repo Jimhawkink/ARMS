@@ -61,22 +61,22 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
         w.document.write(`<!DOCTYPE html><html><head><title>ARMS Receipt</title><style>
             @page { size: 80mm auto; margin: 0; }
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 12px; width: 80mm; padding: 6mm; color: #111; }
+            body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; width: 80mm; padding: 6mm; color: #000; }
             .r-center { text-align: center; }
             .r-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
-            .r-row .lb { color: #666; }
+            .r-row .lb { color: #000; }
             .r-row .vl { font-weight: 600; text-align: right; }
             .r-divider { border-top: 1px dashed #ccc; margin: 6px 0; }
             .r-thick { border-top: 2px dashed #333; margin: 8px 0; }
-            .r-heading { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #888; letter-spacing: 1px; margin-bottom: 3px; border-bottom: 1px solid #eee; padding-bottom: 2px; }
+            .r-heading { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #000; letter-spacing: 1px; margin-bottom: 3px; border-bottom: 1px solid #eee; padding-bottom: 2px; }
             .r-box { padding: 6px; border-radius: 4px; margin: 6px 0; text-align: center; }
             .r-green { background: #f0fdf4; border: 1px solid #bbf7d0; }
             .r-red { background: #fef2f2; border: 1px solid #fecaca; }
             .r-blue { background: #eff6ff; border: 1px solid #bfdbfe; }
             .r-amt { font-size: 20px; font-weight: 900; }
             .r-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
-            .r-stamp { display: inline-block; font-size: 14px; font-weight: 900; color: #16a34a; border: 2px solid #16a34a; padding: 2px 14px; border-radius: 4px; transform: rotate(-3deg); }
-            .r-footer { text-align: center; font-size: 9px; color: #999; margin-top: 8px; }
+            .r-stamp { display: inline-block; font-size: 14px; font-weight: 900; color: #000; border: 2px solid #000; padding: 2px 14px; border-radius: 4px; transform: rotate(-3deg); }
+            .r-footer { text-align: center; font-size: 9px; color: #000; margin-top: 8px; }
             .r-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
         </style></head><body>${printContent}</body></html>`);
         w.document.close();
@@ -139,13 +139,13 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
                 </div>
 
                 {/* Receipt Content — 80mm width with inline styles for correct print */}
-                <div ref={receiptRef} style={{ width: '80mm', margin: '0 auto', padding: '6mm', fontFamily: "'Segoe UI', Tahoma, sans-serif", fontSize: '12px', background: '#fff' }}>
+                <div ref={receiptRef} style={{ width: '80mm', margin: '0 auto', padding: '6mm', fontFamily: "Arial, Helvetica, sans-serif", fontSize: '12px', background: '#fff' }}>
 
                     {/* Header */}
                     <div style={{ textAlign: 'center', borderBottom: '2px dashed #333', paddingBottom: 8, marginBottom: 8 }}>
                         <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 2 }}>🏠 ARMS</div>
-                        <div style={{ fontSize: 10, color: '#555', margin: '2px 0' }}>Alpha Rental Management System</div>
-                        <div style={{ fontSize: 9, color: '#888' }}>Rental Payment Receipt</div>
+                        <div style={{ fontSize: 10, color: '#000', margin: '2px 0' }}>Alpha Rental Management System</div>
+                        <div style={{ fontSize: 9, color: '#000' }}>Rental Payment Receipt</div>
                     </div>
 
                     {/* Receipt number */}
@@ -155,34 +155,34 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
 
                     {/* Date & Time */}
                     <div style={{ margin: '6px 0' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#888', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>📅 Date & Time</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#000', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>📅 Date & Time</div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}>
-                            <span style={{ color: '#666' }}>Date:</span><span style={{ fontWeight: 600 }}>{dateStr}</span>
+                            <span style={{ color: '#000' }}>Date:</span><span style={{ fontWeight: 600 }}>{dateStr}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}>
-                            <span style={{ color: '#666' }}>Time:</span><span style={{ fontWeight: 600 }}>{timeStr}</span>
+                            <span style={{ color: '#000' }}>Time:</span><span style={{ fontWeight: 600 }}>{timeStr}</span>
                         </div>
                     </div>
 
                     {/* Tenant Details */}
                     <div style={{ margin: '6px 0' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#888', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>👤 Tenant Details</div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>Name:</span><span style={{ fontWeight: 600 }}>{payment.tenant_name}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>Phone:</span><span style={{ fontWeight: 600 }}>{payment.phone}</span></div>
-                        {payment.id_number && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>ID No:</span><span style={{ fontWeight: 600 }}>{payment.id_number}</span></div>}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>House:</span><span style={{ fontWeight: 600 }}>{payment.unit_name}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>Location:</span><span style={{ fontWeight: 600 }}>{payment.location_name}</span></div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#000', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>👤 Tenant Details</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>Name:</span><span style={{ fontWeight: 600 }}>{payment.tenant_name}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>Phone:</span><span style={{ fontWeight: 600 }}>{payment.phone}</span></div>
+                        {payment.id_number && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>ID No:</span><span style={{ fontWeight: 600 }}>{payment.id_number}</span></div>}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>House:</span><span style={{ fontWeight: 600 }}>{payment.unit_name}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>Location:</span><span style={{ fontWeight: 600 }}>{payment.location_name}</span></div>
                     </div>
 
                     <div style={{ borderTop: '1px dashed #ccc', margin: '6px 0' }}></div>
 
                     {/* Rent & Charges Section */}
                     <div style={{ margin: '6px 0' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#888', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>📋 Charges</div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>For Month:</span><span style={{ fontWeight: 700, color: '#4f46e5' }}>{monthLabel}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>Monthly Rent:</span><span style={{ fontWeight: 600 }}>{fmt(rent)}</span></div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#000', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>📋 Charges</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>For Month:</span><span style={{ fontWeight: 700, color: '#000' }}>{monthLabel}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>Monthly Rent:</span><span style={{ fontWeight: 600 }}>{fmt(rent)}</span></div>
                         {arrears > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#dc2626', fontWeight: 600 }}>⚠️ Previous Arrears:</span><span style={{ fontWeight: 700, color: '#dc2626' }}>{fmt(arrears)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000', fontWeight: 600 }}>⚠️ Previous Arrears:</span><span style={{ fontWeight: 700, color: '#000' }}>{fmt(arrears)}</span></div>
                         )}
                         <div style={{ borderTop: '1px solid #e5e7eb', margin: '4px 0' }}></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12, fontWeight: 700 }}><span>Total Due:</span><span>{fmt(totalDue)}</span></div>
@@ -192,54 +192,54 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
 
                     {/* Payment Method */}
                     <div style={{ margin: '6px 0' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#888', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>💳 Payment Info</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, color: '#000', letterSpacing: 1, marginBottom: 3, borderBottom: '1px solid #eee', paddingBottom: 2 }}>💳 Payment Info</div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}>
-                            <span style={{ color: '#666' }}>Method:</span>
-                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, background: payment.payment_method === 'M-Pesa' ? '#d1fae5' : '#dbeafe', color: payment.payment_method === 'M-Pesa' ? '#059669' : '#1d4ed8' }}>
+                            <span style={{ color: '#000' }}>Method:</span>
+                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, background: payment.payment_method === 'M-Pesa' ? '#d1fae5' : '#dbeafe', color: '#000' }}>
                                 {payment.payment_method === 'M-Pesa' ? '📱' : '💵'} {payment.payment_method}
                             </span>
                         </div>
-                        {payment.mpesa_receipt && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#666' }}>M-Pesa Ref:</span><span style={{ fontWeight: 600 }}>{payment.mpesa_receipt}</span></div>}
+                        {payment.mpesa_receipt && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000' }}>M-Pesa Ref:</span><span style={{ fontWeight: 600 }}>{payment.mpesa_receipt}</span></div>}
                     </div>
 
                     {/* Amount Paid */}
                     <div style={{ textAlign: 'center', margin: '8px 0', padding: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, color: '#15803d', textTransform: 'uppercase' as const, letterSpacing: 1 }}>Amount Paid</div>
-                        <div style={{ fontSize: 22, fontWeight: 900, color: '#16a34a' }}>{fmt(amountPaid)}</div>
+                        <div style={{ fontSize: 9, color: '#000', textTransform: 'uppercase' as const, letterSpacing: 1 }}>Amount Paid</div>
+                        <div style={{ fontSize: 22, fontWeight: 900, color: '#000' }}>{fmt(amountPaid)}</div>
                     </div>
 
                     {/* Allocation Breakdown */}
                     {(arrears > 0 || currentRentPaid > 0) && (
                         <div style={{ margin: '6px 0', padding: 6, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6 }}>
-                            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase' as const, color: '#1d4ed8', letterSpacing: 1, marginBottom: 4, textAlign: 'center' }}>💡 Payment Allocation (FIFO)</div>
+                            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase' as const, color: '#000', letterSpacing: 1, marginBottom: 4, textAlign: 'center' }}>💡 Payment Allocation (FIFO)</div>
                             {arrears > 0 && arrearsPaid > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 4px', fontSize: 11 }}>
-                                    <span style={{ color: '#666' }}>→ Arrears Cleared:</span><span style={{ fontWeight: 700, color: '#dc2626' }}>{fmt(arrearsPaid)}</span>
+                                    <span style={{ color: '#000' }}>→ Arrears Cleared:</span><span style={{ fontWeight: 700, color: '#000' }}>{fmt(arrearsPaid)}</span>
                                 </div>
                             )}
                             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 4px', fontSize: 11 }}>
-                                <span style={{ color: '#666' }}>→ Current Month Rent:</span><span style={{ fontWeight: 700, color: '#16a34a' }}>{fmt(currentRentPaid)}</span>
+                                <span style={{ color: '#000' }}>→ Current Month Rent:</span><span style={{ fontWeight: 700, color: '#000' }}>{fmt(currentRentPaid)}</span>
                             </div>
                         </div>
                     )}
 
                     {/* Balance */}
                     <div style={{ textAlign: 'center', margin: '6px 0', padding: 6, borderRadius: 6, background: remainingBalance > 0 ? '#fef2f2' : '#f0fdf4', border: `1px solid ${remainingBalance > 0 ? '#fecaca' : '#bbf7d0'}` }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase' as const, letterSpacing: 1, color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
+                        <div style={{ fontSize: 9, textTransform: 'uppercase' as const, letterSpacing: 1, color: '#000' }}>
                             {remainingBalance > 0 ? '⚠️ Balance Due' : '✅ No Balance Due'}
                         </div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: '#000' }}>
                             {fmt(remainingBalance)}
                         </div>
                     </div>
 
                     {/* PAID Stamp */}
                     <div style={{ textAlign: 'center', margin: '8px 0' }}>
-                        <span style={{ display: 'inline-block', fontSize: 14, fontWeight: 900, color: '#16a34a', border: '2px solid #16a34a', padding: '2px 14px', borderRadius: 4, transform: 'rotate(-3deg)' }}>✓ PAID</span>
+                        <span style={{ display: 'inline-block', fontSize: 14, fontWeight: 900, color: '#000', border: '2px solid #000', padding: '2px 14px', borderRadius: 4, transform: 'rotate(-3deg)' }}>✓ PAID</span>
                     </div>
 
                     {/* Footer */}
-                    <div style={{ textAlign: 'center', fontSize: 9, color: '#999', marginTop: 8, paddingTop: 8, borderTop: '2px dashed #333' }}>
+                    <div style={{ textAlign: 'center', fontSize: 9, color: '#000', marginTop: 8, paddingTop: 8, borderTop: '2px dashed #333' }}>
                         <p style={{ margin: '2px 0' }}>Thank you for your payment!</p>
                         <p style={{ margin: '2px 0' }}>Alpha Rental Management System</p>
                         <p style={{ margin: '2px 0' }}>Developed by Jimhawkins Korir • 📞 0720316175</p>
