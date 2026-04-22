@@ -4,8 +4,8 @@ import { supabase } from '@/lib/supabase';
 export const dynamic = 'force-dynamic';
 
 // IPN Basic Auth credentials (set these when registering IPN on Jenga HQ)
-const IPN_USERNAME = 'arms_jenga';
-const IPN_PASSWORD = 'ArmsJ3nga!2024';
+const IPN_USERNAME = 'armsjenga';
+const IPN_PASSWORD = ')9@JIm47jhC_7%#';
 
 // POST /api/jenga/callback — Receive Jenga payment callbacks (IPN)
 export async function POST(request: NextRequest) {
