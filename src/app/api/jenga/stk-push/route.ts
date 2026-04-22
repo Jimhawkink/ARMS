@@ -14,10 +14,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Phone and amount are required' }, { status: 400 });
         }
 
-        // Generate unique references
+        // Generate unique references (no special characters - Jenga requirement)
         const timestamp = Date.now();
-        const orderReference = `ARMS-ORD-${timestamp}`;
-        const paymentReference = `ARMS-PAY-${timestamp}`;
+        const orderReference = `ARMSORD${timestamp}`;
+        const paymentReference = `ARMSPAY${timestamp}`;
 
         // Get callback URL from settings or use default
         const { data: callbackSetting } = await supabase
