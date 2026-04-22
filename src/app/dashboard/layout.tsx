@@ -10,7 +10,7 @@ const menuGroups = [
         name: 'main',
         collapsible: false,
         items: [
-            { href: '/dashboard', label: 'Dashboard', icon: FiHome, emoji: '🏠' },
+            { href: '/dashboard', label: 'Dashboard', icon: FiHome },
         ]
     },
     {
@@ -18,10 +18,9 @@ const menuGroups = [
         icon: FiMapPin,
         name: 'property',
         collapsible: true,
-        emoji: '🏢',
         items: [
-            { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin, emoji: '📍' },
-            { href: '/dashboard/units', label: 'Units', icon: FiGrid, emoji: '🚪' },
+            { href: '/dashboard/locations', label: 'Locations', icon: FiMapPin },
+            { href: '/dashboard/units', label: 'Units', icon: FiGrid },
         ]
     },
     {
@@ -29,13 +28,12 @@ const menuGroups = [
         icon: FiUsers,
         name: 'tenants',
         collapsible: true,
-        emoji: '👥',
         items: [
-            { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers, emoji: '👤' },
-            { href: '/dashboard/billing', label: 'Billing', icon: FiFileText, emoji: '🧾' },
-            { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign, emoji: '💳' },
-            { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle, emoji: '⚠️' },
-            { href: '/dashboard/checklists', label: 'Checklists', icon: FiClipboard, emoji: '📋' },
+            { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers },
+            { href: '/dashboard/billing', label: 'Billing', icon: FiFileText },
+            { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign },
+            { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle },
+            { href: '/dashboard/checklists', label: 'Checklists', icon: FiClipboard },
         ]
     },
     {
@@ -43,10 +41,9 @@ const menuGroups = [
         icon: FiSend,
         name: 'comms',
         collapsible: true,
-        emoji: '📱',
         items: [
-            { href: '/dashboard/sms', label: 'Bulk SMS', icon: FiMessageSquare, emoji: '💬' },
-            { href: '/dashboard/demand-letters', label: 'Demand Letters', icon: FiFileText, emoji: '📜' },
+            { href: '/dashboard/sms', label: 'Bulk SMS', icon: FiMessageSquare },
+            { href: '/dashboard/demand-letters', label: 'Demand Letters', icon: FiFileText },
         ]
     },
     {
@@ -54,10 +51,9 @@ const menuGroups = [
         icon: FiDroplet,
         name: 'utilities',
         collapsible: true,
-        emoji: '💡',
         items: [
-            { href: '/dashboard/utilities', label: 'Water & Utility Billing', icon: FiDroplet, emoji: '💧' },
-            { href: '/dashboard/prepaid', label: 'Prepaid Tokens', icon: FiZap, emoji: '⚡' },
+            { href: '/dashboard/utilities', label: 'Water & Utility Billing', icon: FiDroplet },
+            { href: '/dashboard/prepaid', label: 'Prepaid Tokens', icon: FiZap },
         ]
     },
     {
@@ -65,10 +61,9 @@ const menuGroups = [
         icon: FiCreditCard,
         name: 'finance',
         collapsible: true,
-        emoji: '💰',
         items: [
-            { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown, emoji: '📉' },
-            { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart, emoji: '📊' },
+            { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown },
+            { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart },
         ]
     },
     {
@@ -76,10 +71,9 @@ const menuGroups = [
         icon: FiUserCheck,
         name: 'staff',
         collapsible: true,
-        emoji: '👷',
         items: [
-            { href: '/dashboard/caretakers', label: 'Caretakers', icon: FiUserCheck, emoji: '🧑‍🔧' },
-            { href: '/dashboard/petty-cash', label: 'Petty Cash', icon: FiDollarSign, emoji: '💵' },
+            { href: '/dashboard/caretakers', label: 'Caretakers', icon: FiUserCheck },
+            { href: '/dashboard/petty-cash', label: 'Petty Cash', icon: FiDollarSign },
         ]
     },
     {
@@ -87,10 +81,9 @@ const menuGroups = [
         icon: FiShield,
         name: 'system',
         collapsible: true,
-        emoji: '⚙️',
         items: [
-            { href: '/dashboard/users', label: 'Users & Access', icon: FiShield, emoji: '🔐' },
-            { href: '/dashboard/settings', label: 'Settings', icon: FiSettings, emoji: '🔧' },
+            { href: '/dashboard/users', label: 'Users & Access', icon: FiShield },
+            { href: '/dashboard/settings', label: 'Settings', icon: FiSettings },
         ]
     },
 ];
@@ -103,7 +96,7 @@ function LiveClock() {
         const id = setInterval(tick, 1000);
         return () => clearInterval(id);
     }, []);
-    return <span className="font-mono text-xs tabular-nums text-indigo-600 font-bold">{time}</span>;
+    return <span className="font-mono text-xs tabular-nums text-blue-600 font-bold">{time}</span>;
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -175,7 +168,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })();
 
     return (
-        <div className="flex min-h-screen" style={{ background: '#f1f5f9' }}>
+        <div className="flex min-h-screen" style={{ background: '#f0f2f5' }}>
+            <style>{`
+                .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+                .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+                .sidebar-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+                .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+            `}</style>
             {/* ─── SIDEBAR ─── */}
             <aside className={`${collapsed ? 'w-[68px]' : 'w-[252px]'} flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50`}
                 style={{ background: '#ffffff', borderRight: '1px solid #e2e8f0' }}>
@@ -186,19 +185,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {!collapsed && (
                         <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
-                                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                                <span className="text-white text-sm font-black">A</span>
+                                style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
+                                <FiHome size={16} className="text-white" />
                             </div>
                             <div>
-                                <h2 className="text-[15px] font-black text-gray-900 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.03em' }}>ARMS</h2>
-                                <p className="text-[9px] text-gray-400 font-medium tracking-widest uppercase">Rental Management</p>
+                                <h2 className="text-[16px] font-bold text-gray-900 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>ARMS<span className="text-blue-600">+</span></h2>
                             </div>
                         </div>
                     )}
                     {collapsed && (
-                        <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg"
-                            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                            <span className="text-white text-sm font-black">A</span>
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shadow-sm"
+                            style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
+                            <FiHome size={16} />
                         </div>
                     )}
                 </div>
@@ -208,14 +206,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     onClick={() => setCollapsed(!collapsed)}
                     className="absolute -right-3 top-[68px] w-6 h-6 rounded-full flex items-center justify-center shadow-md transition-all z-50"
                     style={{ background: '#fff', border: '1.5px solid #e2e8f0', color: '#64748b' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#6366f1'; (e.currentTarget as HTMLButtonElement).style.color = '#6366f1'; }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#3b82f6'; (e.currentTarget as HTMLButtonElement).style.color = '#3b82f6'; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'; (e.currentTarget as HTMLButtonElement).style.color = '#64748b'; }}
                 >
                     {collapsed ? <FiChevronRight size={12} /> : <FiChevronLeft size={12} />}
                 </button>
 
                 {/* Nav */}
-                <nav className="flex-1 py-4 px-2.5 space-y-0.5 overflow-y-auto overflow-x-hidden">
+                <nav className="flex-1 py-3 px-3 space-y-0.5 overflow-y-auto overflow-x-hidden sidebar-scroll" style={{ WebkitOverflowScrolling: 'touch' }}>
                     {menuGroups.map((group) => {
                         const isExpanded = expandedGroups[group.name];
                         const GroupIcon = group.icon;
@@ -230,16 +228,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         key={item.href}
                                         onClick={() => router.push(item.href)}
                                         title={collapsed ? item.label : undefined}
-                                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all mb-1
+                                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all mb-2
                                             ${active
-                                                ? 'bg-indigo-50 text-indigo-700 shadow-sm'
+                                                ? 'bg-blue-50 text-blue-700 font-semibold'
                                                 : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
                                             ${collapsed ? 'justify-center' : ''}
                                         `}
                                     >
-                                        <span className="text-base leading-none">{item.emoji}</span>
+                                        <ItemIcon size={18} className={active ? 'text-blue-600' : 'text-gray-400'} />
                                         {!collapsed && <span>{item.label}</span>}
-                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-600" />}
+                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-600" />}
                                     </button>
                                 );
                             });
@@ -249,40 +247,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             <div key={group.name} className="mb-0.5">
                                 <button
                                     onClick={() => toggleGroup(group.name)}
-                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px] font-bold uppercase tracking-widest transition-all
-                                        ${isGroupActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all
+                                        ${isGroupActive ? 'text-blue-700 bg-blue-50/50' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
                                         ${collapsed ? 'justify-center' : ''}
                                     `}
                                     title={collapsed ? group.label : undefined}
                                 >
+                                    {GroupIcon && <GroupIcon size={17} className={isGroupActive ? 'text-blue-600' : 'text-gray-400'} />}
                                     {!collapsed && (
                                         <>
-                                            <span className="text-sm leading-none">{group.emoji}</span>
                                             <span className="flex-1 text-left">{group.label}</span>
-                                            <FiChevronDown size={13} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                                            <FiChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                                         </>
                                     )}
-                                    {collapsed && GroupIcon && <GroupIcon size={16} />}
                                 </button>
 
-                                <div className={`overflow-hidden transition-all duration-250 ease-in-out
-                                    ${isExpanded && !collapsed ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                                    <div className="ml-3 pl-3 mt-0.5 space-y-0.5" style={{ borderLeft: '2px solid #e2e8f0' }}>
+                                <div className={`overflow-hidden transition-all duration-200 ease-in-out
+                                    ${isExpanded && !collapsed ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                    <div className="ml-[22px] pl-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100">
                                         {group.items.map(item => {
+                                            const ItemIcon = item.icon;
                                             const active = isActive(item.href);
                                             return (
                                                 <button
                                                     key={item.href}
                                                     onClick={() => router.push(item.href)}
-                                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12.5px] transition-all
+                                                    className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-md text-[12.5px] transition-all
                                                         ${active
-                                                            ? 'text-indigo-700 bg-indigo-50 font-bold'
-                                                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 font-medium'}
+                                                            ? 'text-blue-700 bg-blue-50 font-semibold border-l-2 border-blue-500 -ml-[3px] pl-[11px]'
+                                                            : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}
                                                     `}
                                                 >
-                                                    <span className="text-sm leading-none">{item.emoji}</span>
+                                                    <ItemIcon size={14} className={active ? 'text-blue-600' : 'text-gray-400'} />
                                                     <span>{item.label}</span>
-                                                    {active && <div className="ml-auto w-1 h-4 rounded-full bg-indigo-600" />}
                                                 </button>
                                             );
                                         })}
@@ -294,25 +291,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </nav>
 
                 {/* User footer */}
-                <div className="p-3" style={{ borderTop: '1px solid #f1f5f9' }}>
+                <div className={`border-t border-gray-100 ${collapsed ? 'p-2' : 'p-3'}`}>
                     {!collapsed ? (
-                        <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-gray-50 transition cursor-default">
-                            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                                style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
+                        <div className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors cursor-default">
+                            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-sm"
+                                style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
                                 {user?.name?.charAt(0)?.toUpperCase() || 'A'}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-gray-900 truncate">{user?.name || 'Admin'}</p>
-                                <p className="text-[10px] text-gray-400 truncate capitalize">{user?.userType || 'admin'}</p>
+                                <p className="text-[12.5px] font-semibold text-gray-800 truncate">{user?.name || 'Admin'}</p>
+                                <p className="text-[10.5px] text-blue-600 capitalize font-medium">{user?.userType || 'admin'}</p>
                             </div>
-                            <button onClick={handleLogout} className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition" title="Logout">
-                                <FiLogOut size={14} />
+                            <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Logout">
+                                <FiLogOut size={15} />
                             </button>
                         </div>
                     ) : (
-                        <button onClick={handleLogout} className="w-full flex items-center justify-center py-2.5 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition" title="Logout">
-                            <FiLogOut size={16} />
-                        </button>
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+                                {user?.name?.charAt(0)?.toUpperCase() || 'A'}
+                            </div>
+                            <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Logout">
+                                <FiLogOut size={15} />
+                            </button>
+                        </div>
                     )}
                 </div>
             </aside>
@@ -342,10 +345,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 onClick={() => setShowLocDropdown(!showLocDropdown)}
                                 className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all"
                                 style={{ background: '#f1f5f9', border: '1.5px solid #e2e8f0', color: '#374151' }}
-                                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#6366f1'}
+                                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#3b82f6'}
                                 onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'}
                             >
-                                <FiMapPin size={13} className="text-indigo-500" />
+                                <FiMapPin size={13} className="text-blue-500" />
                                 <span className="max-w-[120px] truncate text-[13px]">{selectedLocName}</span>
                                 <FiChevronDown size={13} className={`text-gray-400 transition-transform ${showLocDropdown ? 'rotate-180' : ''}`} />
                             </button>
@@ -356,12 +359,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Select Location</p>
                                     </div>
                                     <button onClick={() => handleLocationChange(null)}
-                                        className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                        className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
                                         📍 All Locations
                                     </button>
                                     {locations.map(l => (
                                         <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)}
-                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
                                             🏢 {l.location_name}
                                         </button>
                                     ))}
