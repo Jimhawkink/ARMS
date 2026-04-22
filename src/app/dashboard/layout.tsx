@@ -178,11 +178,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex min-h-screen" style={{ background: '#f1f5f9' }}>
             {/* ─── SIDEBAR ─── */}
             <aside className={`${collapsed ? 'w-[68px]' : 'w-[252px]'} flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50`}
-                style={{ background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 60%, #1a2744 100%)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+                style={{ background: '#ffffff', borderRight: '1px solid #e2e8f0' }}>
 
                 {/* Logo */}
                 <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-4 py-5`}
-                    style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    style={{ borderBottom: '1px solid #f1f5f9' }}>
                     {!collapsed && (
                         <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
@@ -190,8 +190,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <span className="text-white text-sm font-black">A</span>
                             </div>
                             <div>
-                                <h2 className="text-[15px] font-black text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.03em' }}>ARMS</h2>
-                                <p className="text-[9px] text-slate-400 font-medium tracking-widest uppercase">Rental Management</p>
+                                <h2 className="text-[15px] font-black text-gray-900 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.03em' }}>ARMS</h2>
+                                <p className="text-[9px] text-gray-400 font-medium tracking-widest uppercase">Rental Management</p>
                             </div>
                         </div>
                     )}
@@ -232,15 +232,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         title={collapsed ? item.label : undefined}
                                         className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all mb-1
                                             ${active
-                                                ? 'text-white shadow-md'
-                                                : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'}
+                                                ? 'bg-indigo-50 text-indigo-700 shadow-sm'
+                                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
                                             ${collapsed ? 'justify-center' : ''}
                                         `}
-                                        style={active ? { background: 'linear-gradient(135deg, rgba(99,102,241,0.35), rgba(139,92,246,0.25))', border: '1px solid rgba(99,102,241,0.35)' } : {}}
                                     >
                                         <span className="text-base leading-none">{item.emoji}</span>
                                         {!collapsed && <span>{item.label}</span>}
-                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />}
+                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-600" />}
                                     </button>
                                 );
                             });
@@ -251,7 +250,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <button
                                     onClick={() => toggleGroup(group.name)}
                                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px] font-bold uppercase tracking-widest transition-all
-                                        ${isGroupActive ? 'text-indigo-300' : 'text-slate-500 hover:text-slate-300'}
+                                        ${isGroupActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}
                                         ${collapsed ? 'justify-center' : ''}
                                     `}
                                     title={collapsed ? group.label : undefined}
@@ -268,7 +267,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                                 <div className={`overflow-hidden transition-all duration-250 ease-in-out
                                     ${isExpanded && !collapsed ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                                    <div className="ml-3 pl-3 mt-0.5 space-y-0.5" style={{ borderLeft: '1.5px solid rgba(99,102,241,0.2)' }}>
+                                    <div className="ml-3 pl-3 mt-0.5 space-y-0.5" style={{ borderLeft: '2px solid #e2e8f0' }}>
                                         {group.items.map(item => {
                                             const active = isActive(item.href);
                                             return (
@@ -277,13 +276,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                     onClick={() => router.push(item.href)}
                                                     className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12.5px] transition-all
                                                         ${active
-                                                            ? 'text-indigo-300 font-bold'
-                                                            : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] font-medium'}
+                                                            ? 'text-indigo-700 bg-indigo-50 font-bold'
+                                                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 font-medium'}
                                                     `}
                                                 >
                                                     <span className="text-sm leading-none">{item.emoji}</span>
                                                     <span>{item.label}</span>
-                                                    {active && <div className="ml-auto w-1 h-4 rounded-full bg-indigo-400" />}
+                                                    {active && <div className="ml-auto w-1 h-4 rounded-full bg-indigo-600" />}
                                                 </button>
                                             );
                                         })}
@@ -295,23 +294,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </nav>
 
                 {/* User footer */}
-                <div className="p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="p-3" style={{ borderTop: '1px solid #f1f5f9' }}>
                     {!collapsed ? (
-                        <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-white/[0.05] transition cursor-default">
+                        <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-gray-50 transition cursor-default">
                             <div className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                                style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
                                 {user?.name?.charAt(0)?.toUpperCase() || 'A'}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-white truncate">{user?.name || 'Admin'}</p>
-                                <p className="text-[10px] text-slate-400 truncate capitalize">{user?.userType || 'admin'}</p>
+                                <p className="text-xs font-bold text-gray-900 truncate">{user?.name || 'Admin'}</p>
+                                <p className="text-[10px] text-gray-400 truncate capitalize">{user?.userType || 'admin'}</p>
                             </div>
-                            <button onClick={handleLogout} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition" title="Logout">
+                            <button onClick={handleLogout} className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition" title="Logout">
                                 <FiLogOut size={14} />
                             </button>
                         </div>
                     ) : (
-                        <button onClick={handleLogout} className="w-full flex items-center justify-center py-2.5 text-slate-500 hover:text-red-400 rounded-xl hover:bg-red-500/10 transition" title="Logout">
+                        <button onClick={handleLogout} className="w-full flex items-center justify-center py-2.5 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition" title="Logout">
                             <FiLogOut size={16} />
                         </button>
                     )}
