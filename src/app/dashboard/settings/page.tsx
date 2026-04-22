@@ -270,11 +270,14 @@ function JengaTestPanel() {
     const [testing, setTesting] = useState(false);
     const [generating, setGenerating] = useState(false);
     const [stkTesting, setStkTesting] = useState(false);
+    const [cbTesting, setCbTesting] = useState(false);
     const [result, setResult] = useState<any>(null);
     const [publicKey, setPublicKey] = useState('');
     const [stkPhone, setStkPhone] = useState('');
     const [stkAmount, setStkAmount] = useState('1');
     const [stkChannel, setStkChannel] = useState<'mpesa' | 'equitel'>('mpesa');
+    const [cbPhone, setCbPhone] = useState('');
+    const [cbAmount, setCbAmount] = useState('5000');
 
     const testAuth = async () => {
         setTesting(true); setResult(null);
@@ -319,6 +322,23 @@ function JengaTestPanel() {
             else toast.error(data.error || data.message || 'STK Push failed');
         } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
         setStkTesting(false);
+    };
+
+    const testCallback = async () => {
+        if (!cbPhone || !cbAmount) { toast.error('Enter phone and amount'); return; }
+        setCbTesting(true); setResult(null);
+        try {
+            const res = await fetch('/api/jenga/callback', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: cbPhone, amount: parseFloat(cbAmount), customerName: 'Test Tenant' }),
+            });
+            const data = await res.json();
+            setResult(data);
+            if (data.success) toast.success(`✅ Callback test OK! ${data.matchedTenant ? `Linked to ${data.matchedTenant.name}` : 'No tenant matched'}`);
+            else toast.error(data.error || 'Callback test failed');
+        } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
+        setCbTesting(false);
     };
 
     return (
@@ -384,6 +404,28 @@ function JengaTestPanel() {
                     </button>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1.5">Sandbox: use phone 0722000000 for M-Pesa, 254764555291 for Equitel</p>
+            </div>
+
+            {/* Test Callback (IPN) */}
+            <div className="pt-3 border-t border-gray-100">
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">🔗 Test Callback (IPN)</p>
+                <p className="text-[10px] text-gray-400 mb-2">Simulates a Jenga payment callback — auto-matches tenant by phone and records payment</p>
+                <div className="flex gap-2 flex-wrap items-center">
+                    <input value={cbPhone} onChange={e => setCbPhone(e.target.value)}
+                        placeholder="Phone (e.g. 0119087458)"
+                        className="flex-1 min-w-[140px] px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400 transition"
+                    />
+                    <input value={cbAmount} onChange={e => setCbAmount(e.target.value)}
+                        placeholder="Amount" type="number"
+                        className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400 transition"
+                    />
+                    <button onClick={testCallback} disabled={cbTesting}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition disabled:opacity-60">
+                        {cbTesting ? <FiRefreshCw size={13} className="animate-spin" /> : <FiLink size={13} />}
+                        Test Callback
+                    </button>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">Uses a tenant's phone number — if matched, payment auto-links to their account</p>
             </div>
 
             {/* Result display */}

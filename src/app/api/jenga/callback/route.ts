@@ -147,3 +147,80 @@ export async function POST(request: NextRequest) {
 export async function GET() {
     return NextResponse.json({ status: 'Jenga callback endpoint active' });
 }
+
+// PUT /api/jenga/callback — Test/simulate a Jenga callback (for sandbox testing)
+export async function PUT(request: NextRequest) {
+    try {
+        const body = await request.json();
+        const phone = body.phone || '0119087458';
+        const amount = body.amount || 5000;
+        const reference = body.reference || `JENGA${Date.now()}`;
+        const customerName = body.customerName || 'Test Tenant';
+
+        // Normalize phone for matching
+        const cleanPhone = phone.replace(/^\+/, '').replace(/^254/, '0');
+
+        // Try to match tenant
+        let tenantId = null;
+        let billingId = null;
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('tenant_id, tenant_name, balance')
+            .or(`phone.eq.${cleanPhone},phone.eq.254${cleanPhone.replace(/^0/,'')},phone.eq.+254${cleanPhone.replace(/^0/,'')}`)
+            .eq('status', 'Active')
+            .limit(1)
+            .maybeSingle();
+
+        if (tenant) {
+            tenantId = tenant.tenant_id;
+            const { data: bill } = await supabase
+                .from('arms_billing')
+                .select('billing_id, balance, rent_amount, amount_paid')
+                .eq('tenant_id', tenantId)
+                .neq('status', 'Paid')
+                .order('billing_month', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (bill) {
+                billingId = bill.billing_id;
+                const newAmountPaid = (bill.amount_paid || 0) + Number(amount);
+                const newBalance = (bill.balance || 0) - Number(amount);
+                const newStatus = newBalance <= 0 ? 'Paid' : 'Partial';
+                await supabase.from('arms_billing').update({
+                    amount_paid: newAmountPaid, balance: Math.max(0, newBalance), status: newStatus,
+                }).eq('billing_id', bill.billing_id);
+                await supabase.from('arms_tenants').update({ balance: Math.max(0, tenant.balance - Number(amount)) }).eq('tenant_id', tenantId);
+            }
+        }
+
+        // Record payment
+        const { data: payment, error: payErr } = await supabase
+            .from('arms_payments')
+            .insert({
+                tenant_id: tenantId, billing_id: billingId, location_id: null,
+                amount: Number(amount),
+                payment_method: 'Jenga-M-Pesa',
+                mpesa_receipt: reference, mpesa_phone: phone,
+                reference_no: reference,
+                payment_date: new Date().toISOString().split('T')[0],
+                recorded_by: 'Jenga Auto (Test)',
+                notes: `Jenga test callback. Ref: ${reference}. Customer: ${customerName}. Phone: ${phone}`,
+            })
+            .select()
+            .single();
+
+        if (payErr) {
+            return NextResponse.json({ success: false, error: payErr.message }, { status: 500 });
+        }
+
+        return NextResponse.json({
+            success: true,
+            message: tenantId ? `Payment auto-linked to tenant` : 'Payment recorded (no tenant matched by phone)',
+            payment,
+            matchedTenant: tenant ? { tenant_id: tenant.tenant_id, name: tenant.tenant_name } : null,
+        });
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
