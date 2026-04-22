@@ -3,9 +3,25 @@ import { supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+// IPN Basic Auth credentials (set these when registering IPN on Jenga HQ)
+const IPN_USERNAME = 'arms_jenga';
+const IPN_PASSWORD = 'ArmsJ3nga!2024';
+
 // POST /api/jenga/callback — Receive Jenga payment callbacks (IPN)
 export async function POST(request: NextRequest) {
     try {
+        // Verify Basic Auth from Jenga IPN
+        const authHeader = request.headers.get('authorization');
+        if (authHeader) {
+            const base64Credentials = authHeader.split(' ')[1];
+            const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+            const [username, password] = credentials.split(':');
+            if (username !== IPN_USERNAME || password !== IPN_PASSWORD) {
+                console.warn('⚠️ Jenga callback: Invalid auth credentials');
+                return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            }
+        }
+
         const body = await request.json();
         console.log('📩 Jenga callback received:', JSON.stringify(body));
 
