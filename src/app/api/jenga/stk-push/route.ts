@@ -46,6 +46,11 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // Ensure defaults for required fields
+        const customerName = tenantName || 'ARMS Tenant';
+        const customerEmail = tenantEmail || 'tenant@arms.co.ke';
+        const customerPhone = tenantPhone || phone;
+
         let result;
         if (channel === 'equitel') {
             // Equitel STK Push
@@ -64,9 +69,9 @@ export async function POST(request: NextRequest) {
                 orderReference,
                 paymentReference,
                 callbackUrl,
-                tenantName,
-                tenantEmail,
-                tenantPhone,
+                tenantName: customerName,
+                tenantEmail: customerEmail,
+                tenantPhone: customerPhone,
                 description: description || 'Rent Payment',
             });
         }
