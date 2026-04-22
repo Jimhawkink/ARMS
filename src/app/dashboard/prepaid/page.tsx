@@ -64,7 +64,7 @@ export default function PrepaidTokensPage() {
 
     const filteredTokens = useMemo(() => {
         let items = [...tokens];
-        if (search) { const s = search.toLowerCase(); items = items.filter(t => t.arms_tenants?.tenant_name?.toLowerCase().includes(s) || t.arms_utility_types?.utility_name?.toLowerCase().includes(s) || t.meter_number?.toLowerCase().includes(s)); }
+        if (search) { const s = search.toLowerCase(); items = items.filter(t => t.arms_tenants?.tenant_name?.toLowerCase().includes(s) || t.meter_number?.toLowerCase().includes(s) || String(t.utility_type_id).includes(s)); }
         return items;
     }, [tokens, search]);
 
@@ -140,7 +140,7 @@ export default function PrepaidTokensPage() {
                                         <td className="px-3 py-3 whitespace-nowrap font-semibold" style={{ background: C.date.bg + '60', color: C.date.text }}>{new Date(t.purchase_date).toLocaleDateString('en-KE')}</td>
                                         <td className="px-3 py-3 font-bold" style={{ background: C.name.bg + '60', color: C.name.text }}>{t.arms_tenants?.tenant_name}</td>
                                         <td className="px-3 py-3" style={{ background: C.unit.bg + '60', color: C.unit.text }}>{t.arms_units?.unit_name}</td>
-                                        <td className="px-3 py-3" style={{ background: C.utility.bg + '60' }}><span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">{t.arms_utility_types?.utility_name}</span></td>
+                                        <td className="px-3 py-3" style={{ background: C.utility.bg + '60' }}><span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">{utilityTypes.find((u: any) => u.utility_type_id === t.utility_type_id)?.utility_name || `Type #${t.utility_type_id}`}</span></td>
                                         <td className="px-3 py-3 text-right font-extrabold" style={{ background: C.amount.bg + '60', color: C.amount.text }}>{fmt(t.amount_paid)}</td>
                                         <td className="px-3 py-3 text-right font-extrabold" style={{ background: C.units.bg + '60', color: C.units.text }}>{t.units_purchased} kWh</td>
                                         <td className="px-3 py-3 text-right" style={{ background: C.rate.bg + '60', color: C.rate.text }}>{fmt(t.rate_per_unit)}/kWh</td>

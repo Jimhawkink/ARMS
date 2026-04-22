@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getPettyCashEntries, addPettyCashEntry, getLocations } from '@/lib/supabase';
+import { getPettyCash, addPettyCash, getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiDollarSign, FiPlus, FiTrendingUp, FiTrendingDown, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
@@ -30,7 +30,7 @@ export default function PettyCashPage() {
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         try {
-            const [e, l] = await Promise.all([getPettyCashEntries(locId ? { locationId: locId } : undefined), getLocations()]);
+            const [e, l] = await Promise.all([getPettyCash(globalLocationId ? { locationId: globalLocationId } : undefined), getLocations()]);
             setEntries(e); setLocations(l);
         } catch (e: any) { toast.error(e.message); }
         setLoading(false);
@@ -48,18 +48,18 @@ export default function PettyCashPage() {
     const handleAdd = async () => {
         if (!form.category || !form.amount) return toast.error('Category and amount required');
         try {
-            await addPettyCashEntry({ entry_type: form.type, category: form.category, description: form.description || undefined, amount: parseFloat(form.amount), entry_date: form.date, location_id: globalLocationId || undefined, payment_method: form.method, receipt_number: form.receipt || undefined, recorded_by: 'Admin', notes: form.notes || undefined });
+            await addPettyCash({ transaction_type: form.type, category: form.category, description: form.description || undefined, amount: parseFloat(form.amount), location_id: globalLocationId || undefined, receipt_number: form.receipt || undefined, recorded_by: 'Admin', notes: form.notes || undefined });
             toast.success(`✅ ${form.type === 'Income' ? 'Income' : 'Expense'} recorded`); setShowAdd(false); setForm({ type: 'Expense', category: '', description: '', amount: '', date: new Date().toISOString().slice(0, 10), method: 'Cash', receipt: '', notes: '' }); loadData(globalLocationId);
         } catch (e: any) { toast.error(e.message); }
     };
 
-    const totalIncome = entries.filter(e => e.entry_type === 'Income').reduce((s, e) => s + (e.amount || 0), 0);
-    const totalExpense = entries.filter(e => e.entry_type === 'Expense').reduce((s, e) => s + (e.amount || 0), 0);
+    const totalIncome = entries.filter(e => e.transaction_type === 'Income').reduce((s, e) => s + (e.amount || 0), 0);
+    const totalExpense = entries.filter(e => e.transaction_type === 'Expense').reduce((s, e) => s + (e.amount || 0), 0);
     const balance = totalIncome - totalExpense;
 
     const filteredEntries = useMemo(() => {
         let items = [...entries];
-        if (search) { const s = search.toLowerCase(); items = items.filter(e => e.category?.toLowerCase().includes(s) || e.description?.toLowerCase().includes(s) || e.entry_type?.toLowerCase().includes(s)); }
+        if (search) { const s = search.toLowerCase(); items = items.filter(e => e.category?.toLowerCase().includes(s) || e.description?.toLowerCase().includes(s) || e.transaction_type?.toLowerCase().includes(s)); }
         return items;
     }, [entries, search]);
 
@@ -121,7 +121,7 @@ export default function PettyCashPage() {
                             <thead><tr>
                                 {[
                                     { label: '#', col: C.num }, { label: '📅 Date', col: C.date }, { label: '🏷️ Type', col: C.type }, { label: '📂 Category', col: C.category },
-                                    { label: '📝 Description', col: C.desc }, { label: '💰 Amount', col: C.amount }, { label: '💳 Method', col: C.method },
+                                    { label: '📝 Description', col: C.desc }, { label: '💰 Amount', col: C.amount }, { label: '� Recorded By', col: C.method },
                                 ].map((h, i) => (
                                     <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap" style={{ background: h.col.head, color: h.col.text, borderBottom: `2px solid ${h.col.text}30` }}>{h.label}</th>
                                 ))}
@@ -130,21 +130,21 @@ export default function PettyCashPage() {
                                 {paginatedEntries.length === 0 ? (
                                     <tr><td colSpan={7} className="text-center py-16 text-gray-400"><div className="flex flex-col items-center gap-2"><span className="text-5xl">💵</span><p className="text-sm font-medium">No entries yet</p><p className="text-xs">Add your first entry above</p></div></td></tr>
                                 ) : paginatedEntries.map((e, idx) => (
-                                    <tr key={e.entry_id} className="transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }} onMouseEnter={ev => (ev.currentTarget as HTMLTableRowElement).style.background = '#fafbff'} onMouseLeave={ev => (ev.currentTarget as HTMLTableRowElement).style.background = ''}>
+                                    <tr key={e.petty_cash_id} className="transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }} onMouseEnter={ev => (ev.currentTarget as HTMLTableRowElement).style.background = '#fafbff'} onMouseLeave={ev => (ev.currentTarget as HTMLTableRowElement).style.background = ''}>
                                         <td className="px-3 py-3 text-center font-bold" style={{ background: C.num.bg + '60', color: C.num.text }}>{(page - 1) * pageSize + idx + 1}</td>
-                                        <td className="px-3 py-3 whitespace-nowrap font-semibold" style={{ background: C.date.bg + '60', color: C.date.text }}>{e.entry_date}</td>
+                                        <td className="px-3 py-3 whitespace-nowrap font-semibold" style={{ background: C.date.bg + '60', color: C.date.text }}>{e.transaction_date}</td>
                                         <td className="px-3 py-3" style={{ background: C.type.bg + '60' }}>
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${e.entry_type === 'Income' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                                {e.entry_type === 'Income' ? '📥 Income' : '📤 Expense'}
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${e.transaction_type === 'Income' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                {e.transaction_type === 'Income' ? '📥 Income' : '📤 Expense'}
                                             </span>
                                         </td>
                                         <td className="px-3 py-3 font-bold" style={{ background: C.category.bg + '60', color: C.category.text }}>{e.category}</td>
                                         <td className="px-3 py-3 max-w-[200px] truncate" style={{ background: C.desc.bg + '60', color: C.desc.text }}>{e.description || '—'}</td>
-                                        <td className={`px-3 py-3 text-right font-extrabold`} style={{ background: (e.entry_type === 'Income' ? '#ecfdf5' : '#fef2f2') + '60', color: e.entry_type === 'Income' ? '#059669' : '#dc2626' }}>
-                                            {e.entry_type === 'Income' ? '+' : '-'}{fmt(e.amount)}
+                                        <td className={`px-3 py-3 text-right font-extrabold`} style={{ background: (e.transaction_type === 'Income' ? '#ecfdf5' : '#fef2f2') + '60', color: e.transaction_type === 'Income' ? '#059669' : '#dc2626' }}>
+                                            {e.transaction_type === 'Income' ? '+' : '-'}{fmt(e.amount)}
                                         </td>
                                         <td className="px-3 py-3" style={{ background: C.method.bg + '60' }}>
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border" style={{ background: C.method.bg, color: C.method.text, borderColor: C.method.head }}>{e.payment_method}</span>
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border" style={{ background: C.method.bg, color: C.method.text, borderColor: C.method.head }}>{e.recorded_by || '—'}</span>
                                         </td>
                                     </tr>
                                 ))}

@@ -1069,7 +1069,7 @@ export async function addPrepaidToken(token: { tenant_id: number; unit_id: numbe
 }
 
 export async function getPrepaidTokens(filters?: { tenantId?: number; locationId?: number }) {
-    let query = supabase.from('arms_prepaid_tokens').select('*, arms_tenants(tenant_name, phone), arms_units(unit_name), arms_utility_types(utility_name)').order('purchase_date', { ascending: false });
+    let query = supabase.from('arms_prepaid_tokens').select('*, arms_tenants(tenant_name, phone), arms_units(unit_name)').order('purchase_date', { ascending: false });
     if (filters?.tenantId) query = query.eq('tenant_id', filters.tenantId);
     if (filters?.locationId) query = query.eq('location_id', filters.locationId);
     const { data, error } = await query;

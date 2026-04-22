@@ -28,20 +28,16 @@ export default function TenantPortalPage() {
 
     if (!loggedIn) {
         return (
-            <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #1a2744 100%)' }}>
-                <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 25% 25%, #6366f1 0%, transparent 50%), radial-gradient(circle at 75% 75%, #8b5cf6 0%, transparent 50%)' }} />
+            <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 50%, #eef2ff 100%)' }}>
                 <div className="w-full max-w-md relative z-10">
                     <div className="text-center mb-8">
-                        <div className="relative inline-block">
-                            <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto shadow-2xl" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                                <span className="text-white text-3xl font-black">A</span>
-                            </div>
-                            <div className="absolute -inset-3 rounded-3xl border-2 border-indigo-400/30 animate-ping" />
+                        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto shadow-xl" style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}>
+                            <span className="text-white text-3xl font-black">A</span>
                         </div>
-                        <h1 className="text-3xl font-black text-white mt-6" style={{ fontFamily: 'Outfit, sans-serif' }}>ARMS Portal</h1>
-                        <p className="text-sm text-slate-400 mt-2">View your rent, receipts & raise issues</p>
+                        <h1 className="text-3xl font-black text-gray-900 mt-6" style={{ fontFamily: 'Outfit, sans-serif' }}>ARMS Portal</h1>
+                        <p className="text-sm text-gray-500 mt-2">View your rent, receipts & raise issues</p>
                     </div>
-                    <form onSubmit={handleLogin} className="bg-white/95 backdrop-blur-xl rounded-3xl p-8 shadow-2xl space-y-5 border border-white/20">
+                    <form onSubmit={handleLogin} className="bg-white rounded-3xl p-8 shadow-xl space-y-5 border border-gray-100">
                         <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">👤 Username</label>
                             <div className="relative mt-1.5">
