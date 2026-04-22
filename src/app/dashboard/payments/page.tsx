@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,9 +49,15 @@ export default function PaymentsPage() {
     const [actionLoading, setActionLoading] = useState(false);
 
     // ── Callback linking inside pay modal ─────────────────────────────────────
-    const [paymentSource, setPaymentSource] = useState<'manual' | 'mpesa' | 'jenga'>('manual');
+    const [paymentSource, setPaymentSource] = useState<'manual' | 'mpesa' | 'jenga_stk' | 'jenga_callback'>('manual');
     const [selectedCallback, setSelectedCallback] = useState<any>(null);
     const [loadingCallbacks, setLoadingCallbacks] = useState(false);
+
+    // ── Jenga STK Push state ─────────────────────────────────────────────
+    const [jengaStkSending, setJengaStkSending] = useState(false);
+    const [jengaStkChannel, setJengaStkChannel] = useState<'mpesa' | 'equitel'>('mpesa');
+    const [jengaStkResult, setJengaStkResult] = useState<any>(null);
+    const [jengaStkPhone, setJengaStkPhone] = useState('');
 
     // ── Real bill arrears for selected tenant ─────────────────────────────────
     const [tenantArrearData, setTenantArrearData] = useState<any>(null);
@@ -109,6 +115,7 @@ export default function PaymentsPage() {
     const openPayModal = () => {
         setPayForm({ tenant_id: 0, amount: '', payment_method: 'Cash', mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '', payment_month: new Date().toISOString().slice(0, 7) });
         setPaymentSource('manual'); setSelectedCallback(null); setTenantArrearData(null);
+        setJengaStkResult(null); setJengaStkPhone('');
         setShowPayModal(true);
         loadCallbacks(); // auto-load callbacks
     };
@@ -216,6 +223,36 @@ export default function PaymentsPage() {
     // Callbacks for current tab
     const activeCallbacks = paymentSource === 'mpesa' ? mpesaTxns : c2bPayments;
 
+    // ── Jenga STK Push handler ─────────────────────────────────────────────
+    const handleJengaStkPush = async () => {
+        if (!payForm.tenant_id || !payForm.amount) { toast.error('Select tenant and enter amount first'); return; }
+        const tenant = tenants.find((t: any) => t.tenant_id === payForm.tenant_id);
+        const phone = jengaStkPhone || tenant?.phone || '';
+        if (!phone) { toast.error('Tenant phone number required for STK push'); return; }
+        setJengaStkSending(true); setJengaStkResult(null);
+        try {
+            const res = await fetch('/api/jenga/stk-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone, amount: parseFloat(payForm.amount),
+                    tenantId: payForm.tenant_id, channel: jengaStkChannel,
+                    description: `Rent Payment - ${tenant?.tenant_name || 'Tenant'}`,
+                }),
+            });
+            const data = await res.json();
+            setJengaStkResult(data);
+            if (data.success && data.status === true) {
+                toast.success('STK Push sent! Tenant will receive a payment prompt on their phone.');
+            } else if (data.success) {
+                toast.error(data.message || 'STK Push failed');
+            } else {
+                toast.error(data.error || 'STK Push failed');
+            }
+        } catch (e: any) { toast.error(e.message); setJengaStkResult({ error: e.message }); }
+        setJengaStkSending(false);
+    };
+
     if (loading) return (
         <div className="flex flex-col items-center justify-center h-64 gap-3">
             <div className="relative">
@@ -322,7 +359,7 @@ export default function PaymentsPage() {
                                             {arrearsRemaining>0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{background:COL.arrearsRem.head,color:COL.arrearsRem.text}}>{fmt(arrearsRemaining)}</span> : <span className="text-[10px] font-bold text-green-600">✓ Clear</span>}
                                         </td>
                                         <td className="px-3 py-3" style={{background:COL.method.bg+'80'}}>
-                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${p.payment_method==='M-Pesa'?'bg-green-100 text-green-700':'bg-blue-100 text-blue-700'}`}>{p.payment_method==='M-Pesa'?'📱':'💵'} {p.payment_method}</span>
+                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${p.payment_method==='M-Pesa'?'bg-green-100 text-green-700':p.payment_method?.startsWith('Jenga')?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}`}>{p.payment_method==='M-Pesa'?'📱':p.payment_method?.startsWith('Jenga')?'🏦':'💵'} {p.payment_method}</span>
                                         </td>
                                         <td className="px-3 py-3 text-[10px]" style={{background:COL.receipt.bg+'80',color:COL.receipt.text}}>{p.mpesa_receipt||p.reference_no||'-'}</td>
                                         <td className="px-3 py-3 text-[10px]" style={{background:COL.by.bg+'80',color:COL.by.text}}>{p.recorded_by||'-'}</td>
@@ -366,15 +403,23 @@ export default function PaymentsPage() {
                             {/* ── STEP 1: Payment Source ─────────────────────── */}
                             <div>
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">① Payment Source</p>
-                                <div className="flex gap-2 p-1.5 rounded-2xl bg-gray-100">
+                                <div className="flex gap-2 p-1.5 rounded-2xl bg-gray-100 flex-wrap">
                                     {[
-                                        {id:'manual',label:'💵 Manual',desc:'Cash / Bank Transfer'},
-                                        {id:'mpesa', label:'📱 M-Pesa',desc:'From callback'},
-                                        {id:'jenga', label:'🔗 Jenga/C2B',desc:'From callback'},
+                                        {id:'manual',label:'💵 Manual',desc:'Cash / Bank',color:'#6366f1'},
+                                        {id:'mpesa', label:'📱 M-Pesa',desc:'Daraja callback',color:'#10b981'},
+                                        {id:'jenga_stk', label:'🏦 Jenga Push',desc:'Send STK to phone',color:'#f59e0b'},
+                                        {id:'jenga_callback', label:'🔗 Jenga IPN',desc:'Payment callback',color:'#ef4444'},
                                     ].map(src => (
                                         <button key={src.id}
-                                            onClick={() => { setPaymentSource(src.id as any); setSelectedCallback(null); if (src.id!=='manual') setPayForm(f=>({...f,payment_method:'M-Pesa',mpesa_receipt:'',mpesa_phone:'',amount:''})); else setPayForm(f=>({...f,payment_method:'Cash',mpesa_receipt:'',mpesa_phone:''}))}}>
-                                            <div className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all text-center ${paymentSource===src.id ? 'bg-white shadow-md text-indigo-700 scale-[1.02]' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'}`}>
+                                            onClick={() => {
+                                                setPaymentSource(src.id as any); setSelectedCallback(null); setJengaStkResult(null);
+                                                if (src.id==='manual') setPayForm(f=>({...f,payment_method:'Cash',mpesa_receipt:'',mpesa_phone:''}));
+                                                else if (src.id==='mpesa') setPayForm(f=>({...f,payment_method:'M-Pesa',mpesa_receipt:'',mpesa_phone:'',amount:''}));
+                                                else if (src.id==='jenga_stk') setPayForm(f=>({...f,payment_method:'Jenga-M-Pesa',mpesa_receipt:'',mpesa_phone:''}));
+                                                else setPayForm(f=>({...f,payment_method:'Jenga-M-Pesa',mpesa_receipt:'',mpesa_phone:'',amount:''}));
+                                            }}>
+                                            <div className={`px-3 py-2.5 rounded-xl text-sm font-bold transition-all text-center ${paymentSource===src.id ? 'bg-white shadow-md scale-[1.02]' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'}`}
+                                                style={paymentSource===src.id ? {color:src.color} : {}}>
                                                 <div>{src.label}</div>
                                                 <div className="text-[9px] font-normal opacity-60 mt-0.5">{src.desc}</div>
                                             </div>
@@ -383,8 +428,80 @@ export default function PaymentsPage() {
                                 </div>
                             </div>
 
+                            {/* ── JENGA STK PUSH SECTION ── */}
+                            {paymentSource === 'jenga_stk' && (
+                                <div className="space-y-4">
+                                    <div className="rounded-2xl overflow-hidden border-2 border-amber-200" style={{background:'linear-gradient(135deg,#fffbeb,#fef3c7)'}}>
+                                        <div className="px-4 py-3 flex items-center gap-3" style={{background:'linear-gradient(90deg,#f59e0b,#d97706)'}}>
+                                            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">🏦</div>
+                                            <div>
+                                                <h3 className="text-sm font-bold text-white">Jenga STK Push — Send Payment Prompt</h3>
+                                                <p className="text-[10px] text-amber-100">Initiate an M-Pesa or Equitel push directly to the tenant's phone</p>
+                                            </div>
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            {/* Channel selector */}
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setJengaStkChannel('mpesa')}
+                                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${jengaStkChannel==='mpesa' ? 'bg-green-600 text-white shadow-lg scale-[1.02]' : 'bg-white text-green-700 border-2 border-green-200 hover:border-green-400'}`}>
+                                                    <span className="text-lg">📱</span> M-Pesa via Jenga
+                                                </button>
+                                                <button onClick={() => setJengaStkChannel('equitel')}
+                                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${jengaStkChannel==='equitel' ? 'bg-purple-600 text-white shadow-lg scale-[1.02]' : 'bg-white text-purple-700 border-2 border-purple-200 hover:border-purple-400'}`}>
+                                                    <span className="text-lg">💳</span> Equitel
+                                                </button>
+                                            </div>
+
+                                            {/* Phone input */}
+                                            <div>
+                                                <label className="text-xs font-bold text-amber-700 mb-1 block">📞 Tenant Phone Number</label>
+                                                <div className="flex gap-2">
+                                                    <input type="tel" value={jengaStkPhone} onChange={e => setJengaStkPhone(e.target.value)}
+                                                        placeholder={selectedTenant?.phone || '07XXXXXXXX'}
+                                                        className="flex-1 px-4 py-2.5 bg-white border-2 border-amber-200 rounded-xl text-sm font-bold text-gray-800 placeholder-amber-300 focus:outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100 transition"/>
+                                                    {selectedTenant?.phone && (
+                                                        <button onClick={() => setJengaStkPhone(selectedTenant.phone)}
+                                                            className="px-3 py-2 rounded-xl bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200 hover:bg-amber-200 transition">
+                                                            Use tenant's
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Send STK button */}
+                                            <button onClick={handleJengaStkPush} disabled={jengaStkSending || !payForm.tenant_id || !payForm.amount}
+                                                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-extrabold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                style={{background:'linear-gradient(135deg,#f59e0b,#d97706)',color:'white',boxShadow:'0 4px 14px rgba(245,158,11,0.4)'}}>
+                                                {jengaStkSending ? (
+                                                    <><div className="spinner" style={{width:16,height:16,borderColor:'white transparent white transparent'}}/> Sending STK Push…</>
+                                                ) : (
+                                                    <><FiSend size={16}/> Send {jengaStkChannel==='mpesa' ? 'M-Pesa' : 'Equitel'} STK Push — KES {payForm.amount || '0'}</>
+                                                )}
+                                            </button>
+
+                                            {/* STK Result */}
+                                            {jengaStkResult && (
+                                                <div className={`rounded-xl p-3 text-xs font-mono border-2 ${jengaStkResult.status === true ? 'bg-green-50 border-green-300 text-green-800' : jengaStkResult.success ? 'bg-red-50 border-red-300 text-red-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
+                                                    {jengaStkResult.status === true ? (
+                                                        <div className="space-y-1">
+                                                            <p className="font-bold text-green-900">✅ STK Push Sent Successfully!</p>
+                                                            <p>Invoice: <span className="font-bold">{jengaStkResult.data?.invoiceNumber || jengaStkResult.reference}</span></p>
+                                                            <p>Order Ref: {jengaStkResult.orderReference}</p>
+                                                            <p>Amount Debited: KES {jengaStkResult.data?.amountDebited || payForm.amount}</p>
+                                                            <p className="text-[10px] text-green-600 mt-1">⏳ Waiting for tenant to confirm on their phone… Payment will auto-record via callback.</p>
+                                                        </div>
+                                                    ) : (
+                                                        <p>❌ {jengaStkResult.message || jengaStkResult.error || 'Failed'}</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* ── CALLBACK TRANSACTION GRID (M-Pesa or Jenga) ── */}
-                            {paymentSource !== 'manual' && (
+                            {(paymentSource === 'mpesa' || paymentSource === 'jenga_callback') && (
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
                                         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
@@ -573,9 +690,10 @@ export default function PaymentsPage() {
                                             <label className="text-xs font-medium text-gray-700 mb-1 block">💳 Method</label>
                                             <select value={payForm.payment_method} onChange={e => setPayForm({...payForm,payment_method:e.target.value})} className="select-field">
                                                 <option value="Cash">💵 Cash</option>
-                                                <option value="M-Pesa">📱 M-Pesa</option>
+                                                <option value="M-Pesa">📱 M-Pesa (Daraja)</option>
                                                 <option value="Bank Transfer">🏦 Bank Transfer</option>
-                                                <option value="Jenga">🔗 Jenga</option>
+                                                <option value="Jenga-M-Pesa">🏦 Jenga M-Pesa</option>
+                                                <option value="Jenga-Equitel">� Jenga Equitel</option>
                                             </select>
                                         </div>
                                     </div>
