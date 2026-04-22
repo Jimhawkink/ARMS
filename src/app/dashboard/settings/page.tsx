@@ -269,8 +269,12 @@ function C2bRegisterPanel() {
 function JengaTestPanel() {
     const [testing, setTesting] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const [stkTesting, setStkTesting] = useState(false);
     const [result, setResult] = useState<any>(null);
     const [publicKey, setPublicKey] = useState('');
+    const [stkPhone, setStkPhone] = useState('');
+    const [stkAmount, setStkAmount] = useState('1');
+    const [stkChannel, setStkChannel] = useState<'mpesa' | 'equitel'>('mpesa');
 
     const testAuth = async () => {
         setTesting(true); setResult(null);
@@ -298,6 +302,23 @@ function JengaTestPanel() {
             setResult(data);
         } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
         setGenerating(false);
+    };
+
+    const testStkPush = async () => {
+        if (!stkPhone || !stkAmount) { toast.error('Enter phone and amount'); return; }
+        setStkTesting(true); setResult(null);
+        try {
+            const res = await fetch('/api/jenga/stk-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: stkPhone, amount: parseFloat(stkAmount), channel: stkChannel, description: 'Jenga Test Payment' })
+            });
+            const data = await res.json();
+            setResult(data);
+            if (data.success || data.status) toast.success('✅ STK Push sent! Check phone.');
+            else toast.error(data.error || data.message || 'STK Push failed');
+        } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
+        setStkTesting(false);
     };
 
     return (
@@ -338,6 +359,32 @@ function JengaTestPanel() {
                     </button>
                 </div>
             )}
+
+            {/* Test STK Push */}
+            <div className="pt-3 border-t border-gray-100">
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">📱 Test STK Push</p>
+                <div className="flex gap-2 flex-wrap items-center">
+                    <select value={stkChannel} onChange={e => setStkChannel(e.target.value as 'mpesa' | 'equitel')}
+                        className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400 transition">
+                        <option value="mpesa">M-Pesa (via Jenga)</option>
+                        <option value="equitel">Equitel</option>
+                    </select>
+                    <input value={stkPhone} onChange={e => setStkPhone(e.target.value)}
+                        placeholder="Phone (e.g. 0722000000)"
+                        className="flex-1 min-w-[140px] px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400 transition"
+                    />
+                    <input value={stkAmount} onChange={e => setStkAmount(e.target.value)}
+                        placeholder="Amount" type="number"
+                        className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400 transition"
+                    />
+                    <button onClick={testStkPush} disabled={stkTesting}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition disabled:opacity-60">
+                        {stkTesting ? <FiRefreshCw size={13} className="animate-spin" /> : <FiSmartphone size={13} />}
+                        Send Test
+                    </button>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">Sandbox: use phone 0722000000 for M-Pesa, 254764555291 for Equitel</p>
+            </div>
 
             {/* Result display */}
             {result && (
