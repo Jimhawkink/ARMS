@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
             // Try to match with a tenant by phone number
             let tenantId = null;
             let billingId = null;
+            let locationId = null;
+            let paymentMonth = new Date().toISOString().slice(0, 7);
 
             if (customerPhone) {
                 // Format phone for matching
@@ -50,7 +52,7 @@ export async function POST(request: NextRequest) {
 
                 const { data: tenant } = await supabase
                     .from('arms_tenants')
-                    .select('tenant_id, tenant_name, balance')
+                    .select('tenant_id, tenant_name, balance, location_id')
                     .or(`phone.eq.${cleanPhone},phone.eq.${customerPhone},phone.eq.+${customerPhone}`)
                     .eq('status', 'Active')
                     .limit(1)
@@ -58,19 +60,21 @@ export async function POST(request: NextRequest) {
 
                 if (tenant) {
                     tenantId = tenant.tenant_id;
+                    locationId = tenant.location_id;
 
-                    // Find the latest unpaid bill for this tenant
+                    // Find the oldest unpaid bill (FIFO — arrears first)
                     const { data: bill } = await supabase
                         .from('arms_billing')
-                        .select('billing_id, balance, rent_amount, amount_paid')
+                        .select('billing_id, balance, rent_amount, amount_paid, billing_month')
                         .eq('tenant_id', tenantId)
                         .neq('status', 'Paid')
-                        .order('billing_month', { ascending: false })
+                        .order('billing_month', { ascending: true })
                         .limit(1)
                         .single();
 
                     if (bill) {
                         billingId = bill.billing_id;
+                        paymentMonth = bill.billing_month;
                         const newAmountPaid = (bill.amount_paid || 0) + Number(amount);
                         const newBalance = (bill.balance || 0) - Number(amount);
                         const newStatus = newBalance <= 0 ? 'Paid' : 'Partial';
@@ -99,7 +103,7 @@ export async function POST(request: NextRequest) {
                 .insert({
                     tenant_id: tenantId,
                     billing_id: billingId,
-                    location_id: null,
+                    location_id: locationId,
                     amount: Number(amount),
                     payment_method: paymentMode === 'MPESA' ? 'Jenga-M-Pesa' : paymentMode === 'EQUITEL' ? 'Jenga-Equitel' : `Jenga-${paymentMode}`,
                     mpesa_receipt: reference || bank.reference,
@@ -107,7 +111,7 @@ export async function POST(request: NextRequest) {
                     reference_no: reference,
                     payment_date: transactionDate ? transactionDate.split(' ')[0] : new Date().toISOString().split('T')[0],
                     recorded_by: 'Jenga Auto',
-                    notes: `Jenga ${paymentMode} payment. Ref: ${reference}. Customer: ${customerName}`,
+                    notes: `[Month: ${paymentMonth}] [Time: ${new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] Jenga ${paymentMode} payment. Ref: ${reference}. Customer: ${customerName}`,
                 })
                 .select()
                 .single();
@@ -163,9 +167,11 @@ export async function PUT(request: NextRequest) {
         // Try to match tenant
         let tenantId = null;
         let billingId = null;
+        let locationId = null;
+        let paymentMonth = new Date().toISOString().slice(0, 7);
         const { data: tenant } = await supabase
             .from('arms_tenants')
-            .select('tenant_id, tenant_name, balance')
+            .select('tenant_id, tenant_name, balance, location_id')
             .or(`phone.eq.${cleanPhone},phone.eq.254${cleanPhone.replace(/^0/,'')},phone.eq.+254${cleanPhone.replace(/^0/,'')}`)
             .eq('status', 'Active')
             .limit(1)
@@ -173,17 +179,20 @@ export async function PUT(request: NextRequest) {
 
         if (tenant) {
             tenantId = tenant.tenant_id;
+            locationId = tenant.location_id;
+            // Find oldest unpaid bill (FIFO — arrears first)
             const { data: bill } = await supabase
                 .from('arms_billing')
-                .select('billing_id, balance, rent_amount, amount_paid')
+                .select('billing_id, balance, rent_amount, amount_paid, billing_month')
                 .eq('tenant_id', tenantId)
                 .neq('status', 'Paid')
-                .order('billing_month', { ascending: false })
+                .order('billing_month', { ascending: true })
                 .limit(1)
                 .maybeSingle();
 
             if (bill) {
                 billingId = bill.billing_id;
+                paymentMonth = bill.billing_month;
                 const newAmountPaid = (bill.amount_paid || 0) + Number(amount);
                 const newBalance = (bill.balance || 0) - Number(amount);
                 const newStatus = newBalance <= 0 ? 'Paid' : 'Partial';
@@ -198,14 +207,14 @@ export async function PUT(request: NextRequest) {
         const { data: payment, error: payErr } = await supabase
             .from('arms_payments')
             .insert({
-                tenant_id: tenantId, billing_id: billingId, location_id: null,
+                tenant_id: tenantId, billing_id: billingId, location_id: locationId,
                 amount: Number(amount),
                 payment_method: 'Jenga-M-Pesa',
                 mpesa_receipt: reference, mpesa_phone: phone,
                 reference_no: reference,
                 payment_date: new Date().toISOString().split('T')[0],
                 recorded_by: 'Jenga Auto (Test)',
-                notes: `Jenga test callback. Ref: ${reference}. Customer: ${customerName}. Phone: ${phone}`,
+                notes: `[Month: ${paymentMonth}] [Time: ${new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] Jenga test callback. Ref: ${reference}. Customer: ${customerName}. Phone: ${phone}`,
             })
             .select()
             .single();

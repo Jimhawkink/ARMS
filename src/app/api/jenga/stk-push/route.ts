@@ -33,16 +33,18 @@ export async function POST(request: NextRequest) {
         let tenantName = '';
         let tenantEmail = '';
         let tenantPhone = '';
+        let tenantLocationId: number | null = null;
         if (tenantId) {
             const { data: tenant } = await supabase
                 .from('arms_tenants')
-                .select('tenant_name, email, phone')
+                .select('tenant_name, email, phone, location_id')
                 .eq('tenant_id', tenantId)
                 .single();
             if (tenant) {
                 tenantName = tenant.tenant_name;
                 tenantEmail = tenant.email || '';
                 tenantPhone = tenant.phone || '';
+                tenantLocationId = tenant.location_id;
             }
         }
 
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
             amount: Math.ceil(amount),
             account_reference: orderReference,
             tenant_id: tenantId || null,
+            location_id: tenantLocationId,
             status: 'Pending',
             raw_response: result,
             created_at: new Date().toISOString(),
