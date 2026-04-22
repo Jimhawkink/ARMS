@@ -109,7 +109,7 @@ export async function initiateMpesaStkPush(params: {
             orderCurrency: 'KES',
             source: 'APICHECKOUT',
             countryCode: 'KE',
-            description: params.description || 'Rent Payment',
+            description: (params.description || 'Rent Payment').replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 50),
         },
         customer: {
             name: params.tenantName || 'Tenant',
