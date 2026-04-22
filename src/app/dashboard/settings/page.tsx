@@ -62,16 +62,15 @@ const settingGroups = [
         title: 'Jenga API (Equity Bank / JengaHQ)',
         emoji: '🏦',
         color: '#f59e0b',
-        description: 'Jenga API credentials for Equity Bank integrations — bank transfers, balance checks, and statements',
-        helpLink: 'https://developer.jengaapi.io',
+        description: 'Jenga API credentials for Equity Bank — M-Pesa & Equitel STK Push, receive payments via Jenga',
+        helpLink: 'https://developer.jengahq.io',
         fields: [
             { key: 'jenga_environment', label: 'Environment', placeholder: 'sandbox or production', type: 'text', emoji: '🌍' },
-            { key: 'jenga_merchant_code', label: 'Merchant Code', placeholder: 'Jenga Merchant Code', type: 'text', emoji: '🏪' },
-            { key: 'jenga_api_key', label: 'API Key', placeholder: 'Jenga API Key', type: 'password', emoji: '🔑' },
-            { key: 'jenga_api_secret', label: 'API Secret', placeholder: 'Jenga API Secret', type: 'password', emoji: '🔐' },
+            { key: 'jenga_merchant_code', label: 'Merchant Code', placeholder: 'e.g. 2280641394', type: 'text', emoji: '🏪' },
+            { key: 'jenga_consumer_secret', label: 'Consumer Secret', placeholder: 'Jenga Consumer Secret', type: 'password', emoji: '�' },
+            { key: 'jenga_api_key', label: 'API Key', placeholder: 'Jenga API Key', type: 'password', emoji: '�' },
             { key: 'jenga_private_key', label: 'Private Key (RSA)', placeholder: '-----BEGIN RSA PRIVATE KEY-----\n...', type: 'textarea', emoji: '🗝️', span: 2 },
-            { key: 'jenga_account_number', label: 'Bank Account Number', placeholder: '0023444555', type: 'text', emoji: '🏦' },
-            { key: 'jenga_account_name', label: 'Account Name', placeholder: 'Alpha Rental Services', type: 'text', emoji: '👤' },
+            { key: 'jenga_callback_url', label: 'Payment Callback URL', placeholder: 'https://your-domain.com/api/jenga/callback', type: 'text', emoji: '�', span: 2 },
         ]
     },
     {
@@ -266,6 +265,90 @@ function C2bRegisterPanel() {
     );
 }
 
+/* ─── Jenga Test Panel ─── */
+function JengaTestPanel() {
+    const [testing, setTesting] = useState(false);
+    const [generating, setGenerating] = useState(false);
+    const [result, setResult] = useState<any>(null);
+    const [publicKey, setPublicKey] = useState('');
+
+    const testAuth = async () => {
+        setTesting(true); setResult(null);
+        try {
+            const res = await fetch('/api/jenga/auth');
+            const data = await res.json();
+            setResult(data);
+            if (data.success) toast.success('✅ Jenga authentication successful!');
+            else toast.error(data.error || 'Authentication failed');
+        } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
+        setTesting(false);
+    };
+
+    const generateKeys = async () => {
+        setGenerating(true); setResult(null);
+        try {
+            const res = await fetch('/api/jenga/generate-keys', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setPublicKey(data.publicKey);
+                toast.success('✅ RSA key pair generated! Copy the public key and upload to Jenga HQ.');
+            } else {
+                toast.error(data.error || 'Key generation failed');
+            }
+            setResult(data);
+        } catch (e: any) { toast.error(e.message); setResult({ error: e.message }); }
+        setGenerating(false);
+    };
+
+    return (
+        <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">🧪 Test & Setup</p>
+
+            {/* Test Auth */}
+            <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={testAuth} disabled={testing}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition disabled:opacity-60">
+                    {testing ? <FiRefreshCw size={13} className="animate-spin" /> : <FiZap size={13} />}
+                    Test Authentication
+                </button>
+                <p className="text-xs text-gray-400">Verifies your credentials work with Jenga API</p>
+            </div>
+
+            {/* Generate Keys */}
+            <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={generateKeys} disabled={generating}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition disabled:opacity-60">
+                    {generating ? <FiRefreshCw size={13} className="animate-spin" /> : <FiShield size={13} />}
+                    Generate RSA Keys
+                </button>
+                <p className="text-xs text-gray-400">Required for signing STK push requests</p>
+            </div>
+
+            {/* Show public key if generated */}
+            {publicKey && (
+                <div className="space-y-2">
+                    <p className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">📋 Copy this public key → Upload to Jenga HQ → Settings → Keys</p>
+                    <textarea readOnly value={publicKey}
+                        className="w-full h-32 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-[10px] font-mono text-amber-800 resize-none"
+                        onClick={e => (e.target as HTMLTextAreaElement).select()}
+                    />
+                    <button onClick={() => { navigator.clipboard.writeText(publicKey); toast.success('Public key copied!'); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-100 text-amber-700 hover:bg-amber-200 transition">
+                        <FiCopy size={12} /> Copy Public Key
+                    </button>
+                </div>
+            )}
+
+            {/* Result display */}
+            {result && (
+                <div className={`px-3 py-2 rounded-xl text-xs font-mono ${result.success ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+                    {JSON.stringify(result, null, 2)}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function SettingsPage() {
     const [settings, setSettings] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
@@ -388,6 +471,9 @@ export default function SettingsPage() {
 
                             {/* C2B Registration Panel */}
                             {activeGroup.key === 'mpesa_c2b' && <C2bRegisterPanel />}
+
+                            {/* Jenga Test Panel */}
+                            {activeGroup.key === 'jenga' && <JengaTestPanel />}
 
                             {/* Jenga environment hint */}
                             {activeGroup.key === 'jenga' && (
