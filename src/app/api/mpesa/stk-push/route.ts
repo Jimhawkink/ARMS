@@ -44,13 +44,14 @@ export async function POST(request: NextRequest) {
         }
 
         // ─── Read ALL credentials from DB (not hardcoded) ───
-        const [environment, consumerKey, consumerSecret, shortcode, passkey, callbackUrl] = await Promise.all([
+        const [environment, consumerKey, consumerSecret, shortcode, passkey, callbackUrl, shortcodeType] = await Promise.all([
             getSetting('mpesa_environment'),
             getSetting('mpesa_consumer_key'),
             getSetting('mpesa_consumer_secret'),
             getSetting('mpesa_shortcode'),
             getSetting('mpesa_passkey'),
             getSetting('mpesa_stk_callback_url'),
+            getSetting('mpesa_shortcode_type'), // 'till' or 'paybill'
         ]);
 
         if (!consumerKey || !consumerSecret || !shortcode || !passkey) {
@@ -85,6 +86,12 @@ export async function POST(request: NextRequest) {
         // Get OAuth token
         const token = await getMpesaToken(consumerKey, consumerSecret, env);
 
+        // ─── FIXED: Till uses CustomerBuyGoodsOnline, Paybill uses CustomerPayBillOnline ───
+        const isTill = shortcodeType === 'till' || shortcodeType === 'Till';
+        const transactionType = isTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline';
+
+        console.log(`📱 Using TransactionType: ${transactionType} for shortcode: ${shortcode} (${isTill ? 'Till' : 'Paybill'})`);
+
         // Fire STK Push
         const stkRes = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
             method: 'POST',
@@ -96,7 +103,7 @@ export async function POST(request: NextRequest) {
                 BusinessShortCode: shortcode,
                 Password: password,
                 Timestamp: timestamp,
-                TransactionType: 'CustomerPayBillOnline',
+                TransactionType: transactionType, // ✅ FIXED
                 Amount: Math.ceil(amount),
                 PartyA: formattedPhone,
                 PartyB: shortcode,
@@ -159,10 +166,10 @@ export async function GET(request: NextRequest) {
         const timestamp = [
             now.getFullYear(),
             String(now.getMonth() + 1).padStart(2, '0'),
-            String(now.getDate()).padStart(2, '0'),
-            String(now.getHours()).padStart(2, '0'),
-            String(now.getMinutes()).padStart(2, '0'),
-            String(now.getSeconds()).padStart(2, '0'),
+            String(now.getDate()).padStart(2, '00'),
+            String(now.getHours()).padStart(2, '00'),
+            String(now.getMinutes()).padStart(2, '00'),
+            String(now.getSeconds()).padStart(2, '00'),
         ].join('');
 
         const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
