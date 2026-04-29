@@ -13,7 +13,7 @@ async function getSetting(key: string): Promise<string> {
     return data?.setting_value || '';
 }
 
-/* ─── Get M-Pesa OAuth token using stored credentials ─── */
+/* ─── Get M-Pesa OAuth token ─── */
 async function getMpesaToken(consumerKey: string, consumerSecret: string, environment: string): Promise<string> {
     const base64 = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     const baseUrl = environment === 'production'
@@ -43,15 +43,14 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Phone and amount are required' }, { status: 400 });
         }
 
-        // ─── Read ALL credentials from DB (not hardcoded) ───
-        const [environment, consumerKey, consumerSecret, shortcode, passkey, callbackUrl, shortcodeType] = await Promise.all([
+        // ─── Read ALL credentials from DB ───
+        const [environment, consumerKey, consumerSecret, shortcode, passkey, callbackUrl] = await Promise.all([
             getSetting('mpesa_environment'),
             getSetting('mpesa_consumer_key'),
             getSetting('mpesa_consumer_secret'),
             getSetting('mpesa_shortcode'),
             getSetting('mpesa_passkey'),
             getSetting('mpesa_stk_callback_url'),
-            getSetting('mpesa_shortcode_type'), // 'till' or 'paybill'
         ]);
 
         if (!consumerKey || !consumerSecret || !shortcode || !passkey) {
@@ -65,6 +64,9 @@ export async function POST(request: NextRequest) {
         const baseUrl = env === 'production'
             ? 'https://api.safaricom.co.ke'
             : 'https://sandbox.safaricom.co.ke';
+
+        // ─── YOUR TILL NUMBER ───
+        const TILL_NUMBER = '9438697';
 
         // Format phone: 0712... → 254712...
         const formattedPhone = phone.replace(/^0/, '254').replace(/^\+/, '').replace(/\s/g, '');
@@ -80,19 +82,18 @@ export async function POST(request: NextRequest) {
             String(now.getSeconds()).padStart(2, '0'),
         ].join('');
 
-        // Generate password: base64(shortcode + passkey + timestamp)
+        // Password = base64(BusinessShortCode + Passkey + Timestamp)
         const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
 
         // Get OAuth token
         const token = await getMpesaToken(consumerKey, consumerSecret, env);
 
-        // ─── FIXED: Till uses CustomerBuyGoodsOnline, Paybill uses CustomerPayBillOnline ───
-        const isTill = shortcodeType === 'till' || shortcodeType === 'Till';
-        const transactionType = isTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline';
+        console.log(`📱 STK Push → Till: ${TILL_NUMBER}, Shortcode: ${shortcode}, Phone: ${formattedPhone}, Amount: ${amount}`);
 
-        console.log(`📱 Using TransactionType: ${transactionType} for shortcode: ${shortcode} (${isTill ? 'Till' : 'Paybill'})`);
-
-        // Fire STK Push
+        // ─── Fire STK Push ───
+        // For TILL: BusinessShortCode = shortcode (password generation)
+        //           PartyB = TILL_NUMBER (9438697) ✅
+        //           TransactionType = CustomerBuyGoodsOnline ✅
         const stkRes = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
             method: 'POST',
             headers: {
@@ -103,12 +104,12 @@ export async function POST(request: NextRequest) {
                 BusinessShortCode: shortcode,
                 Password: password,
                 Timestamp: timestamp,
-                TransactionType: transactionType, // ✅ FIXED
+                TransactionType: 'CustomerBuyGoodsOnline', // ✅ Till uses this
                 Amount: Math.ceil(amount),
                 PartyA: formattedPhone,
-                PartyB: shortcode,
+                PartyB: TILL_NUMBER,                       // ✅ Your Till: 9438697
                 PhoneNumber: formattedPhone,
-                CallBackURL: callbackUrl || `${process.env.NEXT_PUBLIC_APP_URL || 'https://arms-opal.vercel.app'}/api/mpesa/stk-callback`,
+                CallBackURL: callbackUrl || 'https://arms-opal.vercel.app/api/mpesa/stk-callback',
                 AccountReference: accountReference || 'ARMS-RENT',
                 TransactionDesc: transactionDesc || 'Rent Payment',
             }),
@@ -166,10 +167,10 @@ export async function GET(request: NextRequest) {
         const timestamp = [
             now.getFullYear(),
             String(now.getMonth() + 1).padStart(2, '0'),
-            String(now.getDate()).padStart(2, '00'),
-            String(now.getHours()).padStart(2, '00'),
-            String(now.getMinutes()).padStart(2, '00'),
-            String(now.getSeconds()).padStart(2, '00'),
+            String(now.getDate()).padStart(2, '0'),
+            String(now.getHours()).padStart(2, '0'),
+            String(now.getMinutes()).padStart(2, '0'),
+            String(now.getSeconds()).padStart(2, '0'),
         ].join('');
 
         const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
