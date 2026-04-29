@@ -105,6 +105,7 @@ export default function TenantsPage() {
         unit_id: 0, location_id: 0, monthly_rent: '', deposit_paid: '',
         move_in_date: today, billing_start_month: currentMonth,
         emergency_contact: '', emergency_phone: '', notes: '',
+        password_hash: '',
     });
 
     const loadData = useCallback(async (locId?: number | null) => {
@@ -215,6 +216,7 @@ export default function TenantsPage() {
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
             monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
             emergency_contact: '', emergency_phone: '', notes: '',
+            password_hash: '',
         });
         setShowModal(true);
     };
@@ -226,6 +228,7 @@ export default function TenantsPage() {
             monthly_rent: String(t.monthly_rent || ''), deposit_paid: String(t.deposit_paid || ''),
             move_in_date: t.move_in_date || '', billing_start_month: t.billing_start_month || t.move_in_date?.slice(0, 7) || '',
             emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
+            password_hash: '',
         });
         setShowModal(true);
     };
@@ -235,7 +238,14 @@ export default function TenantsPage() {
         }
         setSaving(true);
         try {
-            const payload = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0') };
+            const payload: any = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0') };
+            // Only include password_hash if provided (don't overwrite with empty on edit)
+            if (!payload.password_hash) { delete payload.password_hash; }
+            else {
+                payload.password_hash = payload.password_hash.trim();
+                // Also save as mobile_pin for the ARMS Tenant Mobile App login
+                payload.mobile_pin = payload.password_hash;
+            }
             if (editItem) {
                 await updateTenant(editItem.tenant_id, payload);
                 toast.success('✅ Tenant updated!');
@@ -669,6 +679,11 @@ export default function TenantsPage() {
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🪪 National ID</label>
                                     <input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} className="input-field" placeholder="ID Number" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Mobile PIN {editItem ? '(leave blank to keep current)' : '*'}</label>
+                                    <input type="password" value={form.password_hash} onChange={e => setForm({ ...form, password_hash: e.target.value })} className="input-field" placeholder={editItem ? 'Leave blank to keep current PIN' : '4-digit PIN for mobile app login'} maxLength={6} />
+                                    <p className="text-[10px] text-amber-600 mt-1">📱 Tenant uses this PIN + their phone number to log into the mobile app</p>
                                 </div>
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📧 Email (optional)</label>

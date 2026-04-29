@@ -118,6 +118,7 @@ export async function addTenant(tenant: {
     unit_id: number; location_id: number; monthly_rent: number;
     deposit_paid?: number; move_in_date?: string; billing_start_month?: string;
     notes?: string; emergency_contact?: string; emergency_phone?: string;
+    password_hash?: string;
 }) {
     const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenant, status: 'Active', balance: 0 }]).select().single();
     if (error) throw error;
