@@ -108,6 +108,12 @@ export default function TenantsPage() {
         password_hash: '',
     });
 
+    // ── Auto-derive PIN from last 6 digits of phone ───────────────────────────
+    const derivePinFromPhone = (phone: string): string => {
+        const digits = phone.replace(/\D/g, '');
+        return digits.length >= 6 ? digits.slice(-6) : digits.slice(-digits.length) || '';
+    };
+
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         try {
@@ -216,7 +222,7 @@ export default function TenantsPage() {
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
             monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
             emergency_contact: '', emergency_phone: '', notes: '',
-            password_hash: '',
+            password_hash: '', // will be auto-filled when phone is entered
         });
         setShowModal(true);
     };
@@ -228,7 +234,7 @@ export default function TenantsPage() {
             monthly_rent: String(t.monthly_rent || ''), deposit_paid: String(t.deposit_paid || ''),
             move_in_date: t.move_in_date || '', billing_start_month: t.billing_start_month || t.move_in_date?.slice(0, 7) || '',
             emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
-            password_hash: '',
+            password_hash: '', // leave blank on edit — user must explicitly change PIN
         });
         setShowModal(true);
     };
@@ -239,13 +245,19 @@ export default function TenantsPage() {
         setSaving(true);
         try {
             const payload: any = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0') };
-            // Only include password_hash if provided (don't overwrite with empty on edit)
-            if (!payload.password_hash) { delete payload.password_hash; }
-            else {
-                payload.password_hash = payload.password_hash.trim();
+
+            // Auto-derive PIN from last 6 digits of phone if not manually set
+            const autoPin = derivePinFromPhone(form.phone);
+            const pinValue = payload.password_hash?.trim() || autoPin;
+
+            if (!pinValue) {
+                delete payload.password_hash;
+            } else {
+                payload.password_hash = pinValue;
                 // Also save as mobile_pin for the ARMS Tenant Mobile App login
-                payload.mobile_pin = payload.password_hash;
+                payload.mobile_pin = pinValue;
             }
+
             if (editItem) {
                 await updateTenant(editItem.tenant_id, payload);
                 toast.success('✅ Tenant updated!');
@@ -259,8 +271,12 @@ export default function TenantsPage() {
         setSaving(false);
     };
     const handleDeactivate = async (id: number, name: string) => {
-        if (!confirm(`Move out ${name}? This will mark their unit as vacant.`)) return;
-        try { await deactivateTenant(id); toast.success('Tenant moved out'); loadData(globalLocationId); } catch { toast.error('Failed'); }
+        if (!confirm(`Move out ${name}?\n\nThis will:\n• Mark their unit as vacant\n• Block their mobile app access\n\nIf they return later, re-register them to restore access.`)) return;
+        try {
+            await deactivateTenant(id);
+            toast.success(`${name} moved out. Mobile app access blocked.`);
+            loadData(globalLocationId);
+        } catch { toast.error('Failed'); }
     };
 
     if (loading) return (
@@ -674,7 +690,24 @@ export default function TenantsPage() {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📞 Phone *</label>
-                                    <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} className="input-field" placeholder="07XXXXXXXX" />
+                                    <input
+                                        value={form.phone}
+                                        onChange={e => {
+                                            const phone = e.target.value;
+                                            const autoPin = derivePinFromPhone(phone);
+                                            // Auto-fill PIN only when adding new tenant and PIN hasn't been manually changed
+                                            setForm(prev => ({
+                                                ...prev,
+                                                phone,
+                                                // Only auto-fill if: new tenant AND (PIN is empty OR PIN matches previous auto-derived value)
+                                                password_hash: !editItem && (prev.password_hash === '' || prev.password_hash === derivePinFromPhone(prev.phone))
+                                                    ? autoPin
+                                                    : prev.password_hash,
+                                            }));
+                                        }}
+                                        className="input-field"
+                                        placeholder="07XXXXXXXX"
+                                    />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🪪 National ID</label>
@@ -682,8 +715,29 @@ export default function TenantsPage() {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Mobile PIN {editItem ? '(leave blank to keep current)' : '*'}</label>
-                                    <input type="password" value={form.password_hash} onChange={e => setForm({ ...form, password_hash: e.target.value })} className="input-field" placeholder={editItem ? 'Leave blank to keep current PIN' : '4-digit PIN for mobile app login'} maxLength={6} />
-                                    <p className="text-[10px] text-amber-600 mt-1">📱 Tenant uses this PIN + their phone number to log into the mobile app</p>
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            value={form.password_hash}
+                                            onChange={e => setForm({ ...form, password_hash: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                                            className="input-field pr-24"
+                                            placeholder={editItem ? 'Leave blank to keep current PIN' : 'Auto-filled from phone'}
+                                            maxLength={6}
+                                            inputMode="numeric"
+                                        />
+                                        {!editItem && form.phone && (
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200 whitespace-nowrap">
+                                                📱 Auto
+                                            </span>
+                                        )}
+                                    </div>
+                                    {!editItem ? (
+                                        <p className="text-[10px] text-indigo-600 mt-1">
+                                            🔄 Auto-filled from last 6 digits of phone. You can override manually.
+                                        </p>
+                                    ) : (
+                                        <p className="text-[10px] text-amber-600 mt-1">📱 Tenant uses this PIN to log into the mobile app</p>
+                                    )}
                                 </div>
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📧 Email (optional)</label>

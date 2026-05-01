@@ -176,7 +176,13 @@ export async function deactivateTenant(id: number) {
     if (tenant?.unit_id) {
         await supabase.from('arms_units').update({ status: 'Vacant' }).eq('unit_id', tenant.unit_id);
     }
-    const { error } = await supabase.from('arms_tenants').update({ status: 'Inactive', move_out_date: new Date().toISOString().split('T')[0], updated_at: new Date().toISOString() }).eq('tenant_id', id);
+    // Clear mobile_pin to block mobile app access on move-out
+    const { error } = await supabase.from('arms_tenants').update({
+        status: 'Inactive',
+        move_out_date: new Date().toISOString().split('T')[0],
+        mobile_pin: null,
+        updated_at: new Date().toISOString(),
+    }).eq('tenant_id', id);
     if (error) throw error;
 }
 
