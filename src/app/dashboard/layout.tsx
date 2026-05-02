@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLocations } from '@/lib/supabase';
 import { canAccessRoute, parseStoredUser, parseStoredLicense, computeMachineFingerprint, type ARMSUser, type LicensePayload } from '@/lib/rbac';
@@ -119,6 +119,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [showLocDropdown, setShowLocDropdown] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
     const [licenseChecked, setLicenseChecked] = useState(false);
+    const licenseCheckDone = useRef(false); // prevent double-check on re-renders
 
     // ── RBAC + License guard ──────────────────────────────────
     useEffect(() => {
@@ -141,23 +142,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         const parsedLicense = parseStoredLicense(rawLicense);
         setLicense(parsedLicense);
 
-        // Super Admin bypasses license check
-        if (!parsedUser.isSuperAdmin) {
-            // Validate license in background
-            validateLicense(parsedUser, parsedLicense);
-        } else {
+        // ── SUPER ADMIN: ALWAYS bypass license check ──────────
+        // Super admin can NEVER be locked out by licensing
+        if (parsedUser.isSuperAdmin) {
             setLicenseChecked(true);
+            licenseCheckDone.current = true;
+            getLocations().then(l => setLocations(l));
+            const saved = localStorage.getItem('arms_location');
+            if (saved) setSelectedLocation(parseInt(saved));
+            return; // ← EXIT EARLY, no license validation at all
+        }
+
+        // Non-super-admin: validate license (only once per mount)
+        if (!licenseCheckDone.current) {
+            licenseCheckDone.current = true;
+            doValidateLicense(parsedLicense);
         }
 
         getLocations().then(l => setLocations(l));
         const saved = localStorage.getItem('arms_location');
         if (saved) setSelectedLocation(parseInt(saved));
-    }, [pathname, router]);
+    }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const validateLicense = useCallback(async (u: ARMSUser, lic: LicensePayload | null) => {
+    // Separate function (not useCallback) to avoid dependency issues
+    const doValidateLicense = async (lic: LicensePayload | null) => {
         try {
             if (!lic?.licenseKey) {
-                // No license — redirect to activation
                 router.push('/license-activate');
                 return;
             }
@@ -173,7 +183,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 router.push(`/license-activate?error=${encodeURIComponent(result.error || 'License invalid')}`);
                 return;
             }
-            // Update license in storage with fresh data
+            // Update license in storage with fresh server data
             const updatedLicense = {
                 ...lic,
                 clientName: result.clientName,
@@ -185,11 +195,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             localStorage.setItem('arms_license', JSON.stringify(updatedLicense));
             setLicense(updatedLicense as LicensePayload);
         } catch {
-            // Network error — allow access but show warning
+            // Network error — allow access, don't lock out
         } finally {
             setLicenseChecked(true);
         }
-    }, [router]);
+    };
 
     // ── Auto-expand active group ──────────────────────────────
     useEffect(() => {
