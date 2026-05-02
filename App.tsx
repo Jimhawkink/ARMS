@@ -4,14 +4,21 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Application from 'expo-application';
+import * as Crypto from 'expo-crypto';
 
 import LoginScreen from './src/screens/LoginScreen';
+import LicenseScreen, { MobileLicense } from './src/screens/LicenseScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import PayRentScreen from './src/screens/PayRentScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import { TenantSession } from './src/lib/supabase';
 import { getSession, clearSession, updateSessionActivity } from './src/lib/security';
+
+const ARMS_API_BASE = 'https://arms-opal.vercel.app';
+const LICENSE_STORAGE_KEY = 'arms_mobile_license';
 
 type RootStackParamList = {
     Login: undefined;
@@ -102,20 +109,70 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
 export default function App() {
     const [isLoading, setIsLoading] = useState(true);
     const [session, setSession] = useState<TenantSession | null>(null);
+    const [license, setLicense] = useState<MobileLicense | null>(null);
+    const [licenseError, setLicenseError] = useState('');
 
     useEffect(() => {
-        checkSession();
+        initApp();
     }, []);
 
-    const checkSession = async () => {
+    const initApp = async () => {
         try {
-            const saved = await getSession();
-            if (saved) setSession(saved);
+            // 1. Check license first
+            const rawLicense = await AsyncStorage.getItem(LICENSE_STORAGE_KEY);
+            if (rawLicense) {
+                const storedLicense: MobileLicense = JSON.parse(rawLicense);
+                // Re-validate against server
+                const isValid = await validateLicense(storedLicense);
+                if (isValid) {
+                    setLicense(storedLicense);
+                    // 2. Check session only if licensed
+                    const saved = await getSession();
+                    if (saved) setSession(saved);
+                } else {
+                    await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
+                    setLicenseError('License expired or invalid. Please re-activate.');
+                }
+            }
+            // If no license stored, license state stays null → show LicenseScreen
         } catch (err) {
-            console.error('Session check error:', err);
+            console.error('App init error:', err);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const validateLicense = async (lic: MobileLicense): Promise<boolean> => {
+        try {
+            const deviceId = Application.androidId || Application.applicationId || 'unknown';
+            const deviceHash = await Crypto.digestStringAsync(
+                Crypto.CryptoDigestAlgorithm.SHA256,
+                deviceId + lic.licenseKey.slice(0, 8)
+            );
+            const res = await fetch(`${ARMS_API_BASE}/api/license/validate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
+            });
+            const result = await res.json();
+            if (result.valid) {
+                // Update stored license with fresh data
+                const updated = { ...lic, clientName: result.clientName, daysUntilExpiry: result.daysUntilExpiry, isValid: true };
+                await AsyncStorage.setItem(LICENSE_STORAGE_KEY, JSON.stringify(updated));
+                setLicense(updated);
+                return true;
+            }
+            return false;
+        } catch {
+            // Network error — allow cached license if not expired
+            const expiry = new Date(lic.expiryDate);
+            return expiry > new Date();
+        }
+    };
+
+    const handleLicenseActivated = (lic: MobileLicense) => {
+        setLicense(lic);
+        setLicenseError('');
     };
 
     const handleLoginSuccess = (tenant: TenantSession) => {
@@ -144,13 +201,23 @@ export default function App() {
         );
     }
 
+    // No license → show activation screen
+    if (!license) {
+        return (
+            <View style={{ flex: 1 }}>
+                <StatusBar style="light" />
+                <LicenseScreen onActivated={handleLicenseActivated} errorMessage={licenseError} />
+            </View>
+        );
+    }
+
     return (
         <NavigationContainer>
             <StatusBar style="light" />
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 {!session ? (
                     <Stack.Screen name="Login">
-                        {() => <LoginScreen onLoginSuccess={handleLoginSuccess} />}
+                        {() => <LoginScreen onLoginSuccess={handleLoginSuccess} license={license} />}
                     </Stack.Screen>
                 ) : (
                     <Stack.Screen name="Main">

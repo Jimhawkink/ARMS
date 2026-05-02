@@ -10,9 +10,11 @@ import {
     validatePin, isRateLimited, recordFailedAttempt,
     clearRateLimit, saveSession,
 } from '../lib/security';
+import { MobileLicense } from './LicenseScreen';
 
 interface Props {
     onLoginSuccess: (tenant: TenantSession) => void;
+    license?: MobileLicense | null;
 }
 
 const COLORS = {
@@ -28,7 +30,7 @@ const COLORS = {
 
 const DOT_SIZE = 18;
 
-export default function LoginScreen({ onLoginSuccess }: Props) {
+export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [pin, setPin] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
@@ -198,6 +200,12 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                     </Animated.View>
                     <Text style={styles.title}>Tenant Portal</Text>
                     <Text style={styles.subtitle}>Alpha Rental Management</Text>
+                    {license?.clientName ? (
+                        <View style={styles.licensedBadge}>
+                            <Text style={styles.licensedText}>Licensed to: </Text>
+                            <Text style={styles.licensedName}>{license.clientName}</Text>
+                        </View>
+                    ) : null}
                     <View style={styles.secBadge}>
                         <Text style={styles.secIcon}>🔒</Text>
                         <Text style={styles.secText}>Secure PIN Login</Text>
@@ -408,4 +416,7 @@ const styles = StyleSheet.create({
     footerTitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: '700' },
     footerSub: { fontSize: 10, color: COLORS.textDim },
     version: { fontSize: 10, color: COLORS.textDim, marginTop: 4 },
+    licensedBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 },
+    licensedText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
+    licensedName: { fontSize: 10, color: COLORS.gold, fontWeight: '800' },
 });
