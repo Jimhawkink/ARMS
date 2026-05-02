@@ -1326,6 +1326,65 @@ export async function getUserPermissions(userId: number) {
     return { ...role, allowed_location_ids: user.allowed_location_ids || [] };
 }
 
+// ── Staff user management ─────────────────────────────────────
+export async function getARMSUsers() {
+    const { data, error } = await supabase
+        .from('arms_users')
+        .select('user_id, user_name, name, email, phone, user_type, user_role, active, is_super_admin, created_at, updated_at, last_login: updated_at')
+        .order('name');
+    if (error) throw error;
+    return data || [];
+}
+
+export async function createARMSUser(user: {
+    user_name: string; password_hash: string; name: string;
+    email?: string; phone?: string; user_type?: string; user_role?: string;
+    allowed_location_ids?: number[];
+}) {
+    // Prevent creating a second super admin via this function
+    const { data, error } = await supabase
+        .from('arms_users')
+        .insert([{ ...user, active: true, is_super_admin: false }])
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
+}
+
+export async function updateARMSUser(userId: number, updates: {
+    name?: string; email?: string; phone?: string;
+    user_role?: string; active?: boolean; password_hash?: string;
+    allowed_location_ids?: number[];
+}) {
+    // Never allow changing is_super_admin via this function
+    const { is_super_admin: _, ...safeUpdates } = updates as any;
+    const { data, error } = await supabase
+        .from('arms_users')
+        .update({ ...safeUpdates, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
+}
+
+export async function deactivateARMSUser(userId: number) {
+    // Check if this is the super admin — cannot deactivate
+    const { data: user } = await supabase
+        .from('arms_users')
+        .select('is_super_admin')
+        .eq('user_id', userId)
+        .single();
+    if (user?.is_super_admin) {
+        throw new Error('The Super Admin account cannot be deactivated');
+    }
+    const { error } = await supabase
+        .from('arms_users')
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
+    if (error) throw error;
+}
+
 // ==================== PORTAL USERS ====================
 export async function createPortalUser(portalUser: { tenant_id: number; username: string; password_hash: string }) {
     const { data, error } = await supabase.from('arms_portal_users').insert(portalUser).select().single();

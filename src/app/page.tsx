@@ -61,7 +61,14 @@ export default function LoginPage() {
         try {
             const user = await loginUser(username, password);
             if (user) {
-                localStorage.setItem('arms_user', JSON.stringify({ userId: user.user_id, userName: user.user_name, name: user.name, userType: user.user_type }));
+                localStorage.setItem('arms_user', JSON.stringify({
+                    userId: user.user_id,
+                    userName: user.user_name,
+                    name: user.name,
+                    userType: user.user_type,
+                    userRole: user.user_role || user.user_type || 'admin',
+                    isSuperAdmin: user.is_super_admin === true,
+                }));
                 router.push('/dashboard');
             } else { setError('Invalid username or password'); }
         } catch (err) { console.error(err); setError('Connection error. Please try again.'); }
