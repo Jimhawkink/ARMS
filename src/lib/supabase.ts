@@ -1459,3 +1459,94 @@ export async function getOccupancyAndROI(locationId?: number) {
         locationROI,
     };
 }
+
+// ==================== MESSAGING HELPERS ====================
+
+/** Get all messaging config (SMS + WhatsApp) from arms_settings */
+export async function getMessagingConfig(): Promise<{
+    sms: { enabled: boolean; apiKey: string; username: string; senderId: string; isSandbox: boolean } | null;
+    whatsapp: { enabled: boolean; phoneNumberId: string; accessToken: string; businessAccountId: string } | null;
+}> {
+    const { data } = await supabase.from('arms_settings').select('setting_key, setting_value');
+    const map: Record<string, string> = {};
+    (data || []).forEach((s: any) => { map[s.setting_key] = s.setting_value; });
+
+    const smsEnabled = map['sms_enabled'] === 'true';
+    const waEnabled = map['whatsapp_enabled'] === 'true';
+
+    return {
+        sms: smsEnabled ? {
+            enabled: true,
+            apiKey: map['sms_api_key'] || '',
+            username: map['sms_username'] || '',
+            senderId: map['sms_sender_id'] || 'ARMS',
+            isSandbox: map['sms_provider'] !== 'live',
+        } : null,
+        whatsapp: waEnabled ? {
+            enabled: true,
+            phoneNumberId: map['whatsapp_phone_number_id'] || '',
+            accessToken: map['whatsapp_access_token'] || '',
+            businessAccountId: map['whatsapp_business_account_id'] || '',
+        } : null,
+    };
+}
+
+/** Log a WhatsApp message to arms_sms_logs (reuses same table with provider='WhatsApp') */
+export async function logWhatsApp(msg: {
+    recipient_phone: string;
+    recipient_name?: string;
+    message: string;
+    message_type?: string;
+    tenant_id?: number;
+    location_id?: number;
+    status?: string;
+    provider_message_id?: string;
+    sent_by?: string;
+}) {
+    const { data, error } = await supabase.from('arms_sms_logs').insert({
+        ...msg,
+        provider: 'WhatsApp',
+        status: msg.status || 'Sent',
+        sent_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw error;
+    return data;
+}
+
+/** Normalize phone to 254XXXXXXXXX format */
+export function normalizePhoneKE(phone: string): string {
+    const cleaned = phone.replace(/\s+/g, '').replace(/[^0-9+]/g, '');
+    if (cleaned.startsWith('254') && cleaned.length === 12) return cleaned;
+    if (cleaned.startsWith('0') && cleaned.length === 10) return '254' + cleaned.slice(1);
+    if (cleaned.startsWith('+254') && cleaned.length === 13) return cleaned.slice(1);
+    return cleaned;
+}
+
+/** Build a WhatsApp deep link (fallback when API not configured) */
+export function buildWhatsAppDeepLink(phone: string, message: string): string {
+    const normalized = normalizePhoneKE(phone);
+    return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
+}
+
+/** Replace message template placeholders */
+export function fillTemplate(template: string, vars: Record<string, string>): string {
+    return template
+        .replace(/\{name\}/g, vars.name || '')
+        .replace(/\{unit\}/g, vars.unit || '')
+        .replace(/\{balance\}/g, vars.balance || '0')
+        .replace(/\{location\}/g, vars.location || '')
+        .replace(/\{month\}/g, vars.month || '')
+        .replace(/\{due_date\}/g, vars.due_date || '5th')
+        .replace(/\{phone\}/g, vars.phone || '');
+}
+
+/** Standard message templates */
+export const MESSAGE_TEMPLATES = {
+    rent_reminder: `Dear {name}, your rent for {unit} of KES {balance} is due by the {due_date}. Please pay promptly to avoid penalties. - ARMS`,
+    overdue_notice: `Dear {name}, your rent for {unit} is OVERDUE. Outstanding balance: KES {balance}. Please pay immediately to avoid further action. - ARMS`,
+    payment_received: `Dear {name}, we have received your payment of KES {balance} for {unit}. Thank you! - ARMS`,
+    demand_notice: `Dear {name}, FINAL NOTICE: KES {balance} is outstanding for {unit} at {location}. Settle within 48hrs to avoid legal action. - ARMS`,
+    welcome: `Welcome {name}! You are now registered as a tenant at {unit}, {location}. Your mobile app PIN is the last 6 digits of your phone number. - ARMS`,
+    move_out: `Dear {name}, your tenancy at {unit} has been concluded. Thank you for staying with us. Please contact us for deposit refund details. - ARMS`,
+    penalty_notice: `Dear {name}, a late payment penalty has been applied to your account for {unit}. Total outstanding: KES {balance}. - ARMS`,
+};

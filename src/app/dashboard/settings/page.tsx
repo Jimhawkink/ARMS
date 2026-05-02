@@ -105,15 +105,17 @@ const settingGroups = [
     },
     {
         key: 'whatsapp',
-        title: 'WhatsApp Configuration',
+        title: 'WhatsApp Business API (Meta)',
         emoji: '🟢',
         color: '#22c55e',
-        description: 'WhatsApp Business API for sending statements and reminders',
+        description: 'Meta WhatsApp Business Cloud API — send rent reminders, receipts & demand notices via WhatsApp',
+        helpLink: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
         fields: [
             { key: 'whatsapp_enabled', label: 'Enable WhatsApp', placeholder: 'true', type: 'text', emoji: '🟢' },
-            { key: 'whatsapp_phone_number', label: 'Business Number', placeholder: '254720316175', type: 'text', emoji: '📱' },
-            { key: 'whatsapp_api_url', label: 'API URL', placeholder: 'https://api.whatsapp.com/...', type: 'text', emoji: '🔗', span: 2 },
-            { key: 'whatsapp_api_key', label: 'API Key', placeholder: 'WhatsApp API Key', type: 'password', emoji: '🔑', span: 2 },
+            { key: 'whatsapp_phone_number_id', label: 'Phone Number ID', placeholder: '123456789012345 (from Meta Developer Console)', type: 'text', emoji: '📱' },
+            { key: 'whatsapp_access_token', label: 'Permanent Access Token', placeholder: 'EAAxxxxxxxx...', type: 'password', emoji: '🔑', span: 2 },
+            { key: 'whatsapp_business_account_id', label: 'Business Account ID (WABA ID)', placeholder: '123456789012345', type: 'text', emoji: '🏢' },
+            { key: 'whatsapp_verify_token', label: 'Webhook Verify Token', placeholder: 'arms_webhook_secret_2024', type: 'text', emoji: '🔐' },
         ]
     },
 ];
