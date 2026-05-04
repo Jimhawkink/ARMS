@@ -122,11 +122,8 @@ export async function addTenant(tenant: {
 }) {
     const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenant, status: 'Active', balance: 0 }]).select().single();
     if (error) throw error;
-    // Mark unit as Occupied
     await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
 
-    // ── Auto-generate backdated bills from move_in_date to current month ──────
-    // This ensures the tenant's balance reflects real arrears immediately.
     const rawMoveIn = tenant.move_in_date || tenant.billing_start_month;
     const monthlyRent = tenant.monthly_rent || 0;
     if (rawMoveIn && monthlyRent > 0) {
@@ -176,7 +173,6 @@ export async function deactivateTenant(id: number) {
     if (tenant?.unit_id) {
         await supabase.from('arms_units').update({ status: 'Vacant' }).eq('unit_id', tenant.unit_id);
     }
-    // Clear mobile_pin to block mobile app access on move-out
     const { error } = await supabase.from('arms_tenants').update({
         status: 'Inactive',
         move_out_date: new Date().toISOString().split('T')[0],
@@ -201,7 +197,6 @@ export async function getBilling(filters?: { locationId?: number; month?: string
 export async function generateMonthlyBills(month: string, locationId?: number): Promise<{
     bills: any[]; generated: number; skipped: number; catchUpMonths: number; errors: string[];
 }> {
-    // ── 1. Load all active tenants ───────────────────────────────────────────
     let query = supabase.from('arms_tenants').select('*').eq('status', 'Active');
     if (locationId) query = query.eq('location_id', locationId);
     const { data: tenants, error } = await query;
@@ -217,20 +212,16 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
             const monthlyRent = tenant.monthly_rent || 0;
             if (monthlyRent <= 0) { skipped++; continue; }
 
-            // Determine earliest billing month from move_in_date
             const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
             const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : month;
 
-            // Skip if tenant hadn't moved in by this month  
             if (earliestMonth > month) { skipped++; continue; }
 
-            // ── 2. Find ALL existing bill months for this tenant ─────────────
             const { data: existingBills } = await supabase
                 .from('arms_billing').select('billing_month')
                 .eq('tenant_id', tenant.tenant_id);
             const existingMonths = new Set((existingBills || []).map((b: any) => b.billing_month));
 
-            // ── 3. Generate all missing months from move-in to target (catch-up) ─
             const newBillsToInsert: any[] = [];
             let balanceIncrease = 0;
 
@@ -260,13 +251,11 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
 
             if (newBillsToInsert.length === 0) { skipped++; continue; }
 
-            // ── 4. Batch insert bills ─────────────────────────────────────────
             const { data: inserted, error: insertErr } = await supabase
                 .from('arms_billing').insert(newBillsToInsert).select();
             if (insertErr) { errors.push(`${tenant.tenant_name}: ${insertErr.message}`); continue; }
             if (inserted) allBills.push(...inserted);
 
-            // ── 5. Update tenant balance (re-fetch to avoid race) ─────────────
             const { data: freshTenant } = await supabase
                 .from('arms_tenants').select('balance').eq('tenant_id', tenant.tenant_id).single();
             const newBalance = Math.round(((freshTenant?.balance || 0) + balanceIncrease) * 100) / 100;
@@ -284,12 +273,9 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
 }
 
 // ==================== ACCUMULATED ARREARS FOR TENANT ====================
-// Computes REAL arrears from move_in_date → today, even if bills were never generated.
-// Unbilled months are treated as fully owed (virtual) and shown with _virtual:true.
 export async function getAccumulatedArrearsForTenant(tenantId: number) {
     const currentMonth = new Date().toISOString().slice(0, 7);
 
-    // 1. Load tenant (we need monthly_rent and move_in_date)
     const { data: tenant, error: tenantErr } = await supabase
         .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance').eq('tenant_id', tenantId).single();
     if (tenantErr || !tenant) throw tenantErr || new Error('Tenant not found');
@@ -298,7 +284,6 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
     const rawMoveIn = tenant.move_in_date || tenant.created_at?.slice(0, 10);
     const earliestMonth = rawMoveIn ? rawMoveIn.slice(0, 7) : currentMonth;
 
-    // 2. Load ALL billing records for this tenant (any status)
     const { data: allBills, error: billsErr } = await supabase
         .from('arms_billing').select('*').eq('tenant_id', tenantId)
         .order('billing_date', { ascending: true });
@@ -306,7 +291,6 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
 
     const billsByMonth = new Map<string, any>((allBills || []).map(b => [b.billing_month, b]));
 
-    // 3. Walk month-by-month from move_in to current, building unified bill list
     const resultBills: any[] = [];
     let arrearsTotal = 0;
     let currentMonthDue = 0;
@@ -319,7 +303,6 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
         const bill = billsByMonth.get(curMonth);
 
         if (bill) {
-            // Real bill exists — use its remaining balance
             const balance = Math.round((bill.balance || 0) * 100) / 100;
             if (balance > 0) {
                 resultBills.push({ ...bill, _virtual: false });
@@ -327,7 +310,6 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
                 else currentMonthDue += balance;
             }
         } else {
-            // No bill generated for this month — whole rent is owed (virtual)
             if (monthlyRent > 0) {
                 resultBills.push({
                     billing_id: null,
@@ -376,7 +358,6 @@ export async function getPayments(filters?: { locationId?: number; tenantId?: nu
     if (filters?.endDate) query = query.lte('payment_date', filters.endDate);
     const { data, error } = await query;
     if (error) throw error;
-    // Parse arrears tags from notes
     return (data || []).map(p => ({
         ...p,
         arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
@@ -384,7 +365,6 @@ export async function getPayments(filters?: { locationId?: number; tenantId?: nu
     }));
 }
 
-// Helper to parse numeric tags from payment notes, e.g. [ArrearsPaid:3000]
 function parseNoteTag(notes: string | null, tag: string): number {
     if (!notes) return 0;
     const m = notes.match(new RegExp(`\\[${tag}:(\\d+(?:\\.\\d+)?)\\]`));
@@ -396,7 +376,6 @@ export async function recordPayment(payment: {
     mpesa_receipt?: string; mpesa_phone?: string; reference_no?: string;
     recorded_by?: string; notes?: string; location_id?: number;
 }): Promise<any> {
-    // ── 1. Validate and fetch fresh tenant data ──────────────────────────────
     const paymentAmount = Math.round(payment.amount * 100) / 100;
     if (paymentAmount <= 0) throw new Error('Payment amount must be greater than zero');
 
@@ -406,17 +385,13 @@ export async function recordPayment(payment: {
 
     const currentMonth = new Date().toISOString().slice(0, 7);
 
-    // ── 2. Auto-generate missing bills from move_in_date to current month ────
-    //      This ensures backdated tenants always have bill records for FIFO.
     const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
     const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : currentMonth;
 
-    // Find which months already have bills
     const { data: existingBills } = await supabase
         .from('arms_billing').select('billing_month').eq('tenant_id', payment.tenant_id);
     const existingMonths = new Set((existingBills || []).map((b: any) => b.billing_month));
 
-    // Generate any missing month bills up to current month
     const billsToCreate: any[] = [];
     let autoBalanceIncrease = 0;
     let cursor2 = new Date(earliestMonth + '-01');
@@ -438,13 +413,11 @@ export async function recordPayment(payment: {
     }
     if (billsToCreate.length > 0) {
         await supabase.from('arms_billing').insert(billsToCreate);
-        // Reflect newly generated bills in tenant balance
         const { data: freshT } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
         const updatedBal = Math.round(((freshT?.balance || 0) + autoBalanceIncrease) * 100) / 100;
         await supabase.from('arms_tenants').update({ balance: updatedBal, updated_at: new Date().toISOString() }).eq('tenant_id', payment.tenant_id);
     }
 
-    // ── 3. Fetch ALL bills with outstanding balance, oldest first (FIFO) ─────
     const { data: bills, error: billsErr } = await supabase
         .from('arms_billing').select('*')
         .eq('tenant_id', payment.tenant_id)
@@ -452,7 +425,6 @@ export async function recordPayment(payment: {
         .order('billing_date', { ascending: true });
     if (billsErr) throw billsErr;
 
-    // ── 4. Strict FIFO allocation with precise cent-level arithmetic ──────────
     let remaining = paymentAmount;
     let arrearsPaid = 0;
     let currentRentPaid = 0;
@@ -485,10 +457,8 @@ export async function recordPayment(payment: {
         remaining = Math.round((remaining - allocAmount) * 100) / 100;
     }
 
-    // Any leftover is credit (overpayment)
     creditAmount = Math.round(remaining * 100) / 100;
 
-    // ── 4. Build rich notes with allocation metadata ────────────────────────
     const nbMonths = allocations.length;
     const arrearsMonths = allocations.filter(a => a.isArrear).map(a => a.billing_month).join(',');
     const metaTags = [
@@ -500,7 +470,6 @@ export async function recordPayment(payment: {
     ].filter(Boolean).join('');
     const finalNotes = payment.notes ? `${payment.notes} ${metaTags}` : metaTags;
 
-    // ── 5. Insert payment record ─────────────────────────────────────────────
     const { data: paymentRecord, error: payError } = await supabase
         .from('arms_payments').insert([{
             tenant_id: payment.tenant_id,
@@ -517,7 +486,6 @@ export async function recordPayment(payment: {
         }]).select().single();
     if (payError) throw payError;
 
-    // ── 6. Update billing records in parallel ────────────────────────────────
     await Promise.all(
         allocations.map(alloc =>
             supabase.from('arms_billing').update({
@@ -529,7 +497,6 @@ export async function recordPayment(payment: {
         )
     );
 
-    // ── 7. Update tenant balance (re-fetch to avoid stale data race) ─────────
     const { data: freshTenant } = await supabase
         .from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
     const latestBalance = Math.round(((freshTenant?.balance || 0)) * 100) / 100;
@@ -539,7 +506,6 @@ export async function recordPayment(payment: {
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', payment.tenant_id);
 
-    // ── 8. Return full breakdown for receipt & UI ────────────────────────────
     return {
         ...paymentRecord,
         arrearsPaid,
@@ -557,14 +523,12 @@ export async function deletePayment(paymentId: number) {
     const { data: payment, error } = await supabase.from('arms_payments').select('*').eq('payment_id', paymentId).single();
     if (error || !payment) throw new Error('Payment not found');
 
-    // Get all bills for tenant ordered oldest first to reverse FIFO in reverse order
     const { data: bills } = await supabase
         .from('arms_billing').select('*')
         .eq('tenant_id', payment.tenant_id)
-        .order('billing_date', { ascending: false }); // newest first for reversal
+        .order('billing_date', { ascending: false });
 
     let amountToReverse = payment.amount;
-    // Reverse from most recently paid bills first (reverse FIFO)
     const paidBills = (bills || []).filter(b => (b.amount_paid || 0) > 0);
     for (const bill of paidBills) {
         if (amountToReverse <= 0) break;
@@ -581,7 +545,6 @@ export async function deletePayment(paymentId: number) {
         amountToReverse -= reverseAmount;
     }
 
-    // Restore tenant balance
     const { data: tenant } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
     if (tenant) {
         await supabase.from('arms_tenants').update({
@@ -629,12 +592,10 @@ export async function autoMatchMpesa(transactionId: number) {
     const { data: txn } = await supabase.from('arms_mpesa_transactions').select('*').eq('id', transactionId).single();
     if (!txn || txn.matched) return null;
 
-    // Try to match by phone
     const phone = txn.msisdn?.replace(/^254/, '0');
     const { data: tenant } = await supabase.from('arms_tenants').select('*').eq('phone', phone).eq('status', 'Active').single();
 
     if (tenant) {
-        // Record payment
         const paymentRecord = await recordPayment({
             tenant_id: tenant.tenant_id,
             amount: txn.trans_amount,
@@ -646,7 +607,6 @@ export async function autoMatchMpesa(transactionId: number) {
             notes: `Auto-matched from M-Pesa: ${txn.first_name} ${txn.last_name}`
         });
 
-        // Mark transaction as matched
         await supabase.from('arms_mpesa_transactions').update({
             matched: true,
             tenant_id: tenant.tenant_id,
@@ -710,14 +670,12 @@ export async function getDashboardStats(locationId?: number) {
     if (locationId) paymentQuery = paymentQuery.eq('location_id', locationId);
     const { data: payments } = await paymentQuery;
 
-    // All-time arrears paid: parse from notes
     let allPayQuery = supabase.from('arms_payments').select('amount, notes');
     if (locationId) allPayQuery = allPayQuery.eq('location_id', locationId);
     const { data: allPayments } = await allPayQuery;
     const totalArrearsPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'ArrearsPaid'), 0);
     const totalCurrentRentPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'CurrentRentPaid'), 0);
 
-    // Tenants who moved in today
     let todayQ = supabase.from('arms_tenants').select('tenant_id', { count: 'exact', head: true }).eq('status', 'Active').gte('move_in_date', todayStr).lte('move_in_date', todayStr);
     if (locationId) todayQ = todayQ.eq('location_id', locationId);
     const { count: tenantsNewToday } = await todayQ;
@@ -746,10 +704,7 @@ export async function getOverdueTenants(locationId?: number) {
 }
 
 // ==================== UNPAID RENT CALCULATOR ====================
-// Generates month-by-month unpaid rent with 2% late penalty (after 5th)
-// Only for active tenants who haven't moved out
 export async function calculateUnpaidRent(locationId?: number) {
-    // 1. Get all ACTIVE tenants (no move_out_date or move_out_date in future)
     let tenantQuery = supabase.from('arms_tenants')
         .select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)')
         .eq('status', 'Active')
@@ -758,7 +713,6 @@ export async function calculateUnpaidRent(locationId?: number) {
     const { data: tenants, error: tErr } = await tenantQuery;
     if (tErr) throw tErr;
 
-    // Filter out tenants who have moved out
     const activeTenants = (tenants || []).filter(t => {
         if (!t.move_out_date) return true;
         return new Date(t.move_out_date) > new Date();
@@ -766,7 +720,6 @@ export async function calculateUnpaidRent(locationId?: number) {
 
     if (activeTenants.length === 0) return [];
 
-    // 2. Get all billing and payment records for these tenants
     const tenantIds = activeTenants.map(t => t.tenant_id);
     const [billRes, payRes] = await Promise.all([
         supabase.from('arms_billing').select('*').in('tenant_id', tenantIds),
@@ -776,10 +729,8 @@ export async function calculateUnpaidRent(locationId?: number) {
     const allPayments = payRes.data || [];
 
     const now = new Date();
-    const currentMonth = now.toISOString().slice(0, 7); // e.g. "2026-04"
-    const currentDay = now.getDate();
+    const currentMonth = now.toISOString().slice(0, 7);
 
-    // 3. For each tenant, calculate unpaid months
     const results = activeTenants.map(tenant => {
         const moveIn = tenant.move_in_date || tenant.billing_start_month || tenant.created_at?.slice(0, 10);
         if (!moveIn) return null;
@@ -787,7 +738,6 @@ export async function calculateUnpaidRent(locationId?: number) {
         const moveInDate = new Date(moveIn);
         const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
 
-        // Generate all expected billing months from move-in to current month
         const expectedMonths: string[] = [];
         const startDate = new Date(moveInDate.getFullYear(), moveInDate.getMonth(), 1);
         const endDate = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -797,9 +747,7 @@ export async function calculateUnpaidRent(locationId?: number) {
             cursor.setMonth(cursor.getMonth() + 1);
         }
 
-        // Check existing bills for this tenant
         const tenantBills = allBills.filter(b => b.tenant_id === tenant.tenant_id);
-        const tenantPayments = allPayments.filter(p => p.tenant_id === tenant.tenant_id);
 
         let totalUnpaid = 0;
         let totalPenalty = 0;
@@ -809,10 +757,8 @@ export async function calculateUnpaidRent(locationId?: number) {
             const existingBill = tenantBills.find(b => b.billing_month === month);
 
             if (existingBill) {
-                // Bill exists - use its data
                 const billBalance = existingBill.balance || 0;
                 if (existingBill.status !== 'Paid' && billBalance > 0) {
-                    // Calculate penalty: if past the 5th of the billed month and still unpaid
                     const billMonthDate = new Date(month + '-05');
                     const isLate = now > billMonthDate;
                     const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
@@ -829,7 +775,6 @@ export async function calculateUnpaidRent(locationId?: number) {
                     totalPenalty += penalty;
                 }
             } else {
-                // No bill exists for this month - it's unpaid
                 const billMonthDate = new Date(month + '-05');
                 const isLate = now > billMonthDate;
                 const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
@@ -871,7 +816,6 @@ export async function get12MonthAnalytics(locationId?: number) {
         months.push(d.toISOString().slice(0, 7));
     }
 
-    // Fetch all billing and payments for the 12-month range
     const startMonth = months[0];
     const endMonth = months[months.length - 1];
     let billQ = supabase.from('arms_billing').select('*').gte('billing_month', startMonth).lte('billing_month', endMonth);
@@ -1010,14 +954,12 @@ export async function getUtilityBills(filters?: { tenantId?: number; locationId?
 }
 
 export async function generateUtilityBills(month: string, utilityTypeId: number, locationId?: number) {
-    // Get rate
     let rateQuery = supabase.from('arms_utility_rates').select('*').eq('utility_type_id', utilityTypeId).eq('is_active', true);
     if (locationId) rateQuery = rateQuery.eq('location_id', locationId);
     const { data: rates } = await rateQuery;
     const rate = rates?.[0];
     if (!rate) throw new Error('No utility rate configured for this type');
 
-    // Get occupied units
     let unitQuery = supabase.from('arms_units').select('*, arms_tenants!inner(tenant_id, tenant_name, phone, status), arms_locations(location_name)').eq('status', 'Occupied').eq('active', true);
     if (locationId) unitQuery = unitQuery.eq('location_id', locationId);
     const { data: units } = await unitQuery;
@@ -1028,14 +970,12 @@ export async function generateUtilityBills(month: string, utilityTypeId: number,
         const tenant = Array.isArray(unit.arms_tenants) ? unit.arms_tenants[0] : unit.arms_tenants;
         if (!tenant || tenant.status !== 'Active') continue;
 
-        // Check if bill already exists
         const { data: existing } = await supabase.from('arms_utility_bills').select('utility_bill_id')
             .eq('tenant_id', tenant.tenant_id).eq('utility_type_id', utilityTypeId).eq('billing_month', month);
         if (existing && existing.length > 0) continue;
 
-        // Get latest reading for this unit
         const latestReading = await getLatestReading(unit.unit_id, utilityTypeId);
-        const previousReading = 0; // simplified - would need previous month's reading
+        const previousReading = 0;
 
         const consumption = latestReading - previousReading;
         const totalAmount = (consumption * rate.rate_per_unit) + rate.fixed_charge;
@@ -1138,22 +1078,104 @@ export async function addPettyCash(entry: { location_id?: number; transaction_ty
 }
 
 // ==================== SMS & COMMUNICATION ====================
+// ─────────────────────────────────────────────────────────────
+// FIX: getSMSConfig now reads from BOTH tables.
+// Priority: arms_sms_config (legacy) → arms_settings (new settings page)
+// This ensures the Settings page and Messaging Hub always stay in sync.
+// ─────────────────────────────────────────────────────────────
 export async function getSMSConfig() {
-    const { data, error } = await supabase.from('arms_sms_config').select('*').eq('is_active', true).limit(1);
-    if (error) throw error;
-    return data?.[0] || null;
+    // 1. Try arms_sms_config first (legacy table)
+    const { data: configData } = await supabase
+        .from('arms_sms_config')
+        .select('*')
+        .eq('is_active', true)
+        .limit(1);
+
+    // 2. Also read from arms_settings (new Settings page saves here)
+    const { data: settingsData } = await supabase
+        .from('arms_settings')
+        .select('setting_key, setting_value')
+        .in('setting_key', ['sms_api_key', 'sms_username', 'sms_sender_id', 'sms_enabled', 'sms_provider']);
+
+    const settingsMap: Record<string, string> = {};
+    (settingsData || []).forEach((s: any) => { settingsMap[s.setting_key] = s.setting_value; });
+
+    const settingsApiKey = settingsMap['sms_api_key'] || '';
+    const settingsUsername = settingsMap['sms_username'] || '';
+    const settingsSenderId = settingsMap['sms_sender_id'] || '';
+    const settingsEnabled = settingsMap['sms_enabled'] === 'true';
+
+    // 3. If arms_settings has credentials, use them (they are more recent — saved by the UI)
+    //    Merge: arms_settings wins over arms_sms_config when both exist and arms_settings has values
+    if (settingsEnabled && settingsApiKey && settingsUsername) {
+        return {
+            config_id: configData?.[0]?.config_id || null,
+            provider: 'AfricasTalking',
+            api_key: settingsApiKey,
+            username: settingsUsername,
+            sender_id: settingsSenderId || 'ARMS',
+            is_active: true,
+            is_sandbox: false, // Live mode since user has topped up
+            created_at: configData?.[0]?.created_at || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+    }
+
+    // 4. Fall back to arms_sms_config if arms_settings is empty
+    if (configData && configData.length > 0) {
+        return configData[0];
+    }
+
+    return null;
 }
 
-export async function updateSMSConfig(config: { api_key: string; username: string; sender_id?: string; short_code?: string; is_sandbox?: boolean }) {
-    const { data: existing } = await supabase.from('arms_sms_config').select('config_id').eq('is_active', true).limit(1);
+// ─────────────────────────────────────────────────────────────
+// FIX: updateSMSConfig now saves to BOTH tables simultaneously
+// so that getSMSConfig always finds the credentials regardless
+// of which table it checks first.
+// ─────────────────────────────────────────────────────────────
+export async function updateSMSConfig(config: {
+    api_key: string;
+    username: string;
+    sender_id?: string;
+    short_code?: string;
+    is_sandbox?: boolean;
+}) {
+    // ── 1. Save to arms_sms_config (legacy table used by messaging hub) ──────
+    const { data: existing } = await supabase
+        .from('arms_sms_config')
+        .select('config_id')
+        .eq('is_active', true)
+        .limit(1);
+
     if (existing && existing.length > 0) {
-        const { data, error } = await supabase.from('arms_sms_config').update({ ...config, updated_at: new Date().toISOString() }).eq('config_id', existing[0].config_id).select().single();
-        if (error) throw error;
-        return data;
+        await supabase
+            .from('arms_sms_config')
+            .update({ ...config, updated_at: new Date().toISOString() })
+            .eq('config_id', existing[0].config_id);
+    } else {
+        await supabase
+            .from('arms_sms_config')
+            .insert({ ...config, is_active: true });
     }
-    const { data, error } = await supabase.from('arms_sms_config').insert(config).select().single();
-    if (error) throw error;
-    return data;
+
+    // ── 2. Also save to arms_settings (used by the Settings page UI) ─────────
+    const settingsToSync = [
+        { key: 'sms_api_key',   value: config.api_key },
+        { key: 'sms_username',  value: config.username },
+        { key: 'sms_sender_id', value: config.sender_id || 'ARMS' },
+        { key: 'sms_enabled',   value: 'true' },
+        { key: 'sms_provider',  value: 'AfricasTalking' },
+    ];
+
+    for (const field of settingsToSync) {
+        await supabase
+            .from('arms_settings')
+            .upsert({ setting_key: field.key, setting_value: field.value }, { onConflict: 'setting_key' });
+    }
+
+    // ── 3. Return the merged config so the UI can update immediately ──────────
+    return getSMSConfig();
 }
 
 export async function getWhatsAppConfig() {
@@ -1326,7 +1348,6 @@ export async function getUserPermissions(userId: number) {
     return { ...role, allowed_location_ids: user.allowed_location_ids || [] };
 }
 
-// ── Staff user management ─────────────────────────────────────
 export async function getARMSUsers() {
     const { data, error } = await supabase
         .from('arms_users')
@@ -1341,7 +1362,6 @@ export async function createARMSUser(user: {
     email?: string; phone?: string; user_type?: string; user_role?: string;
     allowed_location_ids?: number[];
 }) {
-    // Prevent creating a second super admin via this function
     const { data, error } = await supabase
         .from('arms_users')
         .insert([{ ...user, active: true, is_super_admin: false }])
@@ -1356,7 +1376,6 @@ export async function updateARMSUser(userId: number, updates: {
     user_role?: string; active?: boolean; password_hash?: string;
     allowed_location_ids?: number[];
 }) {
-    // Never allow changing is_super_admin via this function
     const { is_super_admin: _, ...safeUpdates } = updates as any;
     const { data, error } = await supabase
         .from('arms_users')
@@ -1369,7 +1388,6 @@ export async function updateARMSUser(userId: number, updates: {
 }
 
 export async function deactivateARMSUser(userId: number) {
-    // Check if this is the super admin — cannot deactivate
     const { data: user } = await supabase
         .from('arms_users')
         .select('is_super_admin')
@@ -1407,12 +1425,10 @@ export async function getProfitAndLoss(locationId?: number, months: number = 12)
     const now = new Date();
     const startMonth = new Date(now.getFullYear(), now.getMonth() - months + 1, 1).toISOString().slice(0, 7);
 
-    // Revenue
     let revQuery = supabase.from('arms_payments').select('amount, payment_date, location_id').gte('payment_date', `${startMonth}-01`);
     if (locationId) revQuery = revQuery.eq('location_id', locationId);
     const { data: payments } = await revQuery;
 
-    // Expenses
     let expQuery = supabase.from('arms_expenses').select('amount, expense_date, category, location_id').gte('expense_date', `${startMonth}-01`);
     if (locationId) expQuery = expQuery.eq('location_id', locationId);
     const { data: expenses } = await expQuery;
@@ -1449,7 +1465,6 @@ export async function getCashFlowStatement(locationId?: number, months: number =
     const now = new Date();
     const startMonth = new Date(now.getFullYear(), now.getMonth() - months + 1, 1).toISOString().slice(0, 7);
 
-    // Operating activities
     let revQuery = supabase.from('arms_payments').select('amount, payment_method, payment_date').gte('payment_date', `${startMonth}-01`);
     if (locationId) revQuery = revQuery.eq('location_id', locationId);
     const { data: payments } = await revQuery;
@@ -1457,7 +1472,6 @@ export async function getCashFlowStatement(locationId?: number, months: number =
     const cashInflows = (payments || []).filter(p => p.payment_method === 'Cash').reduce((s, p) => s + (p.amount || 0), 0);
     const mpesaInflows = (payments || []).filter(p => p.payment_method === 'M-Pesa').reduce((s, p) => s + (p.amount || 0), 0);
 
-    // Outstanding receivables
     let billQ = supabase.from('arms_billing').select('balance').gt('balance', 0);
     if (locationId) billQ = billQ.eq('location_id', locationId);
     const { data: unpaidBills } = await billQ;
@@ -1490,14 +1504,12 @@ export async function getOccupancyAndROI(locationId?: number) {
     const totalMonthlyRent = (tenants || []).reduce((s, t) => s + (t.monthly_rent || 0), 0);
     const vacancyCost = (units || []).filter(u => u.status === 'Vacant').reduce((s, u) => s + (u.monthly_rent || 0), 0);
 
-    // Annual ROI calculation
     const annualRevenue = totalMonthlyRent * 12;
     let expQuery = supabase.from('arms_expenses').select('amount');
     if (locationId) expQuery = expQuery.eq('location_id', locationId);
     const { data: expenses } = await expQuery;
-    const annualExpenses = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0) * 12; // rough annualized
+    const annualExpenses = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0) * 12;
 
-    // Per-location ROI
     const locationROI: Record<string, { revenue: number; vacancyCost: number; units: number; occupied: number }> = {};
     (units || []).forEach(u => {
         const locName = u.arms_locations?.location_name || 'Unknown';
@@ -1530,16 +1542,19 @@ export async function getMessagingConfig(): Promise<{
     const map: Record<string, string> = {};
     (data || []).forEach((s: any) => { map[s.setting_key] = s.setting_value; });
 
-    const smsEnabled = map['sms_enabled'] === 'true';
+    // Also check arms_sms_config for legacy credentials
+    const smsConfig = await getSMSConfig();
+
+    const smsEnabled = map['sms_enabled'] === 'true' || !!smsConfig?.api_key;
     const waEnabled = map['whatsapp_enabled'] === 'true';
 
     return {
         sms: smsEnabled ? {
             enabled: true,
-            apiKey: map['sms_api_key'] || '',
-            username: map['sms_username'] || '',
-            senderId: map['sms_sender_id'] || 'ARMS',
-            isSandbox: map['sms_provider'] !== 'live',
+            apiKey: map['sms_api_key'] || smsConfig?.api_key || '',
+            username: map['sms_username'] || smsConfig?.username || '',
+            senderId: map['sms_sender_id'] || smsConfig?.sender_id || 'ARMS',
+            isSandbox: smsConfig?.is_sandbox ?? false,
         } : null,
         whatsapp: waEnabled ? {
             enabled: true,
