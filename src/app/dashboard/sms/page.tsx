@@ -163,8 +163,8 @@ export default function MessagingHubPage() {
     }, [loadData]);
 
     // ── Send a single SMS via AfricasTalking ─────────────────────────────────
-    const sendSMS = async (phone: string, msg: string): Promise<{ success: boolean; cost?: number }> => {
-        if (!smsConfig) return { success: false };
+    const sendSMS = async (phone: string, msg: string): Promise<{ success: boolean; cost?: number; error?: string }> => {
+        if (!smsConfig) return { success: false, error: 'SMS not configured. Save config first.' };
         const normalized = normalizePhoneKE(phone);
         const to = normalized.startsWith('254') ? `+${normalized}` : phone;
         try {
@@ -180,8 +180,8 @@ export default function MessagingHubPage() {
                 }),
             });
             const result = await res.json();
-            return { success: result.success, cost: result.cost || 1.0 };
-        } catch { return { success: false }; }
+            return { success: result.success, cost: result.cost || 1.0, error: result.error };
+        } catch (e: any) { return { success: false, error: e.message || 'Network error sending SMS' }; }
     };
 
     // ── Send a single WhatsApp message via Meta Cloud API ────────────────────
@@ -369,7 +369,7 @@ export default function MessagingHubPage() {
         if (!testPhone) return;
         const result = await sendSMS(testPhone, '✅ ARMS SMS test message. Your system is connected!');
         if (result.success) toast.success('✅ SMS test sent!');
-        else toast.error('❌ SMS test failed. Check your API key and username.');
+        else toast.error(`❌ SMS test failed: ${result.error || 'Check your API key and username.'}`, { duration: 8000 });
     };
 
     // ── Add Reminder Rule ─────────────────────────────────────────────────────

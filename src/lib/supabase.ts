@@ -1095,7 +1095,7 @@ export async function getSMSConfig() {
     const { data: settingsData } = await supabase
         .from('arms_settings')
         .select('setting_key, setting_value')
-        .in('setting_key', ['sms_api_key', 'sms_username', 'sms_sender_id', 'sms_enabled', 'sms_provider']);
+        .in('setting_key', ['sms_api_key', 'sms_username', 'sms_sender_id', 'sms_enabled', 'sms_provider', 'sms_is_sandbox']);
 
     const settingsMap: Record<string, string> = {};
     (settingsData || []).forEach((s: any) => { settingsMap[s.setting_key] = s.setting_value; });
@@ -1104,6 +1104,7 @@ export async function getSMSConfig() {
     const settingsUsername = settingsMap['sms_username'] || '';
     const settingsSenderId = settingsMap['sms_sender_id'] || '';
     const settingsEnabled = settingsMap['sms_enabled'] === 'true';
+    const settingsIsSandbox = settingsMap['sms_is_sandbox'] === 'true';
 
     // 3. If arms_settings has credentials, use them (they are more recent — saved by the UI)
     //    Merge: arms_settings wins over arms_sms_config when both exist and arms_settings has values
@@ -1115,7 +1116,7 @@ export async function getSMSConfig() {
             username: settingsUsername,
             sender_id: settingsSenderId || 'ARMS',
             is_active: true,
-            is_sandbox: false, // Live mode since user has topped up
+            is_sandbox: settingsIsSandbox,
             created_at: configData?.[0]?.created_at || new Date().toISOString(),
             updated_at: new Date().toISOString(),
         };
@@ -1166,6 +1167,7 @@ export async function updateSMSConfig(config: {
         { key: 'sms_sender_id', value: config.sender_id || 'ARMS' },
         { key: 'sms_enabled',   value: 'true' },
         { key: 'sms_provider',  value: 'AfricasTalking' },
+        { key: 'sms_is_sandbox', value: config.is_sandbox ? 'true' : 'false' },
     ];
 
     for (const field of settingsToSync) {
