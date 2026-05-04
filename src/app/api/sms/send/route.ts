@@ -7,12 +7,13 @@ import { NextRequest, NextResponse } from 'next/server';
 // Sends a single SMS via Africa's Talking REST API.
 // Supports both sandbox (testing) and live (production) modes.
 //
-// FIX 1: Added AbortController 15s timeout → button never gets stuck.
-// FIX 2: Falls back to Vercel env vars if DB credentials are missing.
+// IMPORTANT: Sandbox and Live use DIFFERENT API keys!
+//   - Sandbox username is always "sandbox"
+//   - Live username is your AT account username
 //
 // Add these in Vercel → Project → Settings → Environment Variables:
-//   AT_API_KEY    = your Africa's Talking LIVE API key
-//   AT_USERNAME   = zawydcoebo
+//   AT_API_KEY    = your Africa's Talking API key
+//   AT_USERNAME   = your AT username (or "sandbox" for testing)
 //   AT_SENDER_ID  = ARMS
 // ============================================================
 
@@ -37,20 +38,19 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Use passed credentials OR fall back to Vercel env vars ────────────
-        // Priority: body (loaded from Supabase DB) → Vercel env vars → error
         const finalApiKey   = bodyApiKey   || process.env.AT_API_KEY   || '';
         const finalUsername = bodyUsername || process.env.AT_USERNAME  || '';
         const finalSenderId = bodySenderId || process.env.AT_SENDER_ID || 'ARMS';
 
-        // Log which source was used — visible in Vercel Functions → Logs tab
-        console.log('[ARMS SMS] Credential source:', {
-            apiKeySource:   bodyApiKey   ? 'DB/body' : process.env.AT_API_KEY   ? 'env var' : 'MISSING',
-            usernameSource: bodyUsername ? 'DB/body' : process.env.AT_USERNAME  ? 'env var' : 'MISSING',
-            senderSource:   bodySenderId ? 'DB/body' : process.env.AT_SENDER_ID ? 'env var' : 'default ARMS',
-            isSandbox,
-        });
+        // For sandbox mode, AT requires username to be "sandbox"
+        const effectiveUsername = isSandbox ? 'sandbox' : finalUsername;
 
-        if (!finalUsername || !finalApiKey) {
+        const mode = isSandbox ? 'SANDBOX' : 'LIVE';
+        const maskedKey = finalApiKey ? `${finalApiKey.slice(0, 6)}...${finalApiKey.slice(-4)}` : 'EMPTY';
+
+        console.log(`[ARMS SMS] Mode: ${mode} | Username: ${effectiveUsername} | API Key: ${maskedKey}`);
+
+        if (!effectiveUsername || !finalApiKey) {
             return NextResponse.json(
                 {
                     success: false,
@@ -73,15 +73,13 @@ export async function POST(req: NextRequest) {
         const normalizedPhone = normalizePhone(to);
 
         // ── Choose sandbox vs live endpoint ───────────────────────────────────
-        // Sandbox → free, goes to AT simulator, NOT a real phone
-        // Live    → real SMS, costs ~KES 0.50/msg, needs account balance
         const baseUrl = isSandbox
             ? 'https://api.sandbox.africastalking.com/version1/messaging'
             : 'https://api.africastalking.com/version1/messaging';
 
         // ── Build POST form body ──────────────────────────────────────────────
         const formParams: Record<string, string> = {
-            username: finalUsername,
+            username: effectiveUsername,
             to:       normalizedPhone,
             message,
         };
@@ -92,8 +90,6 @@ export async function POST(req: NextRequest) {
         }
 
         // ── AbortController: hard 15-second timeout ───────────────────────────
-        // Prevents the Vercel function from hanging and the UI button from
-        // staying stuck at "Sending..." forever if AT is unreachable.
         const controller = new AbortController();
         const timeoutId  = setTimeout(() => controller.abort(), 15_000);
 
@@ -117,8 +113,8 @@ export async function POST(req: NextRequest) {
                 {
                     success: false,
                     error: isTimeout
-                        ? 'SMS request timed out (15s). Africa\'s Talking may be unreachable. ' +
-                          'Check your API key is correct and your AT account has balance.'
+                        ? `SMS request timed out (15s) in ${mode} mode. ` +
+                          'Africa\'s Talking may be unreachable or your API key is invalid.'
                         : `Network error reaching Africa's Talking: ${fetchError.message}`,
                 },
                 { status: 500 }
@@ -126,45 +122,57 @@ export async function POST(req: NextRequest) {
         }
         clearTimeout(timeoutId);
 
+        // ── Handle HTTP errors (401, 403, etc.) before JSON parsing ───────────
+        if (!response.ok) {
+            let errorBody = '';
+            try { errorBody = await response.text(); } catch { errorBody = 'Could not read response'; }
+            console.error(`[ARMS SMS] HTTP ${response.status} from AT (${mode}):`, errorBody);
+
+            if (response.status === 401) {
+                return NextResponse.json({
+                    success: false,
+                    error:
+                        `API Key rejected by Africa's Talking (HTTP 401) in ${mode} mode. ` +
+                        (isSandbox
+                            ? 'For SANDBOX: Go to africastalking.com → Sandbox dashboard → Settings → API Key. ' +
+                              'Make sure you\'re generating the key from the SANDBOX app, not the Live app.'
+                            : 'For LIVE mode: Go to africastalking.com → Your App → Settings → API Key. ' +
+                              'Make sure the key matches your LIVE app (not sandbox). ' +
+                              'Also verify your username "' + finalUsername + '" is correct. ' +
+                              'Try switching to Sandbox mode (toggle Live Mode OFF) to test with free messages first.'
+                        ),
+                });
+            }
+
+            return NextResponse.json({
+                success: false,
+                error: `Africa's Talking returned HTTP ${response.status} (${mode} mode): ${errorBody.slice(0, 200)}`,
+            });
+        }
+
         // ── Parse JSON response safely ────────────────────────────────────────
         let result: any;
         try {
             result = await response.json();
         } catch {
-            console.error('[ARMS SMS] Failed to parse AT response. HTTP status:', response.status);
-            return NextResponse.json(
-                {
-                    success: false,
-                    error:
-                        `Africa's Talking returned an invalid response (HTTP ${response.status}). ` +
-                        'This usually means your API key is wrong or expired. ' +
-                        'Go to africastalking.com → Settings → API Key to get a fresh one.',
-                },
-                { status: 500 }
-            );
+            console.error('[ARMS SMS] Failed to parse AT response body as JSON');
+            return NextResponse.json({
+                success: false,
+                error: `Africa's Talking returned a non-JSON response (HTTP ${response.status}, ${mode} mode).`,
+            }, { status: 500 });
         }
 
-        // Log full AT response for debugging in Vercel Functions → Logs
-        console.log('[ARMS SMS] Request sent:', {
-            to:       normalizedPhone,
-            username: finalUsername,
-            isSandbox,
-            senderId: finalSenderId,
-        });
-        console.log('[ARMS SMS] AT Response:', JSON.stringify(result, null, 2));
+        console.log(`[ARMS SMS] ${mode} Response:`, JSON.stringify(result, null, 2));
 
         // ── Handle AT response — SMSMessageData structure ─────────────────────
-        // AT returns: { SMSMessageData: { Message: '...', Recipients: [...] } }
         if (result.SMSMessageData?.Recipients?.length > 0) {
             const recipient = result.SMSMessageData.Recipients[0];
 
-            // statusCode 101 = sent to carrier, 102 = queued — both are success
             const isSuccess =
                 recipient.statusCode === 101 ||
                 recipient.statusCode === 102 ||
                 recipient.status === 'Success';
 
-            // AT returns cost as string: "KES 0.8000" — parse to number
             const costString = recipient.cost || '0';
             const costNumber = parseFloat(costString.replace(/[^0-9.]/g, '')) || 0;
 
@@ -178,12 +186,15 @@ export async function POST(req: NextRequest) {
                     mode:      isSandbox ? 'sandbox' : 'live',
                 });
             } else {
-                // AT responded but with a failure status code
                 return NextResponse.json({
                     success: false,
                     error:
-                        `SMS failed — AT status: "${recipient.status}" (code ${recipient.statusCode}). ` +
-                        'Common causes: insufficient balance, invalid phone number, or unregistered Sender ID.',
+                        `SMS failed (${mode}) — AT status: "${recipient.status}" (code ${recipient.statusCode}). ` +
+                        (recipient.statusCode === 403
+                            ? 'Your Sender ID "' + finalSenderId + '" may not be approved. Try removing it or contact AT support.'
+                            : recipient.statusCode === 405
+                            ? 'Insufficient AT balance. Top up your Africa\'s Talking account.'
+                            : 'Check: phone number format, AT balance, and Sender ID registration.'),
                     details: recipient,
                 });
             }
@@ -191,32 +202,28 @@ export async function POST(req: NextRequest) {
 
         // ── Handle top-level AT error responses ───────────────────────────────
         if (result.error || result.errorMessage) {
-            const errorMsg = result.error || result.errorMessage || 'Unknown Africa\'s Talking error';
+            const errorMsg = result.error || result.errorMessage || 'Unknown error';
             console.error('[ARMS SMS] AT Error:', errorMsg);
             return NextResponse.json({
                 success: false,
-                error:   `Africa's Talking error: ${errorMsg}`,
+                error:   `Africa's Talking error (${mode}): ${errorMsg}`,
             });
         }
 
-        // ── Fallback: unexpected response shape ───────────────────────────────
-        console.error('[ARMS SMS] Unexpected AT response shape:', result);
+        // ── Fallback: unexpected response ─────────────────────────────────────
+        console.error('[ARMS SMS] Unexpected response:', result);
         return NextResponse.json({
             success: false,
             error:
                 result.SMSMessageData?.Message ||
-                "Unexpected response from Africa's Talking. Check Vercel → Functions → Logs for details.",
+                `Unexpected response from Africa's Talking (${mode}). Check Vercel logs for details.`,
             raw: result,
         });
 
     } catch (error: any) {
-        // ── Top-level catch ───────────────────────────────────────────────────
         console.error('[ARMS SMS] Unhandled error:', error);
         return NextResponse.json(
-            {
-                success: false,
-                error:   error.message || 'Internal server error while sending SMS',
-            },
+            { success: false, error: error.message || 'Internal server error while sending SMS' },
             { status: 500 }
         );
     }

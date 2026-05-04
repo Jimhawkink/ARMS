@@ -364,12 +364,31 @@ export default function MessagingHubPage() {
 
     // ── Test SMS ──────────────────────────────────────────────────────────────
     const handleTestSMS = async () => {
-        if (!smsConfig) return toast.error('Save SMS config first');
+        if (!apiKey || !username) return toast.error('Enter API Key and Username first');
         const testPhone = prompt('Enter a phone number to test (e.g. 0720316175):');
         if (!testPhone) return;
-        const result = await sendSMS(testPhone, '✅ ARMS SMS test message. Your system is connected!');
-        if (result.success) toast.success('✅ SMS test sent!');
-        else toast.error(`❌ SMS test failed: ${result.error || 'Check your API key and username.'}`, { duration: 8000 });
+        const tid = toast.loading(`Testing SMS (${isSandbox ? 'Sandbox' : 'Live'} mode)...`);
+        try {
+            const res = await fetch('/api/sms/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    to: testPhone,
+                    message: '✅ ARMS SMS test message. Your system is connected!',
+                    username,
+                    apiKey,
+                    senderId,
+                    isSandbox,
+                }),
+            });
+            const result = await res.json();
+            toast.dismiss(tid);
+            if (result.success) toast.success(`✅ SMS test sent! (${isSandbox ? 'Sandbox' : 'Live'} mode)`);
+            else toast.error(`❌ ${result.error || 'SMS test failed. Check your credentials.'}`, { duration: 10000 });
+        } catch (e: any) {
+            toast.dismiss(tid);
+            toast.error(`❌ Network error: ${e.message}`, { duration: 8000 });
+        }
     };
 
     // ── Add Reminder Rule ─────────────────────────────────────────────────────
