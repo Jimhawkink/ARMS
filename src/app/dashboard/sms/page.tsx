@@ -391,6 +391,37 @@ export default function MessagingHubPage() {
         }
     };
 
+    // ── Diagnose SMS credentials ──────────────────────────────────────────────
+    const handleDiagnoseSMS = async () => {
+        if (!apiKey || !username) return toast.error('Enter API Key and Username first');
+        const tid = toast.loading('🔍 Diagnosing SMS credentials against both Sandbox & Live...');
+        try {
+            const res = await fetch('/api/sms/diagnose', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apiKey, username }),
+            });
+            const result = await res.json();
+            toast.dismiss(tid);
+            if (result.diagnosis) {
+                const sandboxTest = result.tests?.find((t: any) => t.mode === 'SANDBOX');
+                const liveTest = result.tests?.find((t: any) => t.mode === 'LIVE');
+                const details = [
+                    result.diagnosis,
+                    '',
+                    `API Key: ${result.maskedKey}`,
+                    `Username: ${result.username}`,
+                    `Sandbox (${sandboxTest?.httpStatus || 'N/A'}): ${sandboxTest?.passed ? '✅ PASS' : '❌ FAIL'}`,
+                    `Live (${liveTest?.httpStatus || 'N/A'}): ${liveTest?.passed ? '✅ PASS' : '❌ FAIL'}`,
+                ].join('\n');
+                alert(details);
+            }
+        } catch (e: any) {
+            toast.dismiss(tid);
+            toast.error(`Diagnose failed: ${e.message}`, { duration: 8000 });
+        }
+    };
+
     // ── Add Reminder Rule ─────────────────────────────────────────────────────
     const handleAddRule = async () => {
         if (!ruleName || !ruleTemplate) return toast.error('Fill all fields');
@@ -1002,6 +1033,10 @@ export default function MessagingHubPage() {
                                 <button onClick={handleTestSMS}
                                     className="px-4 py-2.5 rounded-xl text-sm font-bold border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition flex items-center gap-2">
                                     <FiZap size={14} /> Test
+                                </button>
+                                <button onClick={handleDiagnoseSMS}
+                                    className="px-4 py-2.5 rounded-xl text-sm font-bold border border-amber-200 text-amber-700 hover:bg-amber-50 transition flex items-center gap-2">
+                                    🔍 Diagnose
                                 </button>
                             </div>
                             {smsConfigured && (
