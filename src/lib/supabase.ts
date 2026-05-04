@@ -1114,7 +1114,7 @@ export async function getSMSConfig() {
             provider: 'AfricasTalking',
             api_key: settingsApiKey,
             username: settingsUsername,
-            sender_id: settingsSenderId || 'ARMS',
+            sender_id: settingsSenderId || '',
             is_active: true,
             is_sandbox: settingsIsSandbox,
             created_at: configData?.[0]?.created_at || new Date().toISOString(),
@@ -1164,7 +1164,7 @@ export async function updateSMSConfig(config: {
     const settingsToSync = [
         { key: 'sms_api_key',   value: config.api_key },
         { key: 'sms_username',  value: config.username },
-        { key: 'sms_sender_id', value: config.sender_id || 'ARMS' },
+        { key: 'sms_sender_id', value: config.sender_id || '' },
         { key: 'sms_enabled',   value: 'true' },
         { key: 'sms_provider',  value: 'AfricasTalking' },
         { key: 'sms_is_sandbox', value: config.is_sandbox ? 'true' : 'false' },
@@ -1555,7 +1555,7 @@ export async function getMessagingConfig(): Promise<{
             enabled: true,
             apiKey: map['sms_api_key'] || smsConfig?.api_key || '',
             username: map['sms_username'] || smsConfig?.username || '',
-            senderId: map['sms_sender_id'] || smsConfig?.sender_id || 'ARMS',
+            senderId: map['sms_sender_id'] || smsConfig?.sender_id || '',
             isSandbox: smsConfig?.is_sandbox ?? false,
         } : null,
         whatsapp: waEnabled ? {

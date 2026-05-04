@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
         const smsEnabled = settings['sms_enabled'] === 'true';
         const smsApiKey = settings['sms_api_key'];
         const smsUsername = settings['sms_username'];
-        const smsSenderId = settings['sms_sender_id'] || 'ARMS';
+        const smsSenderId = settings['sms_sender_id'] || '';
         const waEnabled = settings['whatsapp_enabled'] === 'true';
         const waPhoneNumberId = settings['whatsapp_phone_number_id'];
         const waAccessToken = settings['whatsapp_access_token'];

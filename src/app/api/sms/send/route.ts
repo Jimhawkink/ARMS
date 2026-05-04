@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
         // ── Use passed credentials OR fall back to Vercel env vars ────────────
         const finalApiKey   = bodyApiKey   || process.env.AT_API_KEY   || '';
         const finalUsername = bodyUsername || process.env.AT_USERNAME  || '';
-        const finalSenderId = bodySenderId || process.env.AT_SENDER_ID || 'ARMS';
+        const finalSenderId = bodySenderId || process.env.AT_SENDER_ID || '';
 
         // For sandbox mode, AT requires username to be "sandbox"
         const effectiveUsername = isSandbox ? 'sandbox' : finalUsername;
