@@ -84,10 +84,12 @@ export async function POST(req: NextRequest) {
             message,
         };
 
-        // Only add 'from' (Sender ID) in LIVE mode — sandbox doesn't need it
-        if (finalSenderId && finalSenderId.trim() && !isSandbox) {
-            formParams.from = finalSenderId.trim();
-        }
+        // NOTE: Sender ID (from) is DISABLED until a registered sender ID is approved by AT.
+        // AT will use its default short code. To re-enable, uncomment below after registering
+        // a sender ID at africastalking.com → SMS → Sender IDs.
+        // if (finalSenderId && finalSenderId.trim() && !isSandbox) {
+        //     formParams.from = finalSenderId.trim();
+        // }
 
         // ── AbortController: hard 15-second timeout ───────────────────────────
         const controller = new AbortController();
