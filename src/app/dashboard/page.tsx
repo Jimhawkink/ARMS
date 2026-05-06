@@ -31,7 +31,7 @@ const quickActions = [
     { label: 'Mark Paid', emoji: '✅', href: '/dashboard/billing', bg: '#eff6ff', color: '#1d4ed8', ring: '#bfdbfe' },
     { label: 'Statement', emoji: '📄', href: '/dashboard/reports', bg: '#f5f3ff', color: '#6d28d9', ring: '#ddd6fe' },
     { label: 'M-Pesa', emoji: '📱', href: '/dashboard/payments', bg: '#f0fdfa', color: '#0f766e', ring: '#99f6e4' },
-    { label: 'Send Bulk SMS', emoji: '�', href: '/dashboard/sms', bg: '#fdf4ff', color: '#7e22ce', ring: '#e9d5ff' },
+    { label: 'Send Bulk SMS', emoji: '💬', href: '/dashboard/sms', bg: '#fdf4ff', color: '#7e22ce', ring: '#e9d5ff' },
     { label: 'Add Tenant', emoji: '➕', href: '/dashboard/tenants', bg: '#fdf2f8', color: '#9d174d', ring: '#fbcfe8' },
 ];
 
@@ -343,16 +343,16 @@ export default function DashboardPage() {
 
     // -- KPI Cards --
     const kpiCards = [
-        { label: 'Total Tenants', value: stats?.activeTenants || 0, emoji: '??', bg: '#eef2ff', border: '#818cf8', sub: `${occupancyRate}% occupancy`, href: '/dashboard/tenants' },
-        { label: '?? New Today', value: tenantsNewToday, emoji: '??', bg: '#f0fdf4', border: '#34d399', sub: tenantsNewToday > 0 ? 'Moved in today!' : 'No new tenants', pulse: tenantsNewToday > 0, href: '/dashboard/tenants' },
-        { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '??', bg: '#ecfdf5', border: '#6ee7b7', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant`, href: '/dashboard/units' },
-        { label: 'This Month Collected', value: fmt(stats?.monthlyCollected), emoji: '??', bg: '#ecfdf5', border: '#34d399', sub: 'Cash + M-Pesa', trend: momChange, href: '/dashboard/payments' },
-        { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '??', bg: '#faf5ff', border: '#a78bfa', sub: 'Total invoiced', href: '/dashboard/billing' },
-        { label: 'Paid Today', value: fmt(paidTodayAmount), emoji: '?', bg: '#f0fdf4', border: '#4ade80', sub: `${paidTodayCount} payment${paidTodayCount !== 1 ? 's' : ''} today`, pulse: paidTodayCount > 0, href: '/dashboard/payments' },
-        { label: 'Total Arrears', value: fmt(totalArrearsFromCalc), emoji: '?', bg: '#fef2f2', border: '#f87171', pulse: totalArrearsFromCalc > 0, sub: `${unpaidRentData.length} tenants`, href: '/dashboard/unpaid' },
-        { label: 'Total Penalty', value: fmt(totalPenaltiesFromCalc), emoji: '??', bg: '#fffbeb', border: '#fbbf24', sub: 'Late fees', href: '/dashboard/unpaid' },
-        { label: 'Collection Rate', value: `${collRate}%`, emoji: collRate >= 80 ? '??' : collRate >= 50 ? '??' : '??', bg: collRate >= 80 ? '#ecfdf5' : collRate >= 50 ? '#fffbeb' : '#fef2f2', border: collRate >= 80 ? '#34d399' : collRate >= 50 ? '#fbbf24' : '#f87171', sub: collRate >= 80 ? 'Excellent' : collRate >= 50 ? 'Needs attention' : 'Critical', pulse: collRate < 50 && totalArrearsFromCalc > 0, href: '/dashboard/reports' },
-        { label: 'Total Owed', value: fmt(totalOwedFromCalc), emoji: '??', bg: '#fff7ed', border: '#fb923c', sub: 'Incl. penalties', pulse: totalOwedFromCalc > 0, href: '/dashboard/unpaid' },
+        { label: 'Total Tenants', value: stats?.activeTenants || 0, emoji: '👤', bg: '#eef2ff', border: '#818cf8', sub: `${occupancyRate}% occupancy`, href: '/dashboard/tenants' },
+        { label: '🆕 New Today', value: tenantsNewToday, emoji: '🎉', bg: '#f0fdf4', border: '#34d399', sub: tenantsNewToday > 0 ? 'Moved in today!' : 'No new tenants', pulse: tenantsNewToday > 0, href: '/dashboard/tenants' },
+        { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '🚪', bg: '#ecfdf5', border: '#6ee7b7', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant`, href: '/dashboard/units' },
+        { label: 'This Month Collected', value: fmt(stats?.monthlyCollected), emoji: '💵', bg: '#ecfdf5', border: '#34d399', sub: 'Cash + M-Pesa', trend: momChange, href: '/dashboard/payments' },
+        { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '🧾', bg: '#faf5ff', border: '#a78bfa', sub: 'Total invoiced', href: '/dashboard/billing' },
+        { label: 'Paid Today', value: fmt(paidTodayAmount), emoji: '✅', bg: '#f0fdf4', border: '#4ade80', sub: `${paidTodayCount} payment${paidTodayCount !== 1 ? 's' : ''} today`, pulse: paidTodayCount > 0, href: '/dashboard/payments' },
+        { label: 'Total Arrears', value: fmt(totalArrearsFromCalc), emoji: '⏰', bg: '#fef2f2', border: '#f87171', pulse: totalArrearsFromCalc > 0, sub: `${unpaidRentData.length} tenants`, href: '/dashboard/unpaid' },
+        { label: 'Total Penalty', value: fmt(totalPenaltiesFromCalc), emoji: '💢', bg: '#fffbeb', border: '#fbbf24', sub: 'Late fees', href: '/dashboard/unpaid' },
+        { label: 'Collection Rate', value: `${collRate}%`, emoji: collRate >= 80 ? '🌟' : collRate >= 50 ? '📈' : '📉', bg: collRate >= 80 ? '#ecfdf5' : collRate >= 50 ? '#fffbeb' : '#fef2f2', border: collRate >= 80 ? '#34d399' : collRate >= 50 ? '#fbbf24' : '#f87171', sub: collRate >= 80 ? 'Excellent' : collRate >= 50 ? 'Needs attention' : 'Critical', pulse: collRate < 50 && totalArrearsFromCalc > 0, href: '/dashboard/reports' },
+        { label: 'Total Owed', value: fmt(totalOwedFromCalc), emoji: '💰', bg: '#fff7ed', border: '#fb923c', sub: 'Incl. penalties', pulse: totalOwedFromCalc > 0, href: '/dashboard/unpaid' },
     ];
 
     // -- Chart data --
@@ -513,7 +513,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h1 className="page-title flex items-center gap-2.5">
-                        <span className="text-2xl"></span>
+                        <span className="text-2xl">🏘️</span>
                         <span>Dashboard</span>
                     </h1>
                     <p className="text-sm text-gray-400 mt-1 font-medium">
@@ -523,7 +523,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-2">
                     <div className="text-xs font-semibold text-gray-500 bg-white rounded-xl px-4 py-2.5 border border-gray-100 shadow-sm">
-                         {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
+                        📅 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
                     </div>
                     <button onClick={() => router.push('/dashboard/sms')}
                         className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition"
@@ -590,7 +590,7 @@ export default function DashboardPage() {
             )}
 
             {/*  Search & Filter Bar  */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
                 <div className="flex items-center gap-3 p-4">
                     <div className="relative flex-1" ref={searchRef}>
                         <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
@@ -605,10 +605,10 @@ export default function DashboardPage() {
                             </button>
                         )}
                         {showSearchDropdown && searchResults.length > 0 && (
-                            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-2xl shadow-2xl z-50 overflow-hidden" style={{ border: '1px solid #e2e8f0' }}>
+                            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-2xl shadow-2xl overflow-hidden" style={{ border: '1px solid #e2e8f0', zIndex: 9999 }}>
                                 <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                                     <p className="text-xs font-bold text-gray-500">{searchResults.length} tenant{searchResults.length !== 1 ? 's' : ''} found</p>
-                                    <span className="text-[10px] text-gray-400"> navigate  Enter select</span>
+                                    <span className="text-[10px] text-gray-400">↑↓ navigate · Enter select</span>
                                 </div>
                                 <div className="max-h-[300px] overflow-y-auto divide-y divide-gray-50">
                                     {searchResults.map((t, i) => (
@@ -622,15 +622,15 @@ export default function DashboardPage() {
                                                 <p className="text-sm font-bold text-gray-900 truncate">{t.tenant_name}</p>
                                                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                                     <span className="text-xs font-mono text-gray-400">{t.phone || 'No phone'}</span>
-                                                    <span className="text-gray-200"></span>
+                                                    <span className="text-gray-200">·</span>
                                                     <span className="text-xs text-gray-500">Room <b className="text-gray-700">{t.arms_units?.unit_name || '-'}</b></span>
-                                                    <span className="text-gray-200"></span>
+                                                    <span className="text-gray-200">·</span>
                                                     <span className="text-xs text-gray-400">{t.arms_locations?.location_name || '-'}</span>
                                                 </div>
                                             </div>
                                             <div className="text-right flex-shrink-0">
                                                 <p className={`text-xs font-bold ${t.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                                    {t.balance > 0 ? `Owes ${fmt(t.balance)}` : ' Clear'}
+                                                    {t.balance > 0 ? `Owes ${fmt(t.balance)}` : '✅ Clear'}
                                                 </p>
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${t.status === 'Active' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
                                                     {t.status}
@@ -667,7 +667,7 @@ export default function DashboardPage() {
                             className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-600 focus:outline-none focus:border-indigo-300">
                             <option value="">All Arrears</option>
                             <option value="below5k">Below 5K</option>
-                            <option value="5kto10k">5K  10K</option>
+                            <option value="5kto10k">5K – 10K</option>
                             <option value="above10k">Above 10K</option>
                         </select>
                     </div>
@@ -681,10 +681,10 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-1 p-4 border-b border-gray-50">
                     <span className="text-xs font-bold text-gray-500 mr-2 uppercase tracking-wider">Charts</span>
                     {[
-                        { key: 'revenue', label: ' Revenue Trend' },
-                        { key: 'cashmpesa', label: ' Cash vs M-Pesa' },
-                        { key: 'rate', label: ' Collection Rate' },
-                        { key: 'radar', label: ' Health Score' },
+                        { key: 'revenue', label: '📈 Revenue Trend' },
+                        { key: 'cashmpesa', label: '💳 Cash vs M-Pesa' },
+                        { key: 'rate', label: '📊 Collection Rate' },
+                        { key: 'radar', label: '🎯 Health Score' },
                     ].map(tab => (
                         <button key={tab.key} onClick={() => setChartTab(tab.key as any)}
                             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${chartTab === tab.key ? 'bg-indigo-600 text-white shadow-sm' : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'}`}>
@@ -743,7 +743,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="mt-3 flex items-center justify-center gap-4 text-xs text-gray-500">
                         <span><b className="text-indigo-600">{stats?.activeTenants || 0}</b> occupied</span>
-                        <span></span>
+                        <span>·</span>
                         <span><b className="text-gray-400">{Math.max(0, (stats?.totalUnits || 0) - (stats?.activeTenants || 0))}</b> vacant</span>
                     </div>
                 </div>
@@ -789,7 +789,7 @@ export default function DashboardPage() {
                         ) : recentPayments.slice(0, 8).map((p: any, i: number) => (
                             <div key={p.payment_id || i} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition">
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white flex-shrink-0 ${p.payment_method === 'M-Pesa' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
-                                    {p.payment_method === 'M-Pesa' ? '' : ''}
+                                    {p.payment_method === 'M-Pesa' ? '📱' : '💵'}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-xs font-bold text-gray-800 truncate">{p.arms_tenants?.tenant_name || 'Unknown'}</p>
@@ -818,7 +818,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="divide-y divide-gray-50">
                         {top5Overdue.length === 0 ? (
-                            <div className="px-5 py-8 text-center text-xs text-gray-400"> No overdue tenants!</div>
+                            <div className="px-5 py-8 text-center text-xs text-gray-400">🏆 No overdue tenants!</div>
                         ) : top5Overdue.map((t: any, i: number) => {
                             const months = t.monthsOwed || 0;
                             const urg = urgencyStyle(months);
@@ -911,7 +911,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div className="text-right flex-shrink-0">
                                     <p className={`text-xs font-black ${(t.balance || 0) > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                        {(t.balance || 0) > 0 ? fmt(t.balance) : ' Clear'}
+                                        {(t.balance || 0) > 0 ? fmt(t.balance) : '✅ Clear'}
                                     </p>
                                     <p className="text-[9px] text-gray-400">{(t.balance || 0) > 0 ? 'owes' : 'paid up'}</p>
                                 </div>
@@ -927,7 +927,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-3">
                         <FiCalendar size={15} className="text-indigo-500" />
                         <p className="text-sm font-bold text-gray-700">
-                            {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}  Billing Grid
+                            {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} — Billing Grid
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -935,7 +935,7 @@ export default function DashboardPage() {
                             {(['unpaid', 'paid'] as const).map(tab => (
                                 <button key={tab} onClick={() => setGridTab(tab)}
                                     className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${gridTab === tab ? (tab === 'paid' ? 'bg-green-500 text-white shadow-sm' : 'bg-red-500 text-white shadow-sm') : 'text-gray-500 hover:text-gray-700'}`}>
-                                    {tab === 'paid' ? ` Paid (${monthGrid?.paid?.length || 0})` : ` Unpaid (${monthGrid?.unpaid?.length || 0})`}
+                                    {tab === 'paid' ? `✅ Paid (${monthGrid?.paid?.length || 0})` : `⚠️ Unpaid (${monthGrid?.unpaid?.length || 0})`}
                                 </button>
                             ))}
                         </div>
@@ -944,8 +944,8 @@ export default function DashboardPage() {
                 <div className="p-4">
                     {filteredGridItems.length === 0 ? (
                         <div className="text-center py-10">
-                            <span className="text-4xl">{gridTab === 'paid' ? '' : ''}</span>
-                            <p className="text-sm font-bold text-gray-500 mt-3">{gridTab === 'paid' ? 'No paid bills match filters' : 'No unpaid bills  great!'}</p>
+                            <span className="text-4xl">{gridTab === 'paid' ? '🎉' : '⚠️'}</span>
+                            <p className="text-sm font-bold text-gray-500 mt-3">{gridTab === 'paid' ? 'No paid bills match filters' : 'No unpaid bills — great!'}</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -981,7 +981,7 @@ export default function DashboardPage() {
                             </table>
                             {filteredGridItems.length > 20 && (
                                 <p className="text-center text-xs text-gray-400 mt-3 py-2">
-                                    Showing 20 of {filteredGridItems.length}  <button onClick={() => router.push('/dashboard/billing')} className="text-indigo-500 font-semibold hover:underline">View all in Billing</button>
+                                    Showing 20 of {filteredGridItems.length} · <button onClick={() => router.push('/dashboard/billing')} className="text-indigo-500 font-semibold hover:underline">View all in Billing</button>
                                 </p>
                             )}
                         </div>
@@ -992,7 +992,7 @@ export default function DashboardPage() {
                         <span>Total Due: <b className="text-red-600">{fmt(monthGrid?.totalDue || 0)}</b></span>
                         <span>Total Paid: <b className="text-green-600">{fmt(monthGrid?.totalPaid || 0)}</b></span>
                     </div>
-                    <button onClick={() => router.push('/dashboard/billing')} className="text-xs text-indigo-500 font-semibold hover:underline">Open Billing </button>
+                    <button onClick={() => router.push('/dashboard/billing')} className="text-xs text-indigo-500 font-semibold hover:underline">Open Billing →</button>
                 </div>
             </div>
 
@@ -1005,7 +1005,7 @@ export default function DashboardPage() {
                             <p className="text-sm font-bold text-gray-700">Overdue Tenants</p>
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-100">{filteredOverdue.length}</span>
                         </div>
-                        <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-red-500 font-semibold hover:underline">View Unpaid Page </button>
+                        <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-red-500 font-semibold hover:underline">View Unpaid Page →</button>
                     </div>
                     <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
                         {filteredOverdue.slice(0, 15).map((t: any) => {
@@ -1050,7 +1050,7 @@ export default function DashboardPage() {
                     {filteredOverdue.length > 15 && (
                         <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 text-center">
                             <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-indigo-500 font-semibold hover:underline">
-                                +{filteredOverdue.length - 15} more  View all on Unpaid page
+                                +{filteredOverdue.length - 15} more · View all on Unpaid page
                             </button>
                         </div>
                     )}
@@ -1067,7 +1067,7 @@ export default function DashboardPage() {
                             <p className="text-sm font-bold text-gray-700">Arrears Payments History</p>
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">{arrearsPaymentsDetail.length}</span>
                         </div>
-                        <span className="text-xs text-gray-400">{showArrearsGrid ? ' Hide' : ' Show'}</span>
+                        <span className="text-xs text-gray-400">{showArrearsGrid ? '▲ Hide' : '▼ Show'}</span>
                     </button>
                     {showArrearsGrid && (
                         <div className="overflow-x-auto">
