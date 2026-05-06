@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { hashPassword, verifyPassword } from './password';
 
 // ============================================
 // ARMS - SUPABASE CONFIGURATION
@@ -40,8 +41,17 @@ export async function loginUser(username: string, password: string) {
         .eq('active', true)
         .single();
     if (error || !data) return null;
-    if (data.password_hash === password) return data;
-    return null;
+
+    const valid = await verifyPassword(password, data.password_hash);
+    if (!valid) return null;
+
+    // Auto-upgrade legacy plain-text password to bcrypt on successful login
+    if (!data.password_hash.startsWith('$2')) {
+        const hashed = await hashPassword(password);
+        await supabase.from('arms_users').update({ password_hash: hashed }).eq('user_id', data.user_id);
+    }
+
+    return data;
 }
 
 // ==================== LOCATIONS ====================
@@ -1364,9 +1374,11 @@ export async function createARMSUser(user: {
     email?: string; phone?: string; user_type?: string; user_role?: string;
     allowed_location_ids?: number[];
 }) {
+    // Always hash the password before storing
+    const hashed = await hashPassword(user.password_hash);
     const { data, error } = await supabase
         .from('arms_users')
-        .insert([{ ...user, active: true, is_super_admin: false }])
+        .insert([{ ...user, password_hash: hashed, active: true, is_super_admin: false }])
         .select()
         .single();
     if (error) throw error;
@@ -1379,6 +1391,10 @@ export async function updateARMSUser(userId: number, updates: {
     allowed_location_ids?: number[];
 }) {
     const { is_super_admin: _, ...safeUpdates } = updates as any;
+    // Hash the new password if one was provided
+    if (safeUpdates.password_hash) {
+        safeUpdates.password_hash = await hashPassword(safeUpdates.password_hash);
+    }
     const { data, error } = await supabase
         .from('arms_users')
         .update({ ...safeUpdates, updated_at: new Date().toISOString() })
@@ -1407,19 +1423,44 @@ export async function deactivateARMSUser(userId: number) {
 
 // ==================== PORTAL USERS ====================
 export async function createPortalUser(portalUser: { tenant_id: number; username: string; password_hash: string }) {
-    const { data, error } = await supabase.from('arms_portal_users').insert(portalUser).select().single();
+    // Hash the password before storing
+    const hashed = await hashPassword(portalUser.password_hash);
+    const { data, error } = await supabase
+        .from('arms_portal_users')
+        .insert({ ...portalUser, password_hash: hashed })
+        .select()
+        .single();
     if (error) throw error;
     return data;
 }
 
 export async function loginPortalUser(username: string, password: string) {
-    const { data, error } = await supabase.from('arms_portal_users').select('*, arms_tenants(*)').eq('username', username).eq('is_active', true).single();
+    const { data, error } = await supabase
+        .from('arms_portal_users')
+        .select('*, arms_tenants(*)')
+        .eq('username', username)
+        .eq('is_active', true)
+        .single();
     if (error || !data) return null;
-    if (data.password_hash === password) {
-        await supabase.from('arms_portal_users').update({ last_login: new Date().toISOString(), login_count: (data.login_count || 0) + 1 }).eq('portal_user_id', data.portal_user_id);
-        return data;
+
+    const valid = await verifyPassword(password, data.password_hash);
+    if (!valid) return null;
+
+    // Auto-upgrade legacy plain-text password to bcrypt on successful login
+    if (!data.password_hash.startsWith('$2')) {
+        const hashed = await hashPassword(password);
+        await supabase
+            .from('arms_portal_users')
+            .update({ password_hash: hashed })
+            .eq('portal_user_id', data.portal_user_id);
     }
-    return null;
+
+    await supabase
+        .from('arms_portal_users')
+        .update({ last_login: new Date().toISOString(), login_count: (data.login_count || 0) + 1 })
+        .eq('portal_user_id', data.portal_user_id);
+
+    return data;
 }
 
 // ==================== ADVANCED ANALYTICS ====================
