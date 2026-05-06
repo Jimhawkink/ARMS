@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import {
     getDashboardStats, getRecentPayments, calculateUnpaidRent,
     get12MonthAnalytics, getCurrentMonthGrid, getLocations,
-    getTenants, getArrearsPaymentsDetail, getExpenseSummary, getProfitAndLoss
+    getTenants, getArrearsPaymentsDetail, getExpenseSummary, getProfitAndLoss, getNetRevenueSummary
 } from '@/lib/supabase';
 import {
     FiUsers, FiHome, FiDollarSign, FiAlertTriangle, FiTrendingUp,
@@ -147,6 +147,7 @@ export default function DashboardPage() {
     const [arrearsPaymentsDetail, setArrearsPaymentsDetail] = useState<any[]>([]);
     const [locations, setLocations] = useState<any[]>([]);
     const [allTenants, setAllTenants] = useState<any[]>([]);
+    const [netRevenue, setNetRevenue] = useState<any>(null);
 
     //  UI state 
     const [loading, setLoading] = useState(true);
@@ -257,12 +258,14 @@ export default function DashboardPage() {
         setLoading(true);
         try {
             const lid = locId ?? undefined;
-            const [s, rp, ur, an, mg, apd] = await Promise.all([
+            const [s, rp, ur, an, mg, apd, nr] = await Promise.all([
                 getDashboardStats(lid), getRecentPayments(10, lid), calculateUnpaidRent(lid),
-                get12MonthAnalytics(lid), getCurrentMonthGrid(lid), getArrearsPaymentsDetail(lid)
+                get12MonthAnalytics(lid), getCurrentMonthGrid(lid), getArrearsPaymentsDetail(lid),
+                getNetRevenueSummary(lid)
             ]);
             setStats(s); setRecentPayments(rp); setUnpaidRentData(ur);
             setAnalytics(an); setMonthGrid(mg); setArrearsPaymentsDetail(apd);
+            setNetRevenue(nr);
         } catch (err) { console.error(err); }
         setLoading(false);
     }, []);
@@ -564,6 +567,71 @@ export default function DashboardPage() {
             {/*  KPI Cards  */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                 {kpiCards.map((card, i) => <KpiCard key={i} {...card} />)}
+            </div>
+
+            {/*  Net Revenue Cards  */}
+            <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">💹 Net Revenue (Collected − Expenses)</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[
+                        {
+                            period: 'Today',
+                            emoji: '📅',
+                            collected: netRevenue?.today?.collected || 0,
+                            expenses: netRevenue?.today?.expenses || 0,
+                            net: netRevenue?.today?.net || 0,
+                            bg: '#f0fdf4', border: '#34d399',
+                        },
+                        {
+                            period: 'This Week',
+                            emoji: '🗓️',
+                            collected: netRevenue?.week?.collected || 0,
+                            expenses: netRevenue?.week?.expenses || 0,
+                            net: netRevenue?.week?.net || 0,
+                            bg: '#eff6ff', border: '#60a5fa',
+                        },
+                        {
+                            period: 'This Month',
+                            emoji: '📆',
+                            collected: netRevenue?.month?.collected || 0,
+                            expenses: netRevenue?.month?.expenses || 0,
+                            net: netRevenue?.month?.net || 0,
+                            bg: '#faf5ff', border: '#a78bfa',
+                        },
+                        {
+                            period: 'This Year',
+                            emoji: '🏆',
+                            collected: netRevenue?.year?.collected || 0,
+                            expenses: netRevenue?.year?.expenses || 0,
+                            net: netRevenue?.year?.net || 0,
+                            bg: '#fff7ed', border: '#fb923c',
+                        },
+                    ].map((c, i) => (
+                        <div key={i} className="bg-white rounded-2xl p-4 border-2 shadow-sm hover:shadow-md transition-all relative overflow-hidden"
+                            style={{ borderColor: c.border, background: c.bg }}>
+                            <div className="flex items-center justify-between mb-2">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{c.emoji} {c.period}</p>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${c.net >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                                    {c.net >= 0 ? '▲' : '▼'} Net
+                                </span>
+                            </div>
+                            <p className={`text-lg font-extrabold ${c.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                {fmt(c.net)}
+                            </p>
+                            <div className="mt-2 space-y-0.5">
+                                <div className="flex justify-between text-[10px] text-gray-500">
+                                    <span>💵 Collected</span>
+                                    <span className="font-bold text-green-600">{fmt(c.collected)}</span>
+                                </div>
+                                <div className="flex justify-between text-[10px] text-gray-500">
+                                    <span>🧾 Expenses</span>
+                                    <span className="font-bold text-red-500">{fmt(c.expenses)}</span>
+                                </div>
+                            </div>
+                            <div className="absolute -bottom-5 -right-5 w-16 h-16 rounded-full opacity-10" style={{ background: c.border }} />
+                        </div>
+                    ))}
+                </div>
             </div>
 
             {/*  Month-over-Month Banner  */}

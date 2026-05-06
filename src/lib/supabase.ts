@@ -910,6 +910,68 @@ export async function getExpenseCategories() {
     return cats.sort();
 }
 
+// ==================== NET REVENUE SUMMARY ====================
+export async function getNetRevenueSummary(locationId?: number) {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+
+    // Week start (Monday)
+    const dayOfWeek = now.getDay(); // 0=Sun
+    const diffToMon = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() + diffToMon);
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+
+    const monthStr = now.toISOString().slice(0, 7);
+    const yearStr = now.getFullYear().toString();
+    const yearStartStr = `${yearStr}-01-01`;
+
+    // Fetch all payments
+    let payQ = supabase.from('arms_payments').select('amount, payment_date');
+    if (locationId) payQ = payQ.eq('location_id', locationId);
+    const { data: payments } = await payQ;
+
+    // Fetch all expenses
+    let expQ = supabase.from('arms_expenses').select('amount, expense_date');
+    if (locationId) expQ = expQ.eq('location_id', locationId);
+    const { data: expenses } = await expQ;
+
+    const sumPayments = (from: string, to?: string) =>
+        (payments || []).filter(p => {
+            const d = (p.payment_date || '').slice(0, 10);
+            return d >= from && (to ? d <= to : true);
+        }).reduce((s, p) => s + (p.amount || 0), 0);
+
+    const sumExpenses = (from: string, to?: string) =>
+        (expenses || []).filter(e => {
+            const d = (e.expense_date || '').slice(0, 10);
+            return d >= from && (to ? d <= to : true);
+        }).reduce((s, e) => s + (e.amount || 0), 0);
+
+    const collectedToday    = sumPayments(todayStr, todayStr);
+    const expensesToday     = sumExpenses(todayStr, todayStr);
+    const netToday          = collectedToday - expensesToday;
+
+    const collectedWeek     = sumPayments(weekStartStr, todayStr);
+    const expensesWeek      = sumExpenses(weekStartStr, todayStr);
+    const netWeek           = collectedWeek - expensesWeek;
+
+    const collectedMonth    = sumPayments(monthStr + '-01');
+    const expensesMonth     = sumExpenses(monthStr + '-01');
+    const netMonth          = collectedMonth - expensesMonth;
+
+    const collectedYear     = sumPayments(yearStartStr);
+    const expensesYear      = sumExpenses(yearStartStr);
+    const netYear           = collectedYear - expensesYear;
+
+    return {
+        today:   { collected: collectedToday,  expenses: expensesToday,  net: netToday  },
+        week:    { collected: collectedWeek,   expenses: expensesWeek,   net: netWeek   },
+        month:   { collected: collectedMonth,  expenses: expensesMonth,  net: netMonth  },
+        year:    { collected: collectedYear,   expenses: expensesYear,   net: netYear   },
+    };
+}
+
 export async function getExpenseSummary(locationId?: number) {
     const expenses = await getExpenses(locationId ? { locationId } : undefined);
     const totalAmount = expenses.reduce((s, e) => s + (e.amount || 0), 0);
