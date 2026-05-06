@@ -51,6 +51,7 @@ export default function UnitsPage() {
         location_id: 0, unit_name: '', unit_type: 'Single Room',
         monthly_rent: '', deposit_amount: '', floor_number: '', description: '',
     });
+    const [saving, setSaving] = useState(false);
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
