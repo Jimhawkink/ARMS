@@ -346,6 +346,8 @@ export default function DashboardPage() {
         { label: 'Total Tenants', value: stats?.activeTenants || 0, emoji: '👤', bg: '#eef2ff', border: '#818cf8', sub: `${occupancyRate}% occupancy`, href: '/dashboard/tenants' },
         { label: '🆕 New Today', value: tenantsNewToday, emoji: '🎉', bg: '#f0fdf4', border: '#34d399', sub: tenantsNewToday > 0 ? 'Moved in today!' : 'No new tenants', pulse: tenantsNewToday > 0, href: '/dashboard/tenants' },
         { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '🚪', bg: '#ecfdf5', border: '#6ee7b7', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant`, href: '/dashboard/units' },
+        { label: 'Total Units', value: stats?.totalUnits || 0, emoji: '🏠', bg: '#f0f9ff', border: '#38bdf8', sub: `${stats?.occupiedUnits || 0} occupied · ${stats?.vacantUnits || 0} vacant`, href: '/dashboard/units' },
+        { label: 'Max Expected Revenue', value: fmt(stats?.maxExpectedRevenue || 0), emoji: '📊', bg: '#faf5ff', border: '#c084fc', sub: 'If all units occupied', href: '/dashboard/units' },
         { label: 'This Month Collected', value: fmt(stats?.monthlyCollected), emoji: '💵', bg: '#ecfdf5', border: '#34d399', sub: 'Cash + M-Pesa', trend: momChange, href: '/dashboard/payments' },
         { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '🧾', bg: '#faf5ff', border: '#a78bfa', sub: 'Total invoiced', href: '/dashboard/billing' },
         { label: 'Paid Today', value: fmt(paidTodayAmount), emoji: '✅', bg: '#f0fdf4', border: '#4ade80', sub: `${paidTodayCount} payment${paidTodayCount !== 1 ? 's' : ''} today`, pulse: paidTodayCount > 0, href: '/dashboard/payments' },

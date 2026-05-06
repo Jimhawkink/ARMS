@@ -663,7 +663,8 @@ export async function getLocationSummary(locationId?: number) {
     const occupiedUnits = units?.filter(u => u.status === 'Occupied').length || 0;
     const totalArrears = activeTenants.reduce((sum, t) => sum + (t.balance || 0), 0);
     const expectedRevenue = activeTenants.reduce((sum, t) => sum + (t.monthly_rent || 0), 0);
-    return { totalUnits, occupiedUnits, vacantUnits: totalUnits - occupiedUnits, activeTenants: activeTenants.length, totalArrears, expectedRevenue };
+    const maxExpectedRevenue = (units || []).reduce((sum, u) => sum + (u.monthly_rent || 0), 0);
+    return { totalUnits, occupiedUnits, vacantUnits: totalUnits - occupiedUnits, activeTenants: activeTenants.length, totalArrears, expectedRevenue, maxExpectedRevenue };
 }
 
 // ==================== DASHBOARD STATS ====================
