@@ -375,7 +375,7 @@ export default function UnitsPage() {
                         <div className="p-6 space-y-4">
                             <div>
                                 <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📍 Location *</label>
-                                <select value={form.location_id} onChange={e => setForm({ ...form, location_id: parseInt(e.target.value) })} className="select-field">
+                                <select id="u-location" value={form.location_id} onChange={e => { setForm({ ...form, location_id: parseInt(e.target.value) }); }} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('u-unit-name') as HTMLInputElement)?.focus(); } }} className="select-field">
                                     <option value={0}>Select location</option>
                                     {locations.map(l => <option key={l.location_id} value={l.location_id}>{l.location_name}</option>)}
                                 </select>
@@ -383,11 +383,11 @@ export default function UnitsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏠 Unit Name *</label>
-                                    <input value={form.unit_name} onChange={e => setForm({ ...form, unit_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="e.g. Room A1" />
+                                    <input id="u-unit-name" value={form.unit_name} onChange={e => setForm({ ...form, unit_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('u-type') as HTMLSelectElement)?.focus(); } }} className="input-field" placeholder="e.g. Room A1" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏷️ Type</label>
-                                    <select value={form.unit_type} onChange={e => setForm({ ...form, unit_type: e.target.value })} className="select-field">
+                                    <select id="u-type" value={form.unit_type} onChange={e => setForm({ ...form, unit_type: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('u-rent') as HTMLInputElement)?.focus(); } }} className="select-field">
                                         {UNIT_TYPES.map(t => <option key={t} value={t}>{TYPE_EMOJIS[t]} {t}</option>)}
                                     </select>
                                 </div>
@@ -395,16 +395,16 @@ export default function UnitsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent *</label>
-                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
+                                    <input id="u-rent" type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('u-deposit') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit</label>
-                                    <input type="number" value={form.deposit_amount} onChange={e => setForm({ ...form, deposit_amount: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
+                                    <input id="u-deposit" type="number" value={form.deposit_amount} onChange={e => setForm({ ...form, deposit_amount: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('u-floor') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏗️ Floor</label>
-                                <input value={form.floor_number} onChange={e => setForm({ ...form, floor_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" placeholder="e.g. Ground Floor" />
+                                <input id="u-floor" value={form.floor_number} onChange={e => setForm({ ...form, floor_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" placeholder="e.g. Ground Floor" />
                             </div>
                         </div>
                         <div className="px-6 pb-6 flex gap-3 justify-end">

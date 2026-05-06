@@ -694,11 +694,12 @@ export default function TenantsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">👤 Full Name *</label>
-                                    <input value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="Full legal name" />
+                                    <input id="t-name" value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-phone') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="Full legal name" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📞 Phone *</label>
                                     <input
+                                        id="t-phone"
                                         value={form.phone}
                                         onChange={e => {
                                             const phone = e.target.value;
@@ -715,21 +716,22 @@ export default function TenantsPage() {
                                         }}
                                         className="input-field"
                                         placeholder="07XXXXXXXX"
-                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-id') as HTMLInputElement)?.focus(); } }}
                                     />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🪪 National ID</label>
-                                    <input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="ID Number" />
+                                    <input id="t-id" value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-pin') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="ID Number" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Mobile PIN {editItem ? '(leave blank to keep current)' : '*'}</label>
                                     <div className="relative">
                                         <input
+                                            id="t-pin"
                                             type="text"
                                             value={form.password_hash}
                                             onChange={e => setForm({ ...form, password_hash: e.target.value.replace(/\D/g, '').slice(0, 6) })}
-                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }}
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-email') as HTMLInputElement)?.focus(); } }}
                                             className="input-field pr-24"
                                             placeholder={editItem ? 'Leave blank to keep current PIN' : 'Auto-filled from phone'}
                                             maxLength={6}
@@ -751,7 +753,7 @@ export default function TenantsPage() {
                                 </div>
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📧 Email (optional)</label>
-                                    <input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="email@example.com" />
+                                    <input id="t-email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-location') as HTMLSelectElement)?.focus(); } }} className="input-field" placeholder="email@example.com" />
                                 </div>
                             </div>
 
@@ -761,29 +763,29 @@ export default function TenantsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📍 Location *</label>
-                                    <select value={form.location_id} onChange={e => setForm({ ...form, location_id: parseInt(e.target.value), unit_id: 0 })} className="select-field">
+                                    <select id="t-location" value={form.location_id} onChange={e => setForm({ ...form, location_id: parseInt(e.target.value), unit_id: 0 })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-unit') as HTMLSelectElement)?.focus(); } }} className="select-field">
                                         <option value={0}>Select location</option>
                                         {locations.map(l => <option key={l.location_id} value={l.location_id}>{l.location_name}</option>)}
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏠 Unit *</label>
-                                    <select value={form.unit_id} onChange={e => {
+                                    <select id="t-unit" value={form.unit_id} onChange={e => {
                                         const uid = parseInt(e.target.value);
                                         const unit = units.find(u => u.unit_id === uid);
                                         setForm({ ...form, unit_id: uid, monthly_rent: unit ? String(unit.monthly_rent) : form.monthly_rent });
-                                    }} className="select-field">
+                                    }} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-rent') as HTMLInputElement)?.focus(); } }} className="select-field">
                                         <option value={0}>Select unit</option>
                                         {availableUnits.map(u => <option key={u.unit_id} value={u.unit_id}>{u.unit_name} — KES {(u.monthly_rent || 0).toLocaleString()}</option>)}
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent (KES) *</label>
-                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
+                                    <input id="t-rent" type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-deposit') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit Paid</label>
-                                    <input type="number" value={form.deposit_paid} onChange={e => setForm({ ...form, deposit_paid: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
+                                    <input id="t-deposit" type="number" value={form.deposit_paid} onChange={e => setForm({ ...form, deposit_paid: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-movein') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                             </div>
 
@@ -796,15 +798,17 @@ export default function TenantsPage() {
                                 <div className="p-4 grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="text-xs font-bold text-amber-700 mb-1 block">Move-In Date *</label>
-                                        <input type="date" value={form.move_in_date}
+                                        <input id="t-movein" type="date" value={form.move_in_date}
                                             onChange={e => setForm({ ...form, move_in_date: e.target.value, billing_start_month: e.target.value.slice(0, 7) })}
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-billing') as HTMLInputElement)?.focus(); } }}
                                             className="input-field" />
                                         <p className="text-[10px] text-gray-400 mt-1">Exact date tenant moved in</p>
                                     </div>
                                     <div>
                                         <label className="text-xs font-bold text-amber-700 mb-1 block">⚡ Billing Start Month *</label>
-                                        <input type="month" value={form.billing_start_month}
+                                        <input id="t-billing" type="month" value={form.billing_start_month}
                                             onChange={e => setForm({ ...form, billing_start_month: e.target.value })}
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-emg-contact') as HTMLInputElement)?.focus(); } }}
                                             className="input-field" />
                                         <p className="text-[10px] text-amber-600 mt-1">Arrears calculated from this month</p>
                                     </div>
@@ -822,16 +826,16 @@ export default function TenantsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🆘 Emergency Contact</label>
-                                    <input value={form.emergency_contact} onChange={e => setForm({ ...form, emergency_contact: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="Name" />
+                                    <input id="t-emg-contact" value={form.emergency_contact} onChange={e => setForm({ ...form, emergency_contact: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-emg-phone') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="Name" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🆘 Emergency Phone</label>
-                                    <input value={form.emergency_phone} onChange={e => setForm({ ...form, emergency_phone: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" placeholder="07XXXXXXXX" />
+                                    <input id="t-emg-phone" value={form.emergency_phone} onChange={e => setForm({ ...form, emergency_phone: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-notes') as HTMLTextAreaElement)?.focus(); } }} className="input-field" placeholder="07XXXXXXXX" />
                                 </div>
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📋 Notes</label>
-                                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="input-field" rows={2} placeholder="Optional notes…" />
+                                <textarea id="t-notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" rows={2} placeholder="Optional notes…" />
                             </div>
                         </div>
 
