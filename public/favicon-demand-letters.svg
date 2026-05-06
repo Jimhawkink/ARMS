@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Envelope -->
+  <rect x="4" y="9" width="24" height="17" rx="2.5" fill="white" opacity="0.95"/>
+  <!-- Envelope flap (open) -->
+  <path d="M4 9 L16 18 L28 9" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-linejoin="round" opacity="0.6"/>
+  <!-- Stamp / urgent mark -->
+  <rect x="19" y="12" width="8" height="5" rx="1" fill="#dc2626" opacity="0.15"/>
+  <text x="23" y="16" font-family="Arial" font-size="4.5" font-weight="900" fill="#dc2626" text-anchor="middle" opacity="0.8">!</text>
+  <!-- Lines -->
+  <rect x="7" y="21" width="10" height="1.5" rx="0.75" fill="#dc2626" opacity="0.3"/>
+  <rect x="7" y="24" width="7" height="1.5" rx="0.75" fill="#dc2626" opacity="0.2"/>
+</svg>

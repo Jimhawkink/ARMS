@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#84cc16"/>
+      <stop offset="100%" stop-color="#65a30d"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Clipboard -->
+  <rect x="6" y="7" width="20" height="22" rx="2.5" fill="white" opacity="0.95"/>
+  <!-- Clip -->
+  <rect x="12" y="4" width="8" height="5" rx="2" fill="white" opacity="0.7"/>
+  <rect x="13.5" y="5" width="5" height="3" rx="1" fill="#84cc16" opacity="0.5"/>
+  <!-- Check items -->
+  <circle cx="11" cy="14" r="2" fill="#84cc16" opacity="0.8"/>
+  <path d="M10 14 L11 15.2 L12.5 13" fill="none" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="15" y="13.5" width="8" height="1.5" rx="0.75" fill="#84cc16" opacity="0.4"/>
+  <circle cx="11" cy="19" r="2" fill="#84cc16" opacity="0.8"/>
+  <path d="M10 19 L11 20.2 L12.5 18" fill="none" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="15" y="18.5" width="6" height="1.5" rx="0.75" fill="#84cc16" opacity="0.4"/>
+  <!-- Pending item -->
+  <circle cx="11" cy="24" r="2" fill="none" stroke="#84cc16" stroke-width="1.2" opacity="0.5"/>
+  <rect x="15" y="23.5" width="7" height="1.5" rx="0.75" fill="#84cc16" opacity="0.3"/>
+</svg>

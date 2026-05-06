@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Water drop -->
+  <path d="M16 4 C16 4 8 14 8 19 C8 23.4 11.6 27 16 27 C20.4 27 24 23.4 24 19 C24 14 16 4 16 4 Z" fill="white" opacity="0.95"/>
+  <!-- Ripple inside -->
+  <path d="M12 21 C12 19 13.8 17.5 16 17.5" fill="none" stroke="#0ea5e9" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="100%" stop-color="#e11d48"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Shield -->
+  <path d="M16 4 L26 8 L26 17 C26 22.5 21.5 27 16 28 C10.5 27 6 22.5 6 17 L6 8 Z" fill="white" opacity="0.95"/>
+  <!-- Person inside shield -->
+  <circle cx="16" cy="14" r="3.5" fill="#f43f5e" opacity="0.8"/>
+  <path d="M10 24 C10 20 12.5 18 16 18 C19.5 18 22 20 22 24" fill="#f43f5e" opacity="0.8"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Map pin -->
+  <path d="M16 4 C11.6 4 8 7.6 8 12 C8 18 16 28 16 28 C16 28 24 18 24 12 C24 7.6 20.4 4 16 4 Z" fill="white" opacity="0.95"/>
+  <!-- Inner circle -->
+  <circle cx="16" cy="12" r="3.5" fill="#f59e0b"/>
+  <!-- Dot -->
+  <circle cx="16" cy="12" r="1.5" fill="white"/>
+</svg>

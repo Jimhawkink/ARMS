@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Portal arch / doorway -->
+  <path d="M8 28 L8 14 C8 9.6 11.6 6 16 6 C20.4 6 24 9.6 24 14 L24 28" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.95"/>
+  <!-- Inner arch glow -->
+  <path d="M11 28 L11 15 C11 11.7 13.2 9 16 9 C18.8 9 21 11.7 21 15 L21 28" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+  <!-- Person entering -->
+  <circle cx="16" cy="21" r="2.5" fill="white" opacity="0.9"/>
+  <path d="M13 28 C13 25 14.3 23.5 16 23.5 C17.7 23.5 19 25 19 28" fill="white" opacity="0.9"/>
+</svg>

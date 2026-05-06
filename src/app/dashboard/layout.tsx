@@ -1,3 +1,6 @@
+// Note: metadata is exported from individual route layouts for per-page icons.
+// The dashboard shell layout is a client component (uses hooks), so per-page
+// metadata is handled by child layouts.
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';

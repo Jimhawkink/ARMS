@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Key -->
+  <circle cx="12" cy="14" r="6" fill="none" stroke="white" stroke-width="2.5" opacity="0.95"/>
+  <circle cx="12" cy="14" r="2.5" fill="white" opacity="0.4"/>
+  <!-- Key shaft -->
+  <rect x="17" y="13" width="11" height="2.5" rx="1.25" fill="white" opacity="0.95"/>
+  <!-- Key teeth -->
+  <rect x="23" y="15.5" width="2" height="3" rx="0.75" fill="white" opacity="0.95"/>
+  <rect x="26" y="15.5" width="2" height="2" rx="0.75" fill="white" opacity="0.95"/>
+</svg>

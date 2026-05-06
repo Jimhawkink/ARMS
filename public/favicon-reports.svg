@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Bar chart bars -->
+  <rect x="5" y="22" width="5" height="6" rx="1.5" fill="white" opacity="0.5"/>
+  <rect x="12" y="16" width="5" height="12" rx="1.5" fill="white" opacity="0.75"/>
+  <rect x="19" y="10" width="5" height="18" rx="1.5" fill="white" opacity="0.95"/>
+  <!-- Trend line -->
+  <polyline points="7.5,22 14.5,16 21.5,10" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+  <!-- Axis -->
+  <line x1="4" y1="28" x2="28" y2="28" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+  <line x1="4" y1="8" x2="4" y2="28" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+</svg>

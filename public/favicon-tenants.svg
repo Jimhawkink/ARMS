@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Primary person -->
+  <circle cx="16" cy="11" r="4.5" fill="white" opacity="0.95"/>
+  <path d="M7 27 C7 21.5 10.5 18 16 18 C21.5 18 25 21.5 25 27" fill="white" opacity="0.95"/>
+  <!-- Secondary person (behind, left) -->
+  <circle cx="9" cy="13" r="3" fill="white" opacity="0.5"/>
+  <path d="M3 27 C3 23 5.5 20.5 9 20.5" fill="white" opacity="0.5"/>
+  <!-- Secondary person (behind, right) -->
+  <circle cx="23" cy="13" r="3" fill="white" opacity="0.5"/>
+  <path d="M29 27 C29 23 26.5 20.5 23 20.5" fill="white" opacity="0.5"/>
+</svg>
