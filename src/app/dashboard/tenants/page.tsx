@@ -239,6 +239,7 @@ export default function TenantsPage() {
         setShowModal(true);
     };
     const handleSave = async () => {
+        if (saving) return;
         if (!form.tenant_name.trim() || !form.phone.trim() || !form.unit_id || !form.monthly_rent) {
             toast.error('Name, Phone, Unit & Rent are required'); return;
         }
@@ -261,11 +262,18 @@ export default function TenantsPage() {
             if (editItem) {
                 await updateTenant(editItem.tenant_id, payload);
                 toast.success('✅ Tenant updated!');
+                setShowModal(false);
             } else {
                 await addTenant(payload);
                 toast.success('✅ Tenant registered! Bills auto-generated.');
+                setForm({
+                    tenant_name: '', phone: '', email: '', id_number: '',
+                    unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
+                    monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
+                    emergency_contact: '', emergency_phone: '', notes: '',
+                    password_hash: '',
+                });
             }
-            setShowModal(false);
             loadData(globalLocationId);
         } catch (err: any) { toast.error(err.message || 'Save failed'); }
         setSaving(false);
@@ -686,7 +694,7 @@ export default function TenantsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">👤 Full Name *</label>
-                                    <input value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} className="input-field" placeholder="Full legal name" />
+                                    <input value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="Full legal name" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📞 Phone *</label>
@@ -707,11 +715,12 @@ export default function TenantsPage() {
                                         }}
                                         className="input-field"
                                         placeholder="07XXXXXXXX"
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }}
                                     />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🪪 National ID</label>
-                                    <input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} className="input-field" placeholder="ID Number" />
+                                    <input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="ID Number" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Mobile PIN {editItem ? '(leave blank to keep current)' : '*'}</label>
@@ -720,6 +729,7 @@ export default function TenantsPage() {
                                             type="text"
                                             value={form.password_hash}
                                             onChange={e => setForm({ ...form, password_hash: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }}
                                             className="input-field pr-24"
                                             placeholder={editItem ? 'Leave blank to keep current PIN' : 'Auto-filled from phone'}
                                             maxLength={6}
@@ -741,7 +751,7 @@ export default function TenantsPage() {
                                 </div>
                                 <div className="col-span-2">
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📧 Email (optional)</label>
-                                    <input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="input-field" placeholder="email@example.com" />
+                                    <input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="email@example.com" />
                                 </div>
                             </div>
 
@@ -769,11 +779,11 @@ export default function TenantsPage() {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent (KES) *</label>
-                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} className="input-field" placeholder="0" />
+                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit Paid</label>
-                                    <input type="number" value={form.deposit_paid} onChange={e => setForm({ ...form, deposit_paid: e.target.value })} className="input-field" placeholder="0" />
+                                    <input type="number" value={form.deposit_paid} onChange={e => setForm({ ...form, deposit_paid: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                             </div>
 
@@ -812,11 +822,11 @@ export default function TenantsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🆘 Emergency Contact</label>
-                                    <input value={form.emergency_contact} onChange={e => setForm({ ...form, emergency_contact: e.target.value })} className="input-field" placeholder="Name" />
+                                    <input value={form.emergency_contact} onChange={e => setForm({ ...form, emergency_contact: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="Name" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🆘 Emergency Phone</label>
-                                    <input value={form.emergency_phone} onChange={e => setForm({ ...form, emergency_phone: e.target.value })} className="input-field" placeholder="07XXXXXXXX" />
+                                    <input value={form.emergency_phone} onChange={e => setForm({ ...form, emergency_phone: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('tenants-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" placeholder="07XXXXXXXX" />
                                 </div>
                             </div>
                             <div>
@@ -827,8 +837,8 @@ export default function TenantsPage() {
 
                         <div className="p-6 border-t border-gray-100 flex gap-3 justify-end bg-gray-50/50">
                             <button onClick={() => setShowModal(false)} className="btn-outline flex items-center gap-2"><FiX size={14} /> Cancel</button>
-                            <button onClick={handleSave} disabled={saving}
-                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90"
+                            <button onClick={handleSave} id="tenants-save-btn" disabled={saving}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-60"
                                 style={{ background: editItem ? 'linear-gradient(135deg,#4f46e5,#7c3aed)' : 'linear-gradient(135deg,#059669,#0d9488)' }}>
                                 {saving ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSave size={14} />}
                                 {editItem ? '💾 Update Tenant' : '✅ Register & Auto-Generate Bills'}

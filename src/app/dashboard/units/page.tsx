@@ -81,13 +81,23 @@ export default function UnitsPage() {
         setShowModal(true);
     };
     const handleSave = async () => {
+        if (saving) return;
         if (!form.unit_name.trim() || !form.location_id || !form.monthly_rent) { toast.error('Name, location & rent required'); return; }
+        setSaving(true);
         try {
             const payload = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_amount: parseFloat(form.deposit_amount || '0') };
-            if (editItem) { await updateUnit(editItem.unit_id, payload); toast.success('✅ Unit updated!'); }
-            else { await addUnit(payload); toast.success('✅ Unit added!'); }
-            setShowModal(false); loadData(locationId);
+            if (editItem) {
+                await updateUnit(editItem.unit_id, payload);
+                toast.success('✅ Unit updated!');
+                setShowModal(false);
+            } else {
+                await addUnit(payload);
+                toast.success('✅ Unit added!');
+                setForm({ location_id: locationId || locations[0]?.location_id || 0, unit_name: '', unit_type: 'Single Room', monthly_rent: '', deposit_amount: '', floor_number: '', description: '' });
+            }
+            loadData(locationId);
         } catch { toast.error('Failed to save'); }
+        setSaving(false);
     };
     const handleDelete = async (id: number, name: string) => {
         if (!confirm(`Deactivate ${name}?`)) return;
@@ -372,7 +382,7 @@ export default function UnitsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏠 Unit Name *</label>
-                                    <input value={form.unit_name} onChange={e => setForm({ ...form, unit_name: e.target.value })} className="input-field" placeholder="e.g. Room A1" />
+                                    <input value={form.unit_name} onChange={e => setForm({ ...form, unit_name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="e.g. Room A1" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏷️ Type</label>
@@ -384,24 +394,25 @@ export default function UnitsPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent *</label>
-                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} className="input-field" placeholder="0" />
+                                    <input type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit</label>
-                                    <input type="number" value={form.deposit_amount} onChange={e => setForm({ ...form, deposit_amount: e.target.value })} className="input-field" placeholder="0" />
+                                    <input type="number" value={form.deposit_amount} onChange={e => setForm({ ...form, deposit_amount: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏗️ Floor</label>
-                                <input value={form.floor_number} onChange={e => setForm({ ...form, floor_number: e.target.value })} className="input-field" placeholder="e.g. Ground Floor" />
+                                <input value={form.floor_number} onChange={e => setForm({ ...form, floor_number: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('units-save-btn') as HTMLButtonElement)?.click(); } }} className="input-field" placeholder="e.g. Ground Floor" />
                             </div>
                         </div>
                         <div className="px-6 pb-6 flex gap-3 justify-end">
                             <button onClick={() => setShowModal(false)} className="btn-outline flex items-center gap-2"><FiX size={14} /> Cancel</button>
-                            <button onClick={handleSave}
-                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90 shadow-md"
+                            <button onClick={handleSave} id="units-save-btn" disabled={saving}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90 shadow-md disabled:opacity-60"
                                 style={{ background: editItem ? 'linear-gradient(135deg,#4f46e5,#7c3aed)' : 'linear-gradient(135deg,#059669,#0d9488)' }}>
-                                <FiSave size={14} /> {editItem ? 'Update Unit' : 'Add Unit'}
+                                {saving ? <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <FiSave size={14} />}
+                                {editItem ? 'Update Unit' : saving ? 'Saving…' : 'Add Unit'}
                             </button>
                         </div>
                     </div>
