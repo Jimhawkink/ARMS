@@ -1,9 +1,9 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth } from '@/lib/supabase';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
 
 // ── Color tokens per column ────────────────────────────────────────────────────
 const C = {
@@ -17,7 +17,9 @@ const C = {
     rent:     { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
     arrears:  { bg: '#fef9c3', text: '#92400e', head: '#fde68a' },
     deposit:  { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
+    paid:     { bg: '#ecfdf5', text: '#047857', head: '#a7f3d0' },
     status:   { bg: '#ecfdf5', text: '#059669', head: '#a7f3d0' },
+    expand:   { bg: '#f8fafc', text: '#475569', head: '#e2e8f0' },
     actions:  { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
 };
 
@@ -101,6 +103,8 @@ export default function TenantsPage() {
     const [editItem, setEditItem] = useState<any>(null);
     const [saving, setSaving] = useState(false);
     const [globalLocationId, setGlobalLocationId] = useState<number | null>(null);
+    const [expandedTenants, setExpandedTenants] = useState<Set<number>>(new Set());
+    const [tenantDetails, setTenantDetails] = useState<Record<number, any>>({});
     const [form, setForm] = useState({
         tenant_name: '', phone: '', email: '', id_number: '',
         unit_id: 0, location_id: 0, monthly_rent: '', deposit_paid: '',
@@ -116,6 +120,15 @@ export default function TenantsPage() {
         return digits.length >= 6 ? digits.slice(-6) : digits.slice(-digits.length) || '';
     };
 
+    const toggleExpand = useCallback((tenantId: number) => {
+        setExpandedTenants(prev => {
+            const next = new Set(prev);
+            if (next.has(tenantId)) next.delete(tenantId);
+            else next.add(tenantId);
+            return next;
+        });
+    }, []);
+
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         try {
@@ -125,10 +138,22 @@ export default function TenantsPage() {
                 getLocations(),
                 calculateUnpaidRent(locId ?? undefined),
             ]);
-            // Build real-balance map from calculateUnpaidRent (the source of truth)
+            // Build real-balance map and detailed breakdown from calculateUnpaidRent
             const balMap: Record<number, number> = {};
-            (ur || []).forEach((item: any) => { balMap[item.tenant_id] = item.totalUnpaid || 0; });
+            const detailsMap: Record<number, any> = {};
+            (ur || []).forEach((item: any) => {
+                balMap[item.tenant_id] = item.totalUnpaid || 0;
+                detailsMap[item.tenant_id] = {
+                    allMonths: item.allMonths || [],
+                    unpaidMonths: item.unpaidMonths || [],
+                    totalUnpaid: item.totalUnpaid || 0,
+                    totalPaidAllTime: item.totalPaidAllTime || 0,
+                    totalPenalty: item.totalPenalty || 0,
+                    totalOwed: item.totalOwed || 0,
+                };
+            });
             setTenantBalances(balMap);
+            setTenantDetails(detailsMap);
             setTenants(t);
             setUnits(u);
             setLocations(l);
@@ -471,8 +496,10 @@ export default function TenantsPage() {
                                     { label: '⏰ Behind', col: C.behind },
                                     { label: '💰 Rent/Month', col: C.rent },
                                     { label: '⚠️ Arrears', col: C.arrears },
+                                    { label: '💵 Paid', col: C.paid },
                                     { label: '🔐 Deposit', col: C.deposit },
                                     { label: '✅ Status', col: C.status },
+                                    { label: '🔍', col: C.expand },
                                     { label: '⚙️ Actions', col: C.actions },
                                 ].map((h, i) => (
                                     <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
@@ -484,7 +511,7 @@ export default function TenantsPage() {
                         </thead>
                         <tbody>
                             {paginated.length === 0 ? (
-                                <tr><td colSpan={12} className="text-center py-16 text-gray-400">
+                                <tr><td colSpan={14} className="text-center py-16 text-gray-400">
                                     <div className="flex flex-col items-center gap-2">
                                         <span className="text-5xl">👤</span>
                                         <p className="text-sm font-medium">No tenants found</p>
@@ -499,7 +526,8 @@ export default function TenantsPage() {
                                     ? Math.floor((Date.now() - new Date(t.move_in_date).getTime()) / 86400000)
                                     : null;
                                 return (
-                                    <tr key={t.tenant_id}
+                                    <Fragment key={t.tenant_id}>
+                                    <tr
                                         className="transition-colors"
                                         style={{ borderBottom: '1px solid #f1f5f9' }}
                                         onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = '#fafbff'}
@@ -592,6 +620,11 @@ export default function TenantsPage() {
                                             )}
                                         </td>
 
+                                        {/* Total Paid */}
+                                        <td className="px-3 py-3 whitespace-nowrap font-bold" style={{ background: C.paid.bg + '60', color: C.paid.text }}>
+                                            {fmt(tenantDetails[t.tenant_id]?.totalPaidAllTime || 0)}
+                                        </td>
+
                                         {/* Deposit */}
                                         <td className="px-3 py-3 whitespace-nowrap font-semibold" style={{ background: C.deposit.bg + '60', color: C.deposit.text }}>
                                             {fmt(t.deposit_paid || 0)}
@@ -602,6 +635,15 @@ export default function TenantsPage() {
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border whitespace-nowrap ${t.status === 'Active' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
                                                 {t.status === 'Active' ? '✅' : '🚪'} {t.status}
                                             </span>
+                                        </td>
+
+                                        {/* Expand chevron */}
+                                        <td className="px-3 py-3 text-center" style={{ background: C.expand.bg + '60' }}>
+                                            <button onClick={() => toggleExpand(t.tenant_id)} title="View arrears breakdown"
+                                                className="p-1.5 rounded-lg transition hover:scale-110 border"
+                                                style={{ background: expandedTenants.has(t.tenant_id) ? '#4f46e5' : '#f1f5f9', color: expandedTenants.has(t.tenant_id) ? '#fff' : '#64748b', borderColor: expandedTenants.has(t.tenant_id) ? '#4f46e5' : '#e2e8f0' }}>
+                                                {expandedTenants.has(t.tenant_id) ? <FiChevronUp size={13} /> : <FiChevronDown size={13} />}
+                                            </button>
                                         </td>
 
                                         {/* Actions */}
@@ -637,6 +679,86 @@ export default function TenantsPage() {
                                             </div>
                                         </td>
                                     </tr>
+
+                                    {/* ── Expandable Arrears Breakdown Row ── */}
+                                    {expandedTenants.has(t.tenant_id) && (() => {
+                                        const details = tenantDetails[t.tenant_id];
+                                        const months = details?.allMonths || [];
+                                        const totalPaid = details?.totalPaidAllTime || 0;
+                                        const totalUnpaid = details?.totalUnpaid || 0;
+                                        const pastArrears = months.filter((m: any) => m.month < currentMonth && m.balance > 0).reduce((s: number, m: any) => s + m.balance, 0);
+                                        const currentDue = months.filter((m: any) => m.month === currentMonth).reduce((s: number, m: any) => s + m.balance, 0);
+                                        return (
+                                            <tr key={`exp-${t.tenant_id}`}>
+                                                <td colSpan={14} style={{ padding: 0, background: '#f8fafc' }}>
+                                                    <div className="px-6 py-4 border-t-2 border-indigo-200" style={{ background: 'linear-gradient(180deg, #f0f4ff 0%, #f8fafc 100%)' }}>
+                                                        {/* Summary Cards */}
+                                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                                                            <div className="rounded-xl p-3 border" style={{ background: '#ecfdf5', borderColor: '#a7f3d0' }}>
+                                                                <p className="text-[10px] font-bold text-green-600 uppercase">💵 Total Paid</p>
+                                                                <p className="text-sm font-black text-green-800 mt-0.5">{fmt(totalPaid)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl p-3 border" style={{ background: '#fef9c3', borderColor: '#fde68a' }}>
+                                                                <p className="text-[10px] font-bold text-amber-700 uppercase">⏰ Past Arrears</p>
+                                                                <p className="text-sm font-black text-amber-900 mt-0.5">{fmt(pastArrears)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl p-3 border" style={{ background: '#eff6ff', borderColor: '#bfdbfe' }}>
+                                                                <p className="text-[10px] font-bold text-blue-600 uppercase">📅 Current Month</p>
+                                                                <p className="text-sm font-black text-blue-800 mt-0.5">{fmt(currentDue)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl p-3 border" style={{ background: totalUnpaid > 0 ? '#fff1f2' : '#ecfdf5', borderColor: totalUnpaid > 0 ? '#fecdd3' : '#a7f3d0' }}>
+                                                                <p className="text-[10px] font-bold uppercase" style={{ color: totalUnpaid > 0 ? '#be123c' : '#059669' }}>🏦 Final Arrears</p>
+                                                                <p className="text-sm font-black mt-0.5" style={{ color: totalUnpaid > 0 ? '#9f1239' : '#047857' }}>{fmt(totalUnpaid)}</p>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Monthly Breakdown Table */}
+                                                        <div className="rounded-xl border border-gray-200 overflow-hidden">
+                                                            <table className="w-full" style={{ fontSize: 11 }}>
+                                                                <thead>
+                                                                    <tr style={{ background: '#eef2ff' }}>
+                                                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-indigo-700 uppercase">Month</th>
+                                                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-indigo-700 uppercase">Rent Due</th>
+                                                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-green-700 uppercase">Paid</th>
+                                                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-red-700 uppercase">Balance</th>
+                                                                        <th className="px-3 py-2 text-center text-[10px] font-bold text-gray-600 uppercase">Status</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {months.map((m: any, mi: number) => {
+                                                                        const isPaid = m.status === 'Paid';
+                                                                        const isCurrent = m.month === currentMonth;
+                                                                        const rowBg = isPaid ? '#f0fdf4' : isCurrent ? '#eff6ff' : m.balance > 0 ? '#fff8f8' : '#fff';
+                                                                        return (
+                                                                            <tr key={mi} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9' }}>
+                                                                                <td className="px-3 py-2 font-bold whitespace-nowrap">
+                                                                                    {new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                                                                    {m.isVacation && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">🏖️ 50%</span>}
+                                                                                    {isCurrent && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">NOW</span>}
+                                                                                </td>
+                                                                                <td className="px-3 py-2 text-right font-semibold">{fmt(m.rent)}</td>
+                                                                                <td className="px-3 py-2 text-right font-bold" style={{ color: m.paid > 0 ? '#059669' : '#94a3b8' }}>{fmt(m.paid)}</td>
+                                                                                <td className="px-3 py-2 text-right font-black" style={{ color: m.balance > 0 ? '#dc2626' : '#059669' }}>{m.balance > 0 ? fmt(m.balance) : '✓ Clear'}</td>
+                                                                                <td className="px-3 py-2 text-center">
+                                                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                                                                                        isPaid ? 'bg-green-50 text-green-700 border-green-200' :
+                                                                                        m.status === 'Partial' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                                                                        m.status === 'Unbilled' ? 'bg-gray-50 text-gray-500 border-gray-200' :
+                                                                                        'bg-red-50 text-red-700 border-red-200'
+                                                                                    }`}>{m.status}</span>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })()}
+                                    </Fragment>
                                 );
                             })}
                         </tbody>

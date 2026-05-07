@@ -32,6 +32,11 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "owner": "jimhawkins"
+    "owner": "jimhawkins",
+    "extra": {
+      "eas": {
+        "projectId": "dce11d02-c600-4311-b932-da8a7ad42138"
+      }
+    }
   }
 }

@@ -330,12 +330,13 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
     const currentMonth = new Date().toISOString().slice(0, 7);
 
     const { data: tenant, error: tenantErr } = await supabase
-        .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance').eq('tenant_id', tenantId).single();
+        .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance, is_on_vacation').eq('tenant_id', tenantId).single();
     if (tenantErr || !tenant) throw tenantErr || new Error('Tenant not found');
 
     const monthlyRent = Math.round((tenant.monthly_rent || 0) * 100) / 100;
     const rawMoveIn = tenant.move_in_date || tenant.created_at?.slice(0, 10);
     const earliestMonth = rawMoveIn ? rawMoveIn.slice(0, 7) : currentMonth;
+    const tenantOnVacation = tenant.is_on_vacation || false;
 
     const { data: allBills, error: billsErr } = await supabase
         .from('arms_billing').select('*').eq('tenant_id', tenantId)
@@ -363,21 +364,22 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
                 else currentMonthDue += balance;
             }
         } else {
-            if (monthlyRent > 0) {
+            const effectiveRent = getEffectiveRent(monthlyRent, curMonth, tenantOnVacation);
+            if (effectiveRent > 0) {
                 resultBills.push({
                     billing_id: null,
                     tenant_id: tenantId,
                     billing_month: curMonth,
                     billing_date: `${curMonth}-01`,
                     due_date: `${curMonth}-05`,
-                    rent_amount: monthlyRent,
+                    rent_amount: effectiveRent,
                     amount_paid: 0,
-                    balance: monthlyRent,
+                    balance: effectiveRent,
                     status: 'Unbilled',
                     _virtual: true,
                 });
-                if (curMonth < currentMonth) arrearsTotal += monthlyRent;
-                else currentMonthDue += monthlyRent;
+                if (curMonth < currentMonth) arrearsTotal += effectiveRent;
+                else currentMonthDue += effectiveRent;
             }
         }
         cursor.setMonth(cursor.getMonth() + 1);
@@ -452,15 +454,17 @@ export async function recordPayment(payment: {
     while (cursor2 <= endDate2) {
         const curM = cursor2.toISOString().slice(0, 7);
         if (!existingMonths.has(curM) && (tenant.monthly_rent || 0) > 0) {
+            const effectiveRent = getEffectiveRent(tenant.monthly_rent, curM, tenant.is_on_vacation || false);
             billsToCreate.push({
                 tenant_id: payment.tenant_id,
                 location_id: tenant.location_id,
                 unit_id: tenant.unit_id,
                 billing_month: curM, billing_date: `${curM}-01`, due_date: `${curM}-05`,
-                rent_amount: tenant.monthly_rent, amount_paid: 0,
-                balance: tenant.monthly_rent, status: 'Unpaid',
+                rent_amount: effectiveRent, amount_paid: 0,
+                balance: effectiveRent, status: 'Unpaid',
+                notes: (tenant.is_on_vacation && isVacationMonth(curM)) ? 'Vacation half-rent' : null,
             });
-            autoBalanceIncrease += tenant.monthly_rent;
+            autoBalanceIncrease += effectiveRent;
         }
         cursor2.setMonth(cursor2.getMonth() + 1);
     }
@@ -802,20 +806,32 @@ export async function calculateUnpaidRent(locationId?: number) {
         }
 
         const tenantBills = allBills.filter(b => b.tenant_id === tenant.tenant_id);
+        const tenantPayments = allPayments.filter(p => p.tenant_id === tenant.tenant_id);
+        const totalPaidAllTime = tenantPayments.reduce((s, p) => s + (p.amount || 0), 0);
 
         let totalUnpaid = 0;
         let totalPenalty = 0;
         const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
+        const allMonths: { month: string; rent: number; paid: number; balance: number; isVacation: boolean; status: string }[] = [];
 
         for (const month of expectedMonths) {
             const existingBill = tenantBills.find(b => b.billing_month === month);
+            const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
 
             if (existingBill) {
                 const billBalance = existingBill.balance || 0;
+                allMonths.push({
+                    month,
+                    rent: existingBill.rent_amount || monthlyRent,
+                    paid: existingBill.amount_paid || 0,
+                    balance: billBalance,
+                    isVacation: isVac,
+                    status: existingBill.status,
+                });
                 if (existingBill.status !== 'Paid' && billBalance > 0) {
                     const billMonthDate = new Date(month + '-05');
                     const isLate = now > billMonthDate;
-                    const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
+                    const penalty = isLate ? Math.round((existingBill.rent_amount || monthlyRent) * 0.02) : 0;
 
                     unpaidMonths.push({
                         month,
@@ -829,34 +845,44 @@ export async function calculateUnpaidRent(locationId?: number) {
                     totalPenalty += penalty;
                 }
             } else {
+                const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
                 const billMonthDate = new Date(month + '-05');
                 const isLate = now > billMonthDate;
-                const penalty = isLate ? Math.round(monthlyRent * 0.02) : 0;
+                const penalty = isLate ? Math.round(effectiveRent * 0.02) : 0;
 
+                allMonths.push({
+                    month,
+                    rent: effectiveRent,
+                    paid: 0,
+                    balance: effectiveRent,
+                    isVacation: isVac,
+                    status: 'Unbilled',
+                });
                 unpaidMonths.push({
                     month,
-                    rent: monthlyRent,
+                    rent: effectiveRent,
                     paid: 0,
-                    balance: monthlyRent,
+                    balance: effectiveRent,
                     penalty,
                     status: 'Unpaid',
                 });
-                totalUnpaid += monthlyRent;
+                totalUnpaid += effectiveRent;
                 totalPenalty += penalty;
             }
         }
 
-        if (unpaidMonths.length === 0) return null;
-
+        // Return data even for tenants with no arrears (for full breakdown view)
         return {
             ...tenant,
+            allMonths,
             unpaidMonths,
             totalUnpaid,
             totalPenalty,
             totalOwed: totalUnpaid + totalPenalty,
             monthsOwed: unpaidMonths.length,
+            totalPaidAllTime,
         };
-    }).filter(Boolean) as any[];
+    }).filter(r => r !== null) as any[];
 
     return results;
 }
