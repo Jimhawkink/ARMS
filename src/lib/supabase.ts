@@ -219,16 +219,18 @@ export async function addTenant(tenant: {
     const monthlyRent = tenant.monthly_rent || 0;
 
     if (rawMoveIn && monthlyRent > 0) {
-        const currentMonth = new Date().toISOString().slice(0, 7);
+        const nowLocal = new Date();
+        const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
         const earliestMonth = rawMoveIn.slice(0, 7);
         const billsToCreate: any[] = [];
         let totalBalance = 0;
-        let cursor = new Date(earliestMonth + '-01');
-        const endDate = new Date(currentMonth + '-01');
 
-        while (cursor <= endDate) {
-            const curM = cursor.toISOString().slice(0, 7);
-            // Apply vacation half-rent dynamically — base rent is always stored full
+        // Integer month arithmetic — avoids UTC timezone shift from new Date('YYYY-MM-DD')
+        let [sy, sm] = earliestMonth.split('-').map(Number);
+        const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+
+        while (sy < ey || (sy === ey && sm <= em)) {
+            const curM = `${sy}-${String(sm).padStart(2, '0')}`;
             const effectiveRent = getEffectiveRent(monthlyRent, curM, isOnVacation);
             billsToCreate.push({
                 tenant_id: data.tenant_id,
@@ -244,7 +246,8 @@ export async function addTenant(tenant: {
                 notes: isOnVacation && isVacationMonth(curM) ? 'Vacation half-rent (50%)' : null,
             });
             totalBalance += effectiveRent;
-            cursor.setMonth(cursor.getMonth() + 1);
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
         }
 
         if (billsToCreate.length > 0) {
@@ -338,15 +341,15 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
             const newBillsToInsert: any[] = [];
             let balanceIncrease = 0;
 
-            let cursor = new Date(earliestMonth + '-01');
-            const endDate = new Date(month + '-01');
-
             const tenantOnVacation = tenant.is_on_vacation || false;
 
-            while (cursor <= endDate) {
-                const curMonth = cursor.toISOString().slice(0, 7);
+            // Integer month arithmetic — avoids UTC timezone shift from new Date('YYYY-MM-DD')
+            let [sy, sm] = earliestMonth.split('-').map(Number);
+            const [ey, em] = month.split('-').map(Number);
+
+            while (sy < ey || (sy === ey && sm <= em)) {
+                const curMonth = `${sy}-${String(sm).padStart(2, '0')}`;
                 if (!existingMonths.has(curMonth)) {
-                    // Apply vacation half-rent if tenant is on vacation and month is May-Aug
                     const effectiveRent = getEffectiveRent(monthlyRent, curMonth, tenantOnVacation);
                     newBillsToInsert.push({
                         tenant_id: tenant.tenant_id,
@@ -364,7 +367,8 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
                     balanceIncrease += effectiveRent;
                     if (curMonth < month) catchUpMonths++;
                 }
-                cursor.setMonth(cursor.getMonth() + 1);
+                sm++;
+                if (sm > 12) { sm = 1; sy++; }
             }
 
             if (newBillsToInsert.length === 0) { skipped++; continue; }
@@ -392,7 +396,9 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
 
 // ==================== ACCUMULATED ARREARS FOR TENANT ====================
 export async function getAccumulatedArrearsForTenant(tenantId: number) {
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    // Use local date parts — never toISOString() for month arithmetic (UTC shift bug)
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
     const { data: tenant, error: tenantErr } = await supabase
         .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance, is_on_vacation').eq('tenant_id', tenantId).single();
@@ -414,11 +420,12 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
     let arrearsTotal = 0;
     let currentMonthDue = 0;
 
-    let cursor = new Date(earliestMonth + '-01');
-    const endDate = new Date(currentMonth + '-01');
+    // Iterate months using integer arithmetic — no Date timezone issues
+    let [sy, sm] = earliestMonth.split('-').map(Number);
+    const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
 
-    while (cursor <= endDate) {
-        const curMonth = cursor.toISOString().slice(0, 7);
+    while (sy < ey || (sy === ey && sm <= em)) {
+        const curMonth = `${sy}-${String(sm).padStart(2, '0')}`;
         const bill = billsByMonth.get(curMonth);
 
         if (bill) {
@@ -447,7 +454,9 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
                 else currentMonthDue += effectiveRent;
             }
         }
-        cursor.setMonth(cursor.getMonth() + 1);
+
+        sm++;
+        if (sm > 12) { sm = 1; sy++; }
     }
 
     const totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
@@ -503,7 +512,8 @@ export async function recordPayment(payment: {
         .from('arms_tenants').select('*').eq('tenant_id', payment.tenant_id).single();
     if (tenantErr || !tenant) throw new Error('Tenant not found');
 
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
     const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
     const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : currentMonth;
@@ -514,10 +524,12 @@ export async function recordPayment(payment: {
 
     const billsToCreate: any[] = [];
     let autoBalanceIncrease = 0;
-    let cursor2 = new Date(earliestMonth + '-01');
-    const endDate2 = new Date(currentMonth + '-01');
-    while (cursor2 <= endDate2) {
-        const curM = cursor2.toISOString().slice(0, 7);
+
+    // Integer month arithmetic — avoids UTC timezone shift
+    let [sy2, sm2] = earliestMonth.split('-').map(Number);
+    const [ey2, em2] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+    while (sy2 < ey2 || (sy2 === ey2 && sm2 <= em2)) {
+        const curM = `${sy2}-${String(sm2).padStart(2, '0')}`;
         if (!existingMonths.has(curM) && (tenant.monthly_rent || 0) > 0) {
             const effectiveRent = getEffectiveRent(tenant.monthly_rent, curM, tenant.is_on_vacation || false);
             billsToCreate.push({
@@ -531,7 +543,8 @@ export async function recordPayment(payment: {
             });
             autoBalanceIncrease += effectiveRent;
         }
-        cursor2.setMonth(cursor2.getMonth() + 1);
+        sm2++;
+        if (sm2 > 12) { sm2 = 1; sy2++; }
     }
     if (billsToCreate.length > 0) {
         await supabase.from('arms_billing').insert(billsToCreate);
@@ -851,23 +864,27 @@ export async function calculateUnpaidRent(locationId?: number) {
     const allBills = billRes.data || [];
     const allPayments = payRes.data || [];
 
-    const now = new Date();
-    const currentMonth = now.toISOString().slice(0, 7);
+    // Use local date parts to avoid UTC timezone shifting (e.g. "2026-03-01" UTC = Feb 28 in EAT)
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
     const results = activeTenants.map(tenant => {
         const moveIn = tenant.move_in_date || tenant.billing_start_month || tenant.created_at?.slice(0, 10);
         if (!moveIn) return null;
 
-        const moveInDate = new Date(moveIn);
+        // Parse month directly from the string — never use new Date(dateStr) for month arithmetic
+        // because "2026-03-01" parses as UTC midnight which shifts to Feb in UTC+3 timezones
+        const moveInMonth = moveIn.slice(0, 7); // "2026-03"
         const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
 
         const expectedMonths: string[] = [];
-        const startDate = new Date(moveInDate.getFullYear(), moveInDate.getMonth(), 1);
-        const endDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        let cursor = new Date(startDate);
-        while (cursor <= endDate) {
-            expectedMonths.push(cursor.toISOString().slice(0, 7));
-            cursor.setMonth(cursor.getMonth() + 1);
+        // Build month list by incrementing year/month integers — no Date timezone issues
+        let [sy, sm] = moveInMonth.split('-').map(Number);
+        const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+        while (sy < ey || (sy === ey && sm <= em)) {
+            expectedMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
         }
 
         const tenantBills = allBills.filter(b => b.tenant_id === tenant.tenant_id);
