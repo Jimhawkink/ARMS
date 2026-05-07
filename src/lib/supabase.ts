@@ -359,7 +359,7 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
 // ==================== PAYMENTS ====================
 export async function getPayments(filters?: { locationId?: number; tenantId?: number; startDate?: string; endDate?: string; method?: string }) {
     let query = supabase.from('arms_payments')
-        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, id_number, arms_units(unit_name)), arms_locations(location_name)')
+        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, id_number, arms_units(unit_name)), arms_locations(location_name), arms_billing(billing_month, balance, rent_amount, status)')
         .order('payment_date', { ascending: false });
     if (filters?.locationId) query = query.eq('location_id', filters.locationId);
     if (filters?.tenantId) query = query.eq('tenant_id', filters.tenantId);

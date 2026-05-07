@@ -12,7 +12,7 @@ import {
     FiAlertTriangle, FiBarChart2, FiSettings, FiLogOut, FiChevronLeft,
     FiChevronRight, FiChevronDown, FiTrendingDown, FiCreditCard,
     FiPieChart, FiMessageSquare, FiDroplet, FiShield, FiClipboard,
-    FiUserCheck, FiSend, FiZap, FiKey, FiLock,
+    FiUserCheck, FiSend, FiZap, FiKey, FiLock, FiSmartphone,
 } from 'react-icons/fi';
 
 // ── Menu definition ───────────────────────────────────────────
@@ -35,6 +35,7 @@ const menuGroups = [
             { href: '/dashboard/tenants', label: 'Tenants', icon: FiUsers, requiredPerm: 'can_manage_tenants' },
             { href: '/dashboard/billing', label: 'Billing', icon: FiFileText, requiredPerm: 'can_manage_billing' },
             { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign, requiredPerm: 'can_record_payments' },
+            { href: '/dashboard/mpesa-transactions', label: 'M-Pesa Txns', icon: FiSmartphone, requiredPerm: 'can_record_payments' },
             { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle, requiredPerm: 'can_view_reports' },
             { href: '/dashboard/checklists', label: 'Checklists', icon: FiClipboard, requiredPerm: 'can_manage_checklists' },
         ],

@@ -346,7 +346,39 @@ export default function PaymentsPage() {
                                         <td className="px-3 py-3 font-semibold text-xs text-gray-900" style={{background:COL.tenant.bg+'80'}}>{p.arms_tenants?.tenant_name||'-'}</td>
                                         <td className="px-3 py-3 text-[11px]" style={{background:COL.location.bg+'80',color:COL.location.text}}>{p.arms_locations?.location_name||'-'}</td>
                                         <td className="px-3 py-3" style={{background:COL.month.bg+'80'}}>
-                                            <span className="text-[11px] font-bold" style={{color:COL.month.text}}>{payMonth!=='-' ? new Date(payMonth+'-01').toLocaleDateString('en-US',{month:'short',year:'numeric'}) : '-'}</span>
+                                            {(() => {
+                                                // Priority: linked billing month > notes tag > payment date month
+                                                const billingMonth = p.arms_billing?.billing_month;
+                                                const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
+                                                const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0,7);
+                                                const currentMo = new Date().toISOString().slice(0,7);
+                                                const isArrear = payMonth && payMonth < currentMo;
+                                                const billingBal = p.arms_billing?.balance ?? 0;
+                                                const billingStatus = p.arms_billing?.status;
+                                                
+                                                if (!payMonth || payMonth === '-') return <span className="text-[10px] text-gray-300">—</span>;
+                                                
+                                                const monthLabel = new Date(payMonth+'-01').toLocaleDateString('en-US',{month:'short',year:'numeric'});
+                                                
+                                                if (isArrear) {
+                                                    return (
+                                                        <div>
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{background:'#fee2e2',color:'#b91c1c'}}>
+                                                                ⏰ {monthLabel}
+                                                            </span>
+                                                            {billingBal > 0 && <div className="text-[9px] text-red-500 mt-0.5 font-semibold">Bal: {fmt(billingBal)}</div>}
+                                                        </div>
+                                                    );
+                                                }
+                                                return (
+                                                    <div>
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{background:'#dbeafe',color:'#1d4ed8'}}>
+                                                            🏠 {monthLabel}
+                                                        </span>
+                                                        {billingStatus === 'Paid' && <div className="text-[9px] text-green-600 mt-0.5 font-semibold">✓ Cleared</div>}
+                                                    </div>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-3 py-3" style={{background:COL.totalPaid.bg+'80'}}><span className="text-xs font-extrabold" style={{color:COL.totalPaid.text}}>{fmt(p.amount)}</span></td>
                                         <td className="px-3 py-3" style={{background:COL.arrearsPaid.bg+'80'}}>
