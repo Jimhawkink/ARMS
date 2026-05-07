@@ -600,12 +600,12 @@ export default function TenantsPage() {
                                             <MonthsBehindBadge moveInDate={t.move_in_date} />
                                         </td>
 
-                                        {/* Monthly Rent (vacation-adjusted) */}
+                                        {/* Monthly Rent (base, with vacation indicator) */}
                                         <td className="px-3 py-3 whitespace-nowrap font-bold" style={{ background: C.rent.bg + '60', color: C.rent.text }}>
                                             <div>
-                                                {fmt(t.is_on_vacation && isVacationMonth(currentMonth) ? t.monthly_rent * 0.5 : t.monthly_rent)}
-                                                {t.is_on_vacation && isVacationMonth(currentMonth) && (
-                                                    <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">🏖️ 50%</span>
+                                                {fmt(t.monthly_rent)}
+                                                {t.is_on_vacation && (
+                                                    <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">🏖️ Vac</span>
                                                 )}
                                             </div>
                                         </td>

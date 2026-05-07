@@ -123,6 +123,57 @@ export function getEffectiveRent(monthlyRent: number, month: string, isOnVacatio
     return monthlyRent;
 }
 
+// ==================== REPAIR VACATION BILLS ====================
+export async function repairVacationBills(): Promise<{ fixed: number; errors: string[] }> {
+    const { data: vacTenants } = await supabase
+        .from('arms_tenants').select('tenant_id, monthly_rent')
+        .eq('is_on_vacation', true).eq('status', 'Active');
+    if (!vacTenants?.length) return { fixed: 0, errors: [] };
+
+    let fixed = 0;
+    const errors: string[] = [];
+
+    for (const tenant of vacTenants) {
+        const halfRent = Math.round((tenant.monthly_rent || 0) * 0.5 * 100) / 100;
+        const fullRent = tenant.monthly_rent || 0;
+
+        // Get all bills for this tenant in vacation months that still have full rent
+        const { data: bills } = await supabase
+            .from('arms_billing').select('*')
+            .eq('tenant_id', tenant.tenant_id);
+
+        for (const bill of (bills || [])) {
+            const mm = (bill.billing_month || '').slice(5, 7);
+            if (!['05', '06', '07', '08'].includes(mm)) continue;
+            // Only fix if rent_amount equals full rent (i.e., wasn't already corrected)
+            if (Math.abs((bill.rent_amount || 0) - fullRent) < 1) {
+                const newBalance = Math.max(0, halfRent - (bill.amount_paid || 0));
+                const newStatus = newBalance <= 0 ? 'Paid' : (bill.amount_paid || 0) > 0 ? 'Partial' : 'Unpaid';
+                const { error } = await supabase.from('arms_billing').update({
+                    rent_amount: halfRent,
+                    balance: newBalance,
+                    status: newStatus,
+                    notes: 'Vacation half-rent (corrected)',
+                }).eq('billing_id', bill.billing_id);
+                if (error) errors.push(`Bill ${bill.billing_id}: ${error.message}`);
+                else fixed++;
+            }
+        }
+
+        // Recalculate tenant balance from all unpaid bills
+        const { data: allBills } = await supabase
+            .from('arms_billing').select('balance')
+            .eq('tenant_id', tenant.tenant_id).gt('balance', 0);
+        const newTotal = (allBills || []).reduce((s, b) => s + (b.balance || 0), 0);
+        await supabase.from('arms_tenants').update({
+            balance: Math.round(newTotal * 100) / 100,
+            updated_at: new Date().toISOString(),
+        }).eq('tenant_id', tenant.tenant_id);
+    }
+
+    return { fixed, errors };
+}
+
 // ==================== TENANTS ====================
 export async function getTenants(locationId?: number) {
     let query = supabase.from('arms_tenants').select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)').order('tenant_name');

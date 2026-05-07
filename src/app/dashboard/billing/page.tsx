@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getBilling, generateMonthlyBills, getLocations, getTenants, calculateUnpaidRent, isVacationMonth } from '@/lib/supabase';
+import { getBilling, generateMonthlyBills, getLocations, getTenants, calculateUnpaidRent, isVacationMonth, repairVacationBills } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiFileText, FiRefreshCw, FiDollarSign, FiCheckCircle, FiAlertTriangle, FiPhone, FiCalendar, FiZap, FiInfo } from 'react-icons/fi';
 
@@ -44,6 +44,7 @@ export default function BillingPage() {
     const [genResult, setGenResult] = useState<{ generated: number; skipped: number; catchUpMonths: number; errors: string[] } | null>(null);
     const [showCatchupInfo, setShowCatchupInfo] = useState(false);
     const [unpaidData, setUnpaidData] = useState<any[]>([]);
+    const [repairing, setRepairing] = useState(false);
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
@@ -132,6 +133,21 @@ export default function BillingPage() {
                         className="btn-success flex items-center gap-2 shadow-md">
                         {generating ? <div className="spinner" style={{ width: 16, height: 16 }} /> : <FiZap size={16} />}
                         Generate Bills for {monthFilter}
+                    </button>
+                    <button onClick={async () => {
+                        setRepairing(true);
+                        try {
+                            const r = await repairVacationBills();
+                            if (r.fixed > 0) toast.success(`✅ Fixed ${r.fixed} vacation bill(s)`);
+                            else toast('No bills needed fixing', { icon: 'ℹ️' });
+                            if (r.errors.length > 0) r.errors.forEach(e => toast.error(e));
+                            loadData(locationId);
+                        } catch (err: any) { toast.error(err.message); }
+                        setRepairing(false);
+                    }} disabled={repairing}
+                        className="btn-outline flex items-center gap-2 text-orange-700 border-orange-300 hover:bg-orange-50">
+                        {repairing ? <div className="spinner" style={{ width: 16, height: 16 }} /> : '🏖️'}
+                        Fix Vacation Bills
                     </button>
                 </div>
             </div>
@@ -270,8 +286,8 @@ export default function BillingPage() {
                                                 {t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}
                                             </td>
                                             <td className="px-3 py-3 font-bold text-green-700">
-                                                {fmt(effRent)}
-                                                {isVac && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">50%</span>}
+                                                {fmt(t.monthly_rent || 0)}
+                                                {t.is_on_vacation && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">🏖️ Vac</span>}
                                             </td>
                                             <td className="px-3 py-3 font-bold text-green-600">{fmt(t.totalPaidAllTime || 0)}</td>
                                             <td className="px-3 py-3 font-bold" style={{ color: pastArr > 0 ? '#dc2626' : '#059669' }}>
