@@ -331,10 +331,11 @@ export default function PaymentsPage() {
                                 const payMonth = monthMatch ? monthMatch[1] : '-';
                                 const payTime = timeMatch ? timeMatch[1] : new Date(p.payment_date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
                                 const arrearsPaid = p.arrears_paid||0;
-                                const currentRentPaid = p.current_rent_paid||(p.amount-arrearsPaid);
+                                // Only show currentRentPaid from the tagged value — don't fallback to amount-arrears
+                                const currentRentPaid = p.current_rent_paid||0;
                                 const tenantBalance = p.arms_tenants?.balance||0;
-                                const monthlyRent = p.arms_tenants?.monthly_rent||0;
-                                const arrearsRemaining = Math.max(0, tenantBalance - monthlyRent);
+                                // Arrears Remaining = tenant's current total outstanding balance after this payment
+                                const arrearsRemaining = Math.max(0, tenantBalance);
                                 return (
                                     <tr key={p.payment_id} className="transition-colors" style={{borderBottom:'1px solid #f1f5f9'}}
                                         onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background='#fafbff'}
@@ -351,14 +352,16 @@ export default function PaymentsPage() {
                                                 const billingMonth = p.arms_billing?.billing_month;
                                                 const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
                                                 const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0,7);
-                                                const currentMo = new Date().toISOString().slice(0,7);
+                                                // Use local date for currentMo — avoid UTC timezone shift
+                                                const nowL = new Date();
+                                                const currentMo = `${nowL.getFullYear()}-${String(nowL.getMonth()+1).padStart(2,'0')}`;
                                                 const isArrear = payMonth && payMonth < currentMo;
                                                 const billingBal = p.arms_billing?.balance ?? 0;
                                                 const billingStatus = p.arms_billing?.status;
                                                 
                                                 if (!payMonth || payMonth === '-') return <span className="text-[10px] text-gray-300">—</span>;
                                                 
-                                                const monthLabel = new Date(payMonth+'-01').toLocaleDateString('en-US',{month:'short',year:'numeric'});
+                                                const monthLabel = new Date(payMonth+'-02').toLocaleDateString('en-US',{month:'short',year:'numeric'});
                                                 
                                                 if (isArrear) {
                                                     return (
