@@ -58,6 +58,7 @@ const menuGroups = [
         items: [
             { href: '/dashboard/expenses', label: 'Expense Master', icon: FiTrendingDown, requiredPerm: 'can_manage_expenses' },
             { href: '/dashboard/reports', label: 'Reports & Analytics', icon: FiPieChart, requiredPerm: 'can_view_reports' },
+            { href: '/dashboard/analytics', label: 'Super Analytics', icon: FiBarChart2, requiredPerm: 'can_view_reports' },
         ],
     },
     {
