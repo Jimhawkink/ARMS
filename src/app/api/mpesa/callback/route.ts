@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { validateMpesaSource } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
     try {
+        // ═══ SECURITY: Validate request source ═══
+        const { valid, ip } = validateMpesaSource(request);
+        if (!valid) {
+            return NextResponse.json({ ResultCode: 1, ResultDesc: 'Unauthorized' }, { status: 403 });
+        }
+
         const body = await request.json();
-        console.log('📱 M-Pesa C2B Callback received:', JSON.stringify(body));
+        console.log(`📱 C2B callback from ${ip}, TransID: ${body?.TransID || 'unknown'}`);
 
         // Safaricom C2B callback format
         const {

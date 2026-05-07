@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { validateMpesaSource } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,8 +8,14 @@ export const dynamic = 'force-dynamic';
 // This is DIFFERENT from the C2B callback — it handles STK Push results
 export async function POST(request: NextRequest) {
     try {
+        // ═══ SECURITY: Validate request source ═══
+        const { valid, ip } = validateMpesaSource(request);
+        if (!valid) {
+            return NextResponse.json({ ResultCode: 1, ResultDesc: 'Unauthorized' }, { status: 403 });
+        }
+
         const body = await request.json();
-        console.log('📱 STK Push callback received:', JSON.stringify(body));
+        console.log(`📱 STK callback from ${ip}, CheckoutRequestID: ${body?.Body?.stkCallback?.CheckoutRequestID || 'unknown'}`);
 
         const { Body } = body;
 

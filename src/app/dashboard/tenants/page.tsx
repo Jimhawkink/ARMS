@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills } from '@/lib/supabase';
+import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
 
@@ -254,9 +255,10 @@ export default function TenantsPage() {
             if (!pinValue) {
                 delete payload.password_hash;
             } else {
-                payload.password_hash = pinValue;
-                // Also save as mobile_pin for the ARMS Tenant Mobile App login
-                payload.mobile_pin = pinValue;
+                // SECURITY: Hash PIN with bcrypt before storing
+                const hashedPin = await hashPassword(pinValue);
+                payload.password_hash = hashedPin;
+                payload.mobile_pin = hashedPin;
             }
 
             if (editItem) {
