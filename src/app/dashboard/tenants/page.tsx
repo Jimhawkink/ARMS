@@ -254,11 +254,13 @@ export default function TenantsPage() {
 
             if (!pinValue) {
                 delete payload.password_hash;
+                delete payload.mobile_pin;
             } else {
-                // SECURITY: Hash PIN with bcrypt before storing
+                // SECURITY: Hash PIN with bcrypt before storing in password_hash
                 const hashedPin = await hashPassword(pinValue);
                 payload.password_hash = hashedPin;
-                payload.mobile_pin = hashedPin;
+                // Store plain PIN (max 6 digits) in mobile_pin for reference
+                payload.mobile_pin = pinValue.slice(0, 6);
             }
 
             if (editItem) {
