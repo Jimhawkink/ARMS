@@ -121,6 +121,20 @@ export async function POST(request: NextRequest) {
             // Record payment if we found a tenant
             if (tenant && tenantId && mpesaCode) {
                 try {
+                    // ═══ DUPLICATE CHECK: Prevent double recording ═══
+                    // Both STK callback and C2B callback can fire for the same transaction.
+                    // Check if a payment with this receipt already exists.
+                    const { data: existingPayment } = await supabase
+                        .from('arms_payments')
+                        .select('payment_id')
+                        .eq('mpesa_receipt', mpesaCode)
+                        .maybeSingle();
+
+                    if (existingPayment) {
+                        console.log(`⚠️ Payment with receipt ${mpesaCode} already exists (ID: ${existingPayment.payment_id}). Skipping duplicate.`);
+                        return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (duplicate skipped)' });
+                    }
+
                     // Get unpaid bills (FIFO - oldest first)
                     const { data: unpaidBills } = await supabase
                         .from('arms_billing')

@@ -30,6 +30,26 @@ export async function POST(request: NextRequest) {
 
             const amount = txn.trans_amount || 0;
 
+            // ═══ DUPLICATE CHECK: Skip if receipt already recorded ═══
+            if (txn.trans_id) {
+                const { data: existingPayment } = await supabase
+                    .from('arms_payments')
+                    .select('payment_id')
+                    .eq('mpesa_receipt', txn.trans_id)
+                    .maybeSingle();
+
+                if (existingPayment) {
+                    // Mark as matched but don't create duplicate payment
+                    await supabase.from('arms_mpesa_transactions').update({
+                        matched: true, tenant_id: tenant.tenant_id,
+                        payment_id: existingPayment.payment_id,
+                        matched_at: new Date().toISOString()
+                    }).eq('id', txn.id);
+                    matchedCount++;
+                    continue;
+                }
+            }
+
             // Get unpaid bills FIFO
             const { data: bills } = await supabase
                 .from('arms_billing')

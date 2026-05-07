@@ -45,6 +45,28 @@ export async function POST(request: NextRequest) {
         // Auto-match: search for tenant by phone number
         const phone = MSISDN?.replace(/^254/, '0');
         if (phone) {
+            // ═══ DUPLICATE CHECK: Prevent double recording ═══
+            // STK Push callback may have already recorded this payment.
+            // Check if a payment with this TransID/receipt already exists.
+            if (TransID) {
+                const { data: existingPayment } = await supabase
+                    .from('arms_payments')
+                    .select('payment_id')
+                    .eq('mpesa_receipt', TransID)
+                    .maybeSingle();
+
+                if (existingPayment) {
+                    console.log(`⚠️ C2B: Payment with receipt ${TransID} already recorded by STK callback (ID: ${existingPayment.payment_id}). Skipping duplicate.`);
+                    // Still mark the mpesa_transaction as matched
+                    await supabase.from('arms_mpesa_transactions').update({
+                        matched: true,
+                        payment_id: existingPayment.payment_id,
+                        matched_at: new Date().toISOString()
+                    }).eq('id', txn.id);
+                    return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (duplicate skipped)' });
+                }
+            }
+
             const { data: tenant } = await supabase
                 .from('arms_tenants')
                 .select('*')
