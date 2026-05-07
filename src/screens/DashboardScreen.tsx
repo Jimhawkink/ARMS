@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, BillingRecord, formatKES, formatMonth,
     getTenantBilling, getUnpaidBilling, refreshTenantBalance,
-    isVacationMonth, getEffectiveRent, getVacationRent,
+    isVacationMonth, getEffectiveRent, getVacationRent, getCurrentMonth,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
 
@@ -95,7 +95,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const paidCount = allBills.filter(b => b.status === 'Paid').length;
     const displayBills = showAll ? allBills : unpaidBills;
 
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentMonth = getCurrentMonth(); // local date — avoids UTC timezone shift
     const currentBill = unpaidBills.find(b => b.billing_month === currentMonth);
     const arrearsOnly = totalArrears - (currentBill?.balance || 0);
 

@@ -422,7 +422,7 @@ export async function recordTenantPayment(params: {
     billingMonth: string;
 }): Promise<{ success: boolean; error?: string }> {
     try {
-        const currentMonth = new Date().toISOString().slice(0, 7);
+        const currentMonth = getCurrentMonth();
         const paymentAmount = Math.round(params.amount * 100) / 100;
 
         // 0. Duplicate guard — check if callback already recorded this payment
@@ -544,11 +544,19 @@ export async function recordTenantPayment(params: {
 // VACATION MONTHS (Kenyan University: May-August)
 // ============================================================
 
-const VACATION_MONTHS = [5, 6, 7, 8]; // May, Jun, Jul, Aug
+const VACATION_MONTHS = [5, 6, 7, 8]; // May, Jun, Jul, Aug (1-indexed)
 
+// Use local month — never toISOString() which shifts to UTC
 export function isVacationMonth(date?: Date): boolean {
-    const month = (date || new Date()).getMonth() + 1; // 1-indexed
+    const d = date || new Date();
+    const month = d.getMonth() + 1; // 1-indexed local month
     return VACATION_MONTHS.includes(month);
+}
+
+export function isVacationMonthStr(yearMonth: string): boolean {
+    // yearMonth = "YYYY-MM"
+    const mm = parseInt(yearMonth.slice(5, 7), 10);
+    return VACATION_MONTHS.includes(mm);
 }
 
 export function getVacationRent(monthlyRent: number): number {
@@ -560,6 +568,30 @@ export function getEffectiveRent(session: TenantSession, date?: Date): number {
         return getVacationRent(session.monthly_rent);
     }
     return session.monthly_rent;
+}
+
+export function getEffectiveRentForMonth(monthlyRent: number, yearMonth: string, isOnVacation: boolean): number {
+    if (isOnVacation && isVacationMonthStr(yearMonth)) {
+        return Math.round(monthlyRent * 0.5);
+    }
+    return monthlyRent;
+}
+
+// Safe local current month — avoids UTC timezone shift
+export function getCurrentMonth(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Safe month label from "YYYY-MM" — use day 2 to avoid UTC midnight shift
+export function formatMonth(yearMonth: string): string {
+    if (!yearMonth) return '';
+    try {
+        const d = new Date(yearMonth + '-02'); // day 2 avoids UTC midnight → prev month
+        return d.toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
+    } catch {
+        return yearMonth;
+    }
 }
 
 // ============================================================
@@ -575,7 +607,7 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
             .single();
         if (!tenant || !tenant.monthly_rent) return;
 
-        const currentMonth = new Date().toISOString().slice(0, 7);
+        const currentMonth = getCurrentMonth();
         const moveIn = tenant.move_in_date;
         if (!moveIn) return;
 
@@ -587,15 +619,16 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
         const existingSet = new Set((existing || []).map((b: any) => b.billing_month));
 
         const toInsert: any[] = [];
-        let cursor = new Date(earliestMonth + '-01');
-        const end = new Date(currentMonth + '-01');
-        while (cursor <= end) {
-            const m = cursor.toISOString().slice(0, 7);
+
+        // Integer month arithmetic — avoids UTC timezone shift from new Date('YYYY-MM-DD')
+        let [sy, sm] = earliestMonth.split('-').map(Number);
+        const [ey, em] = currentMonth.split('-').map(Number);
+
+        while (sy < ey || (sy === ey && sm <= em)) {
+            const m = `${sy}-${String(sm).padStart(2, '0')}`;
             if (!existingSet.has(m)) {
-                // Apply vacation half-rent for May-Aug if tenant is on vacation
-                const monthNum = cursor.getMonth() + 1;
-                const isVac = tenant.is_on_vacation && VACATION_MONTHS.includes(monthNum);
-                const rentForMonth = isVac ? Math.round(tenant.monthly_rent * 0.5) : tenant.monthly_rent;
+                const rentForMonth = getEffectiveRentForMonth(tenant.monthly_rent, m, tenant.is_on_vacation || false);
+                const isVac = (tenant.is_on_vacation || false) && isVacationMonthStr(m);
                 toInsert.push({
                     tenant_id: tenantId,
                     location_id: tenant.location_id,
@@ -607,11 +640,13 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
                     amount_paid: 0,
                     balance: rentForMonth,
                     status: 'Unpaid',
-                    notes: isVac ? 'Vacation half-rent' : null,
+                    notes: isVac ? 'Vacation half-rent (50%)' : null,
                 });
             }
-            cursor.setMonth(cursor.getMonth() + 1);
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
         }
+
         if (toInsert.length > 0) {
             await supabase.from('arms_billing').insert(toInsert);
         }
@@ -659,16 +694,6 @@ export function maskPhone(phone: string): string {
 
 export function formatKES(amount: number): string {
     return `KES ${(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
-export function formatMonth(yearMonth: string): string {
-    if (!yearMonth) return '';
-    try {
-        const d = new Date(yearMonth + '-01');
-        return d.toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
-    } catch {
-        return yearMonth;
-    }
 }
 
 export function formatDateTime(iso: string): string {

@@ -8,7 +8,7 @@ import {
     TenantSession, formatKES, maskPhone, normalizePhone,
     initiateSTKPush, pollSTKResult, recordTenantPayment,
     refreshTenantBalance, getUnpaidBilling,
-    isVacationMonth, getEffectiveRent, getVacationRent,
+    isVacationMonth, getEffectiveRent, getVacationRent, getCurrentMonth,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
 
@@ -113,7 +113,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         payerPhone: phone,
                         payerName: session.tenant_name,
                         checkoutRequestId,
-                        billingMonth: new Date().toISOString().slice(0, 7),
+                        billingMonth: getCurrentMonth(), // local date — avoids UTC timezone shift
                     });
 
                     if (result.success) {
