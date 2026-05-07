@@ -8,6 +8,7 @@ import {
     TenantSession, formatKES, maskPhone, normalizePhone,
     initiateSTKPush, pollSTKResult, recordTenantPayment,
     refreshTenantBalance, getUnpaidBilling,
+    isVacationMonth, getEffectiveRent, getVacationRent,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
 
@@ -110,6 +111,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         amount: finalAmt,
                         mpesaReceipt,
                         payerPhone: phone,
+                        payerName: session.tenant_name,
                         checkoutRequestId,
                         billingMonth: new Date().toISOString().slice(0, 7),
                     });
@@ -169,6 +171,9 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <Text style={[s.balValue, { color: balance > 0 ? C.danger : C.accent }]}>
                             {formatKES(balance)}
                         </Text>
+                        {session.is_on_vacation && isVacationMonth() && (
+                            <Text style={s.vacationTag}>🏖️ Vacation Mode • Half-rent: {formatKES(getVacationRent(session.monthly_rent))}</Text>
+                        )}
                     </View>
 
                     <TouchableOpacity onPress={() => handleSelectMode('self')} activeOpacity={0.85}>
@@ -220,6 +225,9 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <View style={s.balanceCard}>
                             <Text style={s.balLabel}>Balance Due</Text>
                             <Text style={[s.balValue, { color: C.danger }]}>{formatKES(balance)}</Text>
+                            {session.is_on_vacation && isVacationMonth() && (
+                                <Text style={s.vacationTag}>🏖️ Vacation rent: {formatKES(getEffectiveRent(session))} (50% off)</Text>
+                            )}
                         </View>
 
                         {mode === 'payForMe' && (
@@ -401,6 +409,7 @@ const s = StyleSheet.create({
     balanceCard: { backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: C.border, alignItems: 'center' },
     balLabel: { fontSize: 11, color: C.sub, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
     balValue: { fontSize: 28, fontWeight: '900' },
+    vacationTag: { fontSize: 11, color: '#fdba74', fontWeight: '700', marginTop: 6, textAlign: 'center' },
     modeCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18, borderRadius: 18, marginBottom: 12, overflow: 'hidden' },
     modeEmoji: { fontSize: 28 },
     modeTitle: { fontSize: 15, fontWeight: '800', color: '#fff' },

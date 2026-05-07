@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, BillingRecord, formatKES, formatMonth,
     getTenantBilling, getUnpaidBilling, refreshTenantBalance,
+    isVacationMonth, getEffectiveRent, getVacationRent,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
 
@@ -155,13 +156,19 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                             </Text>
                         </View>
                     </View>
+                    {session.is_on_vacation && isVacationMonth() && (
+                        <View style={styles.vacationChip}>
+                            <Text style={styles.vacationChipText}>🏖️ Vacation Mode • 50% rent (May-Aug)</Text>
+                        </View>
+                    )}
                 </LinearGradient>
 
                 {/* ── KPI Cards ── */}
                 <View style={styles.kpiGrid}>
                     <KPICard
-                        emoji="💰" label="Monthly Rent"
-                        value={formatKES(session.monthly_rent)}
+                        emoji={session.is_on_vacation && isVacationMonth() ? '🏖️' : '💰'}
+                        label={session.is_on_vacation && isVacationMonth() ? 'Vacation Rent' : 'Monthly Rent'}
+                        value={formatKES(getEffectiveRent(session))}
                         color={COLORS.accent} bg={COLORS.successBg}
                     />
                     <KPICard
@@ -251,7 +258,10 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                                         ]}
                                     >
                                         <View style={[styles.tableCell, { flex: 1.6 }]}>
-                                            <Text style={styles.monthText}>{formatMonth(bill.billing_month)}</Text>
+                                            <Text style={styles.monthText}>
+                                                {formatMonth(bill.billing_month)}
+                                                {bill.notes?.includes('Vacation') ? ' 🏖️' : ''}
+                                            </Text>
                                             {isCurrentMonth && (
                                                 <Text style={styles.currentTag}>Current</Text>
                                             )}
@@ -340,6 +350,12 @@ const styles = StyleSheet.create({
     },
     profileChipLabel: { fontSize: 9, color: 'rgba(255,255,255,0.65)', fontWeight: '600', marginBottom: 2 },
     profileChipValue: { fontSize: 11, color: '#fff', fontWeight: '800', textAlign: 'center' },
+    vacationChip: {
+        marginTop: 12, backgroundColor: 'rgba(249,115,22,0.25)',
+        borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14,
+        borderWidth: 1, borderColor: 'rgba(249,115,22,0.4)',
+    },
+    vacationChipText: { color: '#fdba74', fontSize: 11, fontWeight: '800', textAlign: 'center', letterSpacing: 0.5 },
 
     // KPI Grid
     kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
