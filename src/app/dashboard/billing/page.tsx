@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getBilling, generateMonthlyBills, getLocations, getTenants } from '@/lib/supabase';
+import { getBilling, generateMonthlyBills, getLocations, getTenants, calculateUnpaidRent, isVacationMonth } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiFileText, FiRefreshCw, FiDollarSign, FiCheckCircle, FiAlertTriangle, FiPhone, FiCalendar, FiZap, FiInfo } from 'react-icons/fi';
 
@@ -43,16 +43,18 @@ export default function BillingPage() {
     const [statusFilter, setStatusFilter] = useState('');
     const [genResult, setGenResult] = useState<{ generated: number; skipped: number; catchUpMonths: number; errors: string[] } | null>(null);
     const [showCatchupInfo, setShowCatchupInfo] = useState(false);
+    const [unpaidData, setUnpaidData] = useState<any[]>([]);
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         try {
-            const [b, l, t] = await Promise.all([
+            const [b, l, t, ur] = await Promise.all([
                 getBilling({ locationId: locId ?? undefined, month: monthFilter || undefined, status: statusFilter || undefined }),
                 getLocations(),
-                getTenants(locId ?? undefined)
+                getTenants(locId ?? undefined),
+                calculateUnpaidRent(locId ?? undefined),
             ]);
-            setBills(b); setLocations(l); setTenants(t);
+            setBills(b); setLocations(l); setTenants(t); setUnpaidData(ur || []);
         } catch { toast.error('Failed to load billing data'); }
         setLoading(false);
     }, [monthFilter, statusFilter]);
@@ -220,6 +222,96 @@ export default function BillingPage() {
                     </div>
                 ))}
             </div>
+
+            {/* ── Tenant Billing Summary ── */}
+            {unpaidData.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-4 border-b border-gray-100">
+                        <h2 className="text-sm font-bold text-gray-900">📊 Tenant Billing Summary — All Months</h2>
+                        <p className="text-[11px] text-gray-400 mt-0.5">Complete billing overview per tenant with vacation adjustments</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse" style={{ fontSize: 12 }}>
+                            <thead>
+                                <tr className="border-b border-gray-100">
+                                    {[
+                                        { label: '👤 Tenant', bg: '#eef2ff', color: '#4338ca' },
+                                        { label: '🏠 Unit', bg: '#f0fdfa', color: '#0f766e' },
+                                        { label: '📅 Move-In', bg: '#fffbeb', color: '#b45309' },
+                                        { label: '💰 Rent/Mo', bg: '#f0fdf4', color: '#15803d' },
+                                        { label: '💵 Total Paid', bg: '#ecfdf5', color: '#047857' },
+                                        { label: '⏰ Past Arrears', bg: '#fef9c3', color: '#92400e' },
+                                        { label: '📆 Current Month', bg: '#eff6ff', color: '#1d4ed8' },
+                                        { label: '🏦 Total Arrears', bg: '#fff1f2', color: '#be123c' },
+                                        { label: '🏖️ Vacation', bg: '#fff7ed', color: '#c2410c' },
+                                    ].map((h, i) => (
+                                        <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
+                                            style={{ background: h.bg, color: h.color, borderBottom: `2px solid ${h.color}30` }}>
+                                            {h.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {unpaidData.map((t: any) => {
+                                    const allM = t.allMonths || [];
+                                    const curMonth = new Date().toISOString().slice(0, 7);
+                                    const pastArr = allM.filter((m: any) => m.month < curMonth && m.balance > 0).reduce((s: number, m: any) => s + m.balance, 0);
+                                    const curDue = allM.filter((m: any) => m.month === curMonth).reduce((s: number, m: any) => s + m.balance, 0);
+                                    const isVac = t.is_on_vacation && isVacationMonth(curMonth);
+                                    const effRent = isVac ? (t.monthly_rent || 0) * 0.5 : (t.monthly_rent || 0);
+                                    return (
+                                        <tr key={t.tenant_id} style={{ borderBottom: '1px solid #f1f5f9' }}
+                                            onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = '#fafbff'}
+                                            onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background = ''}>
+                                            <td className="px-3 py-3 font-semibold text-gray-900">{t.tenant_name}</td>
+                                            <td className="px-3 py-3 text-gray-500">{t.arms_units?.unit_name || '-'}</td>
+                                            <td className="px-3 py-3 font-medium text-amber-700">
+                                                {t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}
+                                            </td>
+                                            <td className="px-3 py-3 font-bold text-green-700">
+                                                {fmt(effRent)}
+                                                {isVac && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">50%</span>}
+                                            </td>
+                                            <td className="px-3 py-3 font-bold text-green-600">{fmt(t.totalPaidAllTime || 0)}</td>
+                                            <td className="px-3 py-3 font-bold" style={{ color: pastArr > 0 ? '#dc2626' : '#059669' }}>
+                                                {pastArr > 0 ? fmt(pastArr) : '✓ Clear'}
+                                            </td>
+                                            <td className="px-3 py-3 font-bold" style={{ color: curDue > 0 ? '#1d4ed8' : '#059669' }}>
+                                                {curDue > 0 ? fmt(curDue) : '✓ Paid'}
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                <span className={`font-extrabold ${t.totalUnpaid > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                                    {t.totalUnpaid > 0 ? fmt(t.totalUnpaid) : '✓ Clear'}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-3">
+                                                {t.is_on_vacation ? (
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                                                        🏖️ Active
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[10px] text-gray-400">—</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                            <tfoot>
+                                <tr className="bg-gray-50 border-t-2 border-gray-200">
+                                    <td colSpan={4} className="px-3 py-3 text-xs font-bold text-gray-600">TOTALS ({unpaidData.length} tenants)</td>
+                                    <td className="px-3 py-3 text-xs font-extrabold text-green-700">{fmt(unpaidData.reduce((s: number, t: any) => s + (t.totalPaidAllTime || 0), 0))}</td>
+                                    <td className="px-3 py-3 text-xs font-extrabold text-red-600">{fmt(unpaidData.reduce((s: number, t: any) => { const m = t.allMonths || []; const cm = new Date().toISOString().slice(0, 7); return s + m.filter((x: any) => x.month < cm && x.balance > 0).reduce((a: number, x: any) => a + x.balance, 0); }, 0))}</td>
+                                    <td className="px-3 py-3 text-xs font-extrabold text-blue-700">{fmt(unpaidData.reduce((s: number, t: any) => { const m = t.allMonths || []; const cm = new Date().toISOString().slice(0, 7); return s + m.filter((x: any) => x.month === cm).reduce((a: number, x: any) => a + x.balance, 0); }, 0))}</td>
+                                    <td className="px-3 py-3 text-xs font-extrabold text-red-600">{fmt(unpaidData.reduce((s: number, t: any) => s + (t.totalUnpaid || 0), 0))}</td>
+                                    <td />
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            )}
 
             {/* Bills Table */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
