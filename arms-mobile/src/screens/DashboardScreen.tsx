@@ -10,6 +10,7 @@ import {
     type Tenant, type Billing, type Payment,
     fmt, getTenantFullData, getTenantBilling, getTenantPayments,
     logoutTenant, changeTenantPin, formatPhoneDisplay,
+    isVacationMonth, getCurrentEffectiveRent, getVacationRent,
 } from '../lib/supabase';
 
 const { width } = Dimensions.get('window');
@@ -113,6 +114,7 @@ export default function DashboardScreen({ tenant, onLogout, onPayRent, onTenantU
                         <Text style={styles.headerName} numberOfLines={1}>{tenant.tenant_name}</Text>
                         <Text style={styles.headerSub} numberOfLines={1}>
                             {tenant.arms_units?.unit_name || '—'} • {tenant.arms_locations?.location_name || ''}
+                            {tenant.is_on_vacation ? ' 🏖️' : ''}
                         </Text>
                     </View>
                 </View>
@@ -129,12 +131,23 @@ export default function DashboardScreen({ tenant, onLogout, onPayRent, onTenantU
                 <LinearGradient colors={colors.gradientPrimary} style={styles.balanceCard}>
                     <View style={styles.balanceBg1} />
                     <View style={styles.balanceBg2} />
+                    {tenant.is_on_vacation && isVacationMonth() && (
+                        <View style={styles.vacationBanner}>
+                            <Text style={styles.vacationBannerText}>🏖️ VACATION MODE • Half-rent applies this month</Text>
+                        </View>
+                    )}
                     <Text style={styles.balanceLabel}>OUTSTANDING BALANCE</Text>
                     <Text style={styles.balanceAmount}>{fmt(tenant.balance || 0)}</Text>
                     <View style={styles.balanceRow}>
                         <View style={styles.balanceItem}>
-                            <Text style={styles.balanceItemLabel}>Monthly Rent</Text>
-                            <Text style={styles.balanceItemValue}>{fmt(tenant.monthly_rent)}</Text>
+                            <Text style={styles.balanceItemLabel}>
+                                {tenant.is_on_vacation && isVacationMonth() ? 'Vacation Rent' : 'Monthly Rent'}
+                            </Text>
+                            <Text style={styles.balanceItemValue}>
+                                {tenant.is_on_vacation && isVacationMonth()
+                                    ? fmt(getVacationRent(tenant.monthly_rent))
+                                    : fmt(tenant.monthly_rent)}
+                            </Text>
                         </View>
                         <View style={styles.balanceDivider} />
                         <View style={styles.balanceItem}>
@@ -158,10 +171,10 @@ export default function DashboardScreen({ tenant, onLogout, onPayRent, onTenantU
                         <Text style={styles.infoLabel}>Unit</Text>
                         <Text style={styles.infoValue}>{tenant.arms_units?.unit_name || '—'}</Text>
                     </View>
-                    <View style={[styles.infoCard, { borderLeftColor: colors.accentEmerald }]}>
-                        <Text style={styles.infoEmoji}>💰</Text>
-                        <Text style={styles.infoLabel}>Rent</Text>
-                        <Text style={styles.infoValue}>{fmt(tenant.monthly_rent)}</Text>
+                    <View style={[styles.infoCard, { borderLeftColor: tenant.is_on_vacation && isVacationMonth() ? '#f97316' : colors.accentEmerald }]}>
+                        <Text style={styles.infoEmoji}>{tenant.is_on_vacation && isVacationMonth() ? '🏖️' : '💰'}</Text>
+                        <Text style={styles.infoLabel}>{tenant.is_on_vacation && isVacationMonth() ? 'Vac. Rent' : 'Rent'}</Text>
+                        <Text style={styles.infoValue}>{fmt(getCurrentEffectiveRent(tenant))}</Text>
                     </View>
                     <View style={[styles.infoCard, { borderLeftColor: colors.accentOrange }]}>
                         <Text style={styles.infoEmoji}>📅</Text>
@@ -195,10 +208,11 @@ export default function DashboardScreen({ tenant, onLogout, onPayRent, onTenantU
                                     { label: 'Phone', value: tenant.phone ? formatPhoneDisplay(tenant.phone) : '—' },
                                     { label: 'Email', value: tenant.email },
                                     { label: 'Status', value: tenant.status },
+                                    { label: 'Vacation Mode', value: tenant.is_on_vacation ? '🏖️ On Vacation (50% rent May-Aug)' : '🏠 Regular' },
                                     { label: 'Deposit Paid', value: fmt(tenant.deposit_paid || 0) },
                                     { label: 'Location', value: tenant.arms_locations?.location_name },
                                 ].map((item, i) => (
-                                    <View key={i} style={[styles.detailRow, i < 6 && styles.detailRowBorder]}>
+                                    <View key={i} style={[styles.detailRow, i < 7 && styles.detailRowBorder]}>
                                         <Text style={styles.detailLabel}>{item.label}</Text>
                                         <Text style={styles.detailValue}>{item.value || '—'}</Text>
                                     </View>
@@ -397,6 +411,11 @@ const styles = StyleSheet.create({
     logoutText: { color: colors.accentRed, fontSize: 12, fontWeight: '700' },
     scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
     balanceCard: { borderRadius: 24, padding: 24, overflow: 'hidden', marginTop: 8 },
+    vacationBanner: {
+        backgroundColor: 'rgba(249,115,22,0.25)', borderRadius: 10, paddingVertical: 8,
+        paddingHorizontal: 14, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(249,115,22,0.4)',
+    },
+    vacationBannerText: { color: '#fdba74', fontSize: 11, fontWeight: '800', textAlign: 'center', letterSpacing: 0.5 },
     balanceBg1: {
         position: 'absolute', right: -30, top: -40,
         width: 160, height: 160, borderRadius: 80,
