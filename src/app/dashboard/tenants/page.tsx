@@ -602,12 +602,20 @@ export default function TenantsPage() {
 
                                         {/* Monthly Rent (base, with vacation indicator) */}
                                         <td className="px-3 py-3 whitespace-nowrap font-bold" style={{ background: C.rent.bg + '60', color: C.rent.text }}>
-                                            <div>
-                                                {fmt(t.monthly_rent)}
-                                                {t.is_on_vacation && (
-                                                    <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">🏖️ Vac</span>
-                                                )}
-                                            </div>
+                                            {(() => {
+                                                const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(currentMonth.slice(5,7));
+                                                const displayRent = isVacNow ? Math.round((t.monthly_rent||0)*0.5) : (t.monthly_rent||0);
+                                                return (
+                                                    <div>
+                                                        {fmt(displayRent)}
+                                                        {t.is_on_vacation && (
+                                                            <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
+                                                                🏖️ {isVacNow ? '50%' : 'Vac'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                         </td>
 
                                         {/* Real Arrears */}
@@ -919,8 +927,9 @@ export default function TenantsPage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent (KES) *</label>
+                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent (KES) * — Full Base Rent</label>
                                     <input id="t-rent" type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-deposit') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
+                                    <p className="text-[10px] text-gray-400 mt-1">⚠️ Always enter the <strong>full rent</strong>. Vacation 50% is computed automatically — never enter the halved amount here.</p>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit Paid</label>
@@ -972,7 +981,7 @@ export default function TenantsPage() {
                                     <div className="flex items-center justify-between p-3 rounded-xl bg-orange-50 border border-orange-200">
                                         <div>
                                             <p className="text-sm font-bold text-orange-900">🏖️ Student On Vacation</p>
-                                            <p className="text-[10px] text-orange-600 mt-0.5">Vacation months (May-Aug): charged <strong>50% rent</strong>. Toggle ON for students going on vacation.</p>
+                                            <p className="text-[10px] text-orange-600 mt-0.5">Vacation months (May–Aug): charged <strong>50% of base rent</strong>. The base rent above is always the full amount.</p>
                                         </div>
                                         <button
                                             type="button"
@@ -988,41 +997,115 @@ export default function TenantsPage() {
                                             </div>
                                         </button>
                                     </div>
-                                    {form.is_on_vacation && (
-                                        <div className="px-3 py-2 rounded-xl bg-orange-50 border border-orange-200">
-                                            <p className="text-[11px] text-orange-800 font-semibold">
-                                                ⚡ Half-rent will apply for: <strong>May, June, July, August</strong>. Full rent charges for all other months.
-                                                {form.monthly_rent && (
-                                                    <span className="ml-1">→ Vacation rent: <strong>KES {Math.round(parseFloat(form.monthly_rent) * 0.5).toLocaleString()}</strong>/mo</span>
-                                                )}
-                                            </p>
-                                        </div>
-                                    )}
+
+                                    {/* Live Billing Preview — shown when adding a new tenant with rent + move-in date */}
+                                    {!editItem && form.monthly_rent && form.move_in_date && (() => {
+                                        const baseRent = parseFloat(form.monthly_rent) || 0;
+                                        const moveInMonth = form.move_in_date.slice(0, 7);
+                                        const curMonth = new Date().toISOString().slice(0, 7);
+                                        if (!baseRent || moveInMonth > curMonth) return null;
+
+                                        // Build month list from move-in to current
+                                        const months: { month: string; rent: number; isVac: boolean; isCurrent: boolean }[] = [];
+                                        let c = new Date(moveInMonth + '-01');
+                                        const end = new Date(curMonth + '-01');
+                                        while (c <= end) {
+                                            const m = c.toISOString().slice(0, 7);
+                                            const mm = m.slice(5, 7);
+                                            const isVac = form.is_on_vacation && ['05','06','07','08'].includes(mm);
+                                            months.push({ month: m, rent: isVac ? Math.round(baseRent * 0.5) : baseRent, isVac, isCurrent: m === curMonth });
+                                            c.setMonth(c.getMonth() + 1);
+                                        }
+
+                                        // Simulate FIFO payment allocation
+                                        const initPay = parseFloat(form.initial_payment || '0') || 0;
+                                        let remaining = initPay;
+                                        const allocated = months.map(m => {
+                                            const pay = Math.min(remaining, m.rent);
+                                            remaining = Math.max(0, remaining - pay);
+                                            return { ...m, paid: pay, balance: m.rent - pay };
+                                        });
+
+                                        const pastArrears = allocated.filter(m => !m.isCurrent).reduce((s, m) => s + m.balance, 0);
+                                        const currentDue = allocated.filter(m => m.isCurrent).reduce((s, m) => s + m.balance, 0);
+                                        const finalArrears = pastArrears + currentDue;
+                                        const credit = Math.max(0, remaining);
+
+                                        return (
+                                            <div className="rounded-xl border-2 border-indigo-200 overflow-hidden">
+                                                <div className="px-3 py-2 flex items-center gap-2" style={{ background: 'linear-gradient(90deg,#eef2ff,#e0e7ff)' }}>
+                                                    <span className="text-sm">📊</span>
+                                                    <p className="text-xs font-bold text-indigo-800 uppercase tracking-wider">Live Billing Preview</p>
+                                                    <span className="text-[10px] text-indigo-500 ml-auto">Updates as you type</span>
+                                                </div>
+                                                <div className="p-3 space-y-2">
+                                                    {/* Summary cards */}
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div className="rounded-lg p-2 text-center" style={{ background: '#fef9c3', border: '1px solid #fde68a' }}>
+                                                            <p className="text-[9px] font-bold text-amber-700 uppercase">Past Arrears</p>
+                                                            <p className="text-sm font-black text-amber-900">{fmt(pastArrears)}</p>
+                                                            <p className="text-[9px] text-amber-600">Before this month</p>
+                                                        </div>
+                                                        <div className="rounded-lg p-2 text-center" style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                                                            <p className="text-[9px] font-bold text-blue-700 uppercase">Current Month</p>
+                                                            <p className="text-sm font-black text-blue-900">{fmt(currentDue)}</p>
+                                                            <p className="text-[9px] text-blue-600">{new Date().toLocaleDateString('en-US',{month:'short',year:'numeric'})}</p>
+                                                        </div>
+                                                        <div className="rounded-lg p-2 text-center" style={{ background: finalArrears > 0 ? '#fff1f2' : '#ecfdf5', border: `1px solid ${finalArrears > 0 ? '#fecdd3' : '#a7f3d0'}` }}>
+                                                            <p className="text-[9px] font-bold uppercase" style={{ color: finalArrears > 0 ? '#be123c' : '#059669' }}>Final Arrears</p>
+                                                            <p className="text-sm font-black" style={{ color: finalArrears > 0 ? '#9f1239' : '#047857' }}>{finalArrears > 0 ? fmt(finalArrears) : '✓ Clear'}</p>
+                                                            <p className="text-[9px]" style={{ color: finalArrears > 0 ? '#be123c' : '#059669' }}>After payment</p>
+                                                        </div>
+                                                    </div>
+                                                    {/* Month-by-month breakdown */}
+                                                    <div className="rounded-lg overflow-hidden border border-gray-200">
+                                                        <table className="w-full" style={{ fontSize: 11 }}>
+                                                            <thead>
+                                                                <tr style={{ background: '#f1f5f9' }}>
+                                                                    <th className="px-2 py-1.5 text-left text-[9px] font-bold text-gray-600 uppercase">Month</th>
+                                                                    <th className="px-2 py-1.5 text-right text-[9px] font-bold text-gray-600 uppercase">Rent Due</th>
+                                                                    <th className="px-2 py-1.5 text-right text-[9px] font-bold text-green-700 uppercase">Paid</th>
+                                                                    <th className="px-2 py-1.5 text-right text-[9px] font-bold text-red-700 uppercase">Balance</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {allocated.map((m, i) => (
+                                                                    <tr key={i} style={{ background: m.balance === 0 ? '#f0fdf4' : m.isCurrent ? '#eff6ff' : '#fff8f8', borderBottom: '1px solid #f1f5f9' }}>
+                                                                        <td className="px-2 py-1.5 font-semibold whitespace-nowrap">
+                                                                            {new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                                                            {m.isVac && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-orange-100 text-orange-700">🏖️ 50%</span>}
+                                                                            {m.isCurrent && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-blue-100 text-blue-700">NOW</span>}
+                                                                        </td>
+                                                                        <td className="px-2 py-1.5 text-right font-semibold">{fmt(m.rent)}</td>
+                                                                        <td className="px-2 py-1.5 text-right font-bold" style={{ color: m.paid > 0 ? '#059669' : '#94a3b8' }}>{m.paid > 0 ? fmt(m.paid) : '—'}</td>
+                                                                        <td className="px-2 py-1.5 text-right font-black" style={{ color: m.balance > 0 ? '#dc2626' : '#059669' }}>{m.balance > 0 ? fmt(m.balance) : '✓'}</td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                    {credit > 0 && (
+                                                        <p className="text-[10px] text-green-700 font-semibold px-1">
+                                                            💡 {fmt(credit)} credit will carry forward to next month
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
 
                                     {/* Initial Payment */}
                                     {!editItem && (
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="col-span-2">
-                                                <label className="text-xs font-bold text-orange-700 mb-1 block">💰 Initial Move-In Payment (KES)</label>
-                                                <input
-                                                    type="number"
-                                                    value={form.initial_payment}
-                                                    onChange={e => setForm({ ...form, initial_payment: e.target.value })}
-                                                    className="input-field"
-                                                    placeholder="Amount paid at move-in (optional)"
-                                                />
-                                                <p className="text-[10px] text-orange-600 mt-1">💡 This payment will be auto-recorded and applied to the tenant's first bill(s). Leave blank if no payment yet.</p>
-                                                {form.initial_payment && parseFloat(form.initial_payment) > 0 && form.monthly_rent && (
-                                                    <div className="mt-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
-                                                        <p className="text-[11px] text-green-800 font-bold">
-                                                            ✅ KES {parseFloat(form.initial_payment).toLocaleString()} will be recorded as move-in payment
-                                                            {parseFloat(form.initial_payment) >= parseFloat(form.monthly_rent)
-                                                                ? ` — covers ${Math.floor(parseFloat(form.initial_payment) / parseFloat(form.monthly_rent))} month(s) rent`
-                                                                : ' — partial payment'}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                            </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-orange-700 mb-1 block">💰 Initial Move-In Payment (KES)</label>
+                                            <input
+                                                type="number"
+                                                value={form.initial_payment}
+                                                onChange={e => setForm({ ...form, initial_payment: e.target.value })}
+                                                className="input-field"
+                                                placeholder="Amount paid at move-in (optional)"
+                                            />
+                                            <p className="text-[10px] text-orange-600 mt-1">💡 Applied FIFO to oldest bills first. The preview above updates live. Leave blank if no payment yet.</p>
                                         </div>
                                     )}
                                 </div>

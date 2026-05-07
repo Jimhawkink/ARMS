@@ -201,12 +201,23 @@ export async function addTenant(tenant: {
     const isOnVacation = tenant.is_on_vacation || false;
     // Remove non-DB fields before insert
     const { initial_payment: _ip, ...tenantData } = tenant;
-    const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenantData, status: 'Active', balance: 0, is_on_vacation: isOnVacation }]).select().single();
+
+    // IMPORTANT: Always store the FULL/BASE monthly rent in arms_tenants.
+    // Vacation half-rent is computed dynamically per bill — never store halved rent.
+    const { data, error } = await supabase.from('arms_tenants').insert([{
+        ...tenantData,
+        monthly_rent: tenant.monthly_rent, // always full base rent
+        status: 'Active',
+        balance: 0,
+        is_on_vacation: isOnVacation,
+    }]).select().single();
     if (error) throw error;
     await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
 
-    const rawMoveIn = tenant.move_in_date || tenant.billing_start_month;
+    // Use billing_start_month if provided, otherwise fall back to move_in_date
+    const rawMoveIn = tenant.billing_start_month || tenant.move_in_date;
     const monthlyRent = tenant.monthly_rent || 0;
+
     if (rawMoveIn && monthlyRent > 0) {
         const currentMonth = new Date().toISOString().slice(0, 7);
         const earliestMonth = rawMoveIn.slice(0, 7);
@@ -214,9 +225,10 @@ export async function addTenant(tenant: {
         let totalBalance = 0;
         let cursor = new Date(earliestMonth + '-01');
         const endDate = new Date(currentMonth + '-01');
+
         while (cursor <= endDate) {
             const curM = cursor.toISOString().slice(0, 7);
-            // Apply vacation half-rent if tenant is on vacation and month is May-Aug
+            // Apply vacation half-rent dynamically — base rent is always stored full
             const effectiveRent = getEffectiveRent(monthlyRent, curM, isOnVacation);
             billsToCreate.push({
                 tenant_id: data.tenant_id,
@@ -229,33 +241,35 @@ export async function addTenant(tenant: {
                 amount_paid: 0,
                 balance: effectiveRent,
                 status: 'Unpaid',
-                notes: isOnVacation && isVacationMonth(curM) ? 'Vacation half-rent' : null,
+                notes: isOnVacation && isVacationMonth(curM) ? 'Vacation half-rent (50%)' : null,
             });
             totalBalance += effectiveRent;
             cursor.setMonth(cursor.getMonth() + 1);
         }
+
         if (billsToCreate.length > 0) {
             await supabase.from('arms_billing').insert(billsToCreate);
             await supabase.from('arms_tenants').update({
-                balance: totalBalance,
+                balance: Math.round(totalBalance * 100) / 100,
                 updated_at: new Date().toISOString(),
             }).eq('tenant_id', data.tenant_id);
 
-            // Auto-record initial payment if provided
+            // Auto-record initial move-in payment if provided
             if (initialPayment > 0) {
+                // recordPayment handles FIFO allocation across bills and updates tenant balance
                 await recordPayment({
                     tenant_id: data.tenant_id,
                     amount: initialPayment,
                     payment_method: 'Cash',
                     location_id: tenant.location_id,
                     recorded_by: 'Move-In Payment',
-                    notes: `Move-in payment for ${earliestMonth}`,
+                    notes: `Move-in payment`,
                 });
-                // Refresh balance after payment
+                // Return fresh balance after payment allocation
                 const { data: freshT } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', data.tenant_id).single();
                 return { ...data, balance: freshT?.balance || 0 };
             }
-            return { ...data, balance: totalBalance };
+            return { ...data, balance: Math.round(totalBalance * 100) / 100 };
         }
     }
     return data;

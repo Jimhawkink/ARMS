@@ -286,8 +286,21 @@ export default function BillingPage() {
                                                 {t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}
                                             </td>
                                             <td className="px-3 py-3 font-bold text-green-700">
-                                                {fmt(t.monthly_rent || 0)}
-                                                {t.is_on_vacation && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">🏖️ Vac</span>}
+                                                {(() => {
+                                                    const curM = new Date().toISOString().slice(0, 7);
+                                                    const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(curM.slice(5,7));
+                                                    const displayRent = isVacNow ? Math.round((t.monthly_rent||0)*0.5) : (t.monthly_rent||0);
+                                                    return (
+                                                        <>
+                                                            {fmt(displayRent)}
+                                                            {t.is_on_vacation && (
+                                                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
+                                                                    🏖️ {isVacNow ? '50%' : 'Vac'}
+                                                                </span>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
                                             </td>
                                             <td className="px-3 py-3 font-bold text-green-600">{fmt(t.totalPaidAllTime || 0)}</td>
                                             <td className="px-3 py-3 font-bold" style={{ color: pastArr > 0 ? '#dc2626' : '#059669' }}>
