@@ -912,7 +912,7 @@ export async function calculateUnpaidRent(locationId?: number) {
                 });
                 if (existingBill.status !== 'Paid' && billBalance > 0) {
                     const billMonthDate = new Date(month + '-05');
-                    const isLate = now > billMonthDate;
+                    const isLate = nowLocal > billMonthDate;
                     const penalty = isLate ? Math.round((existingBill.rent_amount || monthlyRent) * 0.02) : 0;
 
                     unpaidMonths.push({
@@ -929,7 +929,7 @@ export async function calculateUnpaidRent(locationId?: number) {
             } else {
                 const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
                 const billMonthDate = new Date(month + '-05');
-                const isLate = now > billMonthDate;
+                const isLate = nowLocal > billMonthDate;
                 const penalty = isLate ? Math.round(effectiveRent * 0.02) : 0;
 
                 allMonths.push({
