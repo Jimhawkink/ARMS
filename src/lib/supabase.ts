@@ -108,6 +108,21 @@ export async function deleteUnit(id: number) {
     if (error) throw error;
 }
 
+// ==================== VACATION MONTHS (Kenyan University) ====================
+const VACATION_MONTHS = ['05', '06', '07', '08']; // May, Jun, Jul, Aug
+
+export function isVacationMonth(month: string): boolean {
+    const mm = month.slice(5, 7); // extract '05' from '2026-05'
+    return VACATION_MONTHS.includes(mm);
+}
+
+export function getEffectiveRent(monthlyRent: number, month: string, isOnVacation: boolean): number {
+    if (isOnVacation && isVacationMonth(month)) {
+        return Math.round((monthlyRent * 0.5) * 100) / 100; // Half rent
+    }
+    return monthlyRent;
+}
+
 // ==================== TENANTS ====================
 export async function getTenants(locationId?: number) {
     let query = supabase.from('arms_tenants').select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)').order('tenant_name');
@@ -128,9 +143,14 @@ export async function addTenant(tenant: {
     unit_id: number; location_id: number; monthly_rent: number;
     deposit_paid?: number; move_in_date?: string; billing_start_month?: string;
     notes?: string; emergency_contact?: string; emergency_phone?: string;
-    password_hash?: string;
+    password_hash?: string; mobile_pin?: string;
+    is_on_vacation?: boolean; initial_payment?: number;
 }) {
-    const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenant, status: 'Active', balance: 0 }]).select().single();
+    const initialPayment = tenant.initial_payment || 0;
+    const isOnVacation = tenant.is_on_vacation || false;
+    // Remove non-DB fields before insert
+    const { initial_payment: _ip, ...tenantData } = tenant;
+    const { data, error } = await supabase.from('arms_tenants').insert([{ ...tenantData, status: 'Active', balance: 0, is_on_vacation: isOnVacation }]).select().single();
     if (error) throw error;
     await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
 
@@ -145,6 +165,8 @@ export async function addTenant(tenant: {
         const endDate = new Date(currentMonth + '-01');
         while (cursor <= endDate) {
             const curM = cursor.toISOString().slice(0, 7);
+            // Apply vacation half-rent if tenant is on vacation and month is May-Aug
+            const effectiveRent = getEffectiveRent(monthlyRent, curM, isOnVacation);
             billsToCreate.push({
                 tenant_id: data.tenant_id,
                 location_id: tenant.location_id,
@@ -152,12 +174,13 @@ export async function addTenant(tenant: {
                 billing_month: curM,
                 billing_date: `${curM}-01`,
                 due_date: `${curM}-05`,
-                rent_amount: monthlyRent,
+                rent_amount: effectiveRent,
                 amount_paid: 0,
-                balance: monthlyRent,
+                balance: effectiveRent,
                 status: 'Unpaid',
+                notes: isOnVacation && isVacationMonth(curM) ? 'Vacation half-rent' : null,
             });
-            totalBalance += monthlyRent;
+            totalBalance += effectiveRent;
             cursor.setMonth(cursor.getMonth() + 1);
         }
         if (billsToCreate.length > 0) {
@@ -166,6 +189,21 @@ export async function addTenant(tenant: {
                 balance: totalBalance,
                 updated_at: new Date().toISOString(),
             }).eq('tenant_id', data.tenant_id);
+
+            // Auto-record initial payment if provided
+            if (initialPayment > 0) {
+                await recordPayment({
+                    tenant_id: data.tenant_id,
+                    amount: initialPayment,
+                    payment_method: 'Cash',
+                    location_id: tenant.location_id,
+                    recorded_by: 'Move-In Payment',
+                    notes: `Move-in payment for ${earliestMonth}`,
+                });
+                // Refresh balance after payment
+                const { data: freshT } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', data.tenant_id).single();
+                return { ...data, balance: freshT?.balance || 0 };
+            }
             return { ...data, balance: totalBalance };
         }
     }
@@ -238,9 +276,13 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
             let cursor = new Date(earliestMonth + '-01');
             const endDate = new Date(month + '-01');
 
+            const tenantOnVacation = tenant.is_on_vacation || false;
+
             while (cursor <= endDate) {
                 const curMonth = cursor.toISOString().slice(0, 7);
                 if (!existingMonths.has(curMonth)) {
+                    // Apply vacation half-rent if tenant is on vacation and month is May-Aug
+                    const effectiveRent = getEffectiveRent(monthlyRent, curMonth, tenantOnVacation);
                     newBillsToInsert.push({
                         tenant_id: tenant.tenant_id,
                         location_id: tenant.location_id,
@@ -248,12 +290,13 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
                         billing_month: curMonth,
                         billing_date: `${curMonth}-01`,
                         due_date: `${curMonth}-05`,
-                        rent_amount: monthlyRent,
+                        rent_amount: effectiveRent,
                         amount_paid: 0,
-                        balance: monthlyRent,
+                        balance: effectiveRent,
                         status: 'Unpaid',
+                        notes: tenantOnVacation && isVacationMonth(curMonth) ? 'Vacation half-rent' : null,
                     });
-                    balanceIncrease += monthlyRent;
+                    balanceIncrease += effectiveRent;
                     if (curMonth < month) catchUpMonths++;
                 }
                 cursor.setMonth(cursor.getMonth() + 1);

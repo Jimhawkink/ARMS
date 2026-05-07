@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills } from '@/lib/supabase';
+import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
@@ -107,6 +107,7 @@ export default function TenantsPage() {
         move_in_date: today, billing_start_month: currentMonth,
         emergency_contact: '', emergency_phone: '', notes: '',
         password_hash: '',
+        is_on_vacation: false, initial_payment: '',
     });
 
     // ── Auto-derive PIN from last 6 digits of phone ───────────────────────────
@@ -223,7 +224,9 @@ export default function TenantsPage() {
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
             monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
             emergency_contact: '', emergency_phone: '', notes: '',
-            password_hash: '', // will be auto-filled when phone is entered
+            password_hash: '',
+            is_on_vacation: isVacationMonth(currentMonth), // Auto-detect vacation month
+            initial_payment: '',
         });
         setShowModal(true);
     };
@@ -235,7 +238,9 @@ export default function TenantsPage() {
             monthly_rent: String(t.monthly_rent || ''), deposit_paid: String(t.deposit_paid || ''),
             move_in_date: t.move_in_date || '', billing_start_month: t.billing_start_month || t.move_in_date?.slice(0, 7) || '',
             emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
-            password_hash: '', // leave blank on edit — user must explicitly change PIN
+            password_hash: '',
+            is_on_vacation: t.is_on_vacation || false,
+            initial_payment: '',
         });
         setShowModal(true);
     };
@@ -246,7 +251,7 @@ export default function TenantsPage() {
         }
         setSaving(true);
         try {
-            const payload: any = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0') };
+            const payload: any = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0'), is_on_vacation: form.is_on_vacation, initial_payment: parseFloat(form.initial_payment || '0') };
 
             // Auto-derive PIN from last 6 digits of phone if not manually set
             const autoPin = derivePinFromPhone(form.phone);
@@ -276,6 +281,8 @@ export default function TenantsPage() {
                     monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
                     emergency_contact: '', emergency_phone: '', notes: '',
                     password_hash: '',
+                    is_on_vacation: isVacationMonth(currentMonth),
+                    initial_payment: '',
                 });
             }
             loadData(globalLocationId);
@@ -515,6 +522,7 @@ export default function TenantsPage() {
                                                 <div>
                                                     <div className="font-bold text-gray-900 flex items-center gap-1.5 whitespace-nowrap">
                                                         {t.tenant_name}
+                                                        {t.is_on_vacation && <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">🏖️ Vacation</span>}
                                                         {isNewToday && <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 animate-pulse">🆕</span>}
                                                     </div>
                                                     <div className="text-[10px] text-gray-400 mt-0.5">🪪 {t.id_number || '—'}</div>
@@ -824,6 +832,73 @@ export default function TenantsPage() {
                                         </p>
                                     </div>
                                 )}
+                            </div>
+
+                            {/* Vacation & Initial Payment */}
+                            <div className="rounded-xl overflow-hidden border-2 border-orange-300">
+                                <div className="px-4 py-2.5 flex items-center gap-2.5" style={{ background: 'linear-gradient(90deg,#fff7ed,#ffedd5)' }}>
+                                    <span className="text-lg">🏖️</span>
+                                    <p className="text-xs font-bold text-orange-800 uppercase tracking-wider">Vacation & Move-In Payment</p>
+                                </div>
+                                <div className="p-4 space-y-4">
+                                    {/* Vacation Toggle */}
+                                    <div className="flex items-center justify-between p-3 rounded-xl bg-orange-50 border border-orange-200">
+                                        <div>
+                                            <p className="text-sm font-bold text-orange-900">🏖️ Student On Vacation</p>
+                                            <p className="text-[10px] text-orange-600 mt-0.5">Vacation months (May-Aug): charged <strong>50% rent</strong>. Toggle ON for students going on vacation.</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setForm({ ...form, is_on_vacation: !form.is_on_vacation })}
+                                            className={`relative w-14 h-7 rounded-full transition-all duration-300 flex-shrink-0 ${
+                                                form.is_on_vacation ? 'bg-orange-500 shadow-lg shadow-orange-200' : 'bg-gray-300'
+                                            }`}
+                                        >
+                                            <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center text-xs ${
+                                                form.is_on_vacation ? 'left-7' : 'left-0.5'
+                                            }`}>
+                                                {form.is_on_vacation ? '🏖️' : '🏠'}
+                                            </div>
+                                        </button>
+                                    </div>
+                                    {form.is_on_vacation && (
+                                        <div className="px-3 py-2 rounded-xl bg-orange-50 border border-orange-200">
+                                            <p className="text-[11px] text-orange-800 font-semibold">
+                                                ⚡ Half-rent will apply for: <strong>May, June, July, August</strong>. Full rent charges for all other months.
+                                                {form.monthly_rent && (
+                                                    <span className="ml-1">→ Vacation rent: <strong>KES {Math.round(parseFloat(form.monthly_rent) * 0.5).toLocaleString()}</strong>/mo</span>
+                                                )}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* Initial Payment */}
+                                    {!editItem && (
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="col-span-2">
+                                                <label className="text-xs font-bold text-orange-700 mb-1 block">💰 Initial Move-In Payment (KES)</label>
+                                                <input
+                                                    type="number"
+                                                    value={form.initial_payment}
+                                                    onChange={e => setForm({ ...form, initial_payment: e.target.value })}
+                                                    className="input-field"
+                                                    placeholder="Amount paid at move-in (optional)"
+                                                />
+                                                <p className="text-[10px] text-orange-600 mt-1">💡 This payment will be auto-recorded and applied to the tenant's first bill(s). Leave blank if no payment yet.</p>
+                                                {form.initial_payment && parseFloat(form.initial_payment) > 0 && form.monthly_rent && (
+                                                    <div className="mt-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
+                                                        <p className="text-[11px] text-green-800 font-bold">
+                                                            ✅ KES {parseFloat(form.initial_payment).toLocaleString()} will be recorded as move-in payment
+                                                            {parseFloat(form.initial_payment) >= parseFloat(form.monthly_rent)
+                                                                ? ` — covers ${Math.floor(parseFloat(form.initial_payment) / parseFloat(form.monthly_rent))} month(s) rent`
+                                                                : ' — partial payment'}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Emergency Contact */}
