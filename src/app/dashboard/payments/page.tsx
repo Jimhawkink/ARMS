@@ -1,9 +1,10 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant } from '@/lib/supabase';
+import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
+import VacationBanner from '@/components/VacationBanner';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const parseNoteTag = (notes: string, tag: string): number => {
@@ -263,6 +264,11 @@ export default function PaymentsPage() {
         </div>
     );
 
+    // ── Vacation month detection ──────────────────────────────────────────────
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+    const isCurrentVacationMonth = isVacationMonth(currentMonth);
+
     return (
         <div className="animate-fadeIn space-y-6">
             {/* Header */}
@@ -276,6 +282,9 @@ export default function PaymentsPage() {
                     <button onClick={openPayModal} className="btn-primary flex items-center gap-2"><FiPlus size={16}/> Record Payment</button>
                 </div>
             </div>
+
+            {/* Vacation Month Banner */}
+            {isCurrentVacationMonth && <VacationBanner />}
 
             {/* Stat Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
