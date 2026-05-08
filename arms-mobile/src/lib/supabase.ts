@@ -91,6 +91,7 @@ export interface Tenant {
     balance: number;
     password_hash: string | null;
     billing_start_month: string | null;
+    is_on_vacation: boolean;
     arms_units?: Unit;
     arms_locations?: Location;
 }
@@ -145,6 +146,36 @@ export interface Payment {
 }
 
 export const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
+
+// ── Vacation Months (Kenyan University) ─────────────────────────────────────
+const VACATION_MONTHS = ['05', '06', '07', '08']; // May, Jun, Jul, Aug
+
+export function isVacationMonth(month?: string): boolean {
+    if (!month) {
+        const mm = String(new Date().getMonth() + 1).padStart(2, '0');
+        return VACATION_MONTHS.includes(mm);
+    }
+    const mm = month.slice(5, 7) || String(new Date().getMonth() + 1).padStart(2, '0');
+    return VACATION_MONTHS.includes(mm);
+}
+
+export function getVacationRent(monthlyRent: number): number {
+    return Math.round((monthlyRent * 0.5) * 100) / 100;
+}
+
+export function getCurrentEffectiveRent(tenant: Tenant): number {
+    if (tenant.is_on_vacation && isVacationMonth()) {
+        return getVacationRent(tenant.monthly_rent);
+    }
+    return tenant.monthly_rent;
+}
+
+export function getVacationMonthName(): string {
+    const names = ['May', 'June', 'July', 'August'];
+    const currentMonth = new Date().getMonth(); // 0-indexed
+    if (currentMonth >= 4 && currentMonth <= 7) return names[currentMonth - 4];
+    return '';
+}
 
 // ── Phone Number Normalization ──────────────────────────────────────────────
 export function normalizePhone(phone: string): string {

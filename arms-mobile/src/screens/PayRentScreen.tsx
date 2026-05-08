@@ -9,6 +9,7 @@ import { colors, spacing, borderRadius, fontSize, fontWeight, shadows } from '..
 import {
     type Tenant, type Billing, fmt, getTenantBilling,
     normalizePhone, formatPhoneDisplay,
+    isVacationMonth, getCurrentEffectiveRent, getVacationRent,
 } from '../lib/supabase';
 import {
     initiateStkPush, checkStkStatus, formatMpesaPhone, isValidKenyanPhone,
@@ -206,10 +207,22 @@ export default function PayRentScreen({ tenant, onBack, onPaymentComplete }: Pay
                             </View>
                             <View style={styles.balanceStripDivider} />
                             <View style={styles.balanceStripItem}>
-                                <Text style={styles.balanceStripLabel}>Monthly Rent</Text>
-                                <Text style={styles.balanceStripValue}>{fmt(tenant.monthly_rent)}</Text>
+                                <Text style={styles.balanceStripLabel}>
+                                    {tenant.is_on_vacation && isVacationMonth() ? 'Vacation Rent' : 'Monthly Rent'}
+                                </Text>
+                                <Text style={styles.balanceStripValue}>{fmt(getCurrentEffectiveRent(tenant))}</Text>
                             </View>
                         </View>
+
+                        {/* Vacation Notice */}
+                        {tenant.is_on_vacation && isVacationMonth() && (
+                            <View style={styles.vacationNotice}>
+                                <Text style={styles.vacationNoticeText}>
+                                    🏖️ Vacation Mode Active • You're being charged half-rent ({fmt(getVacationRent(tenant.monthly_rent))}) for this vacation month.
+                                    Full rent: {fmt(tenant.monthly_rent)}
+                                </Text>
+                            </View>
+                        )}
 
                         {/* Unpaid Bills Selection */}
                         {unpaidBills.length > 0 && (
@@ -236,7 +249,9 @@ export default function PayRentScreen({ tenant, onBack, onPaymentComplete }: Pay
                                                 {selectedBill?.billing_id === bill.billing_id && <Text style={styles.billRadioDot}>✓</Text>}
                                             </View>
                                             <View>
-                                                <Text style={styles.billSelectMonth}>{bill.billing_month}</Text>
+                                                <Text style={styles.billSelectMonth}>
+                                                    {bill.billing_month}{bill.notes?.includes('Vacation') ? ' 🏖️' : ''}
+                                                </Text>
                                                 <Text style={styles.billSelectDue}>Due: {bill.due_date}</Text>
                                             </View>
                                         </View>
@@ -495,6 +510,13 @@ const styles = StyleSheet.create({
     balanceStripLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '600', letterSpacing: 1 },
     balanceStripValue: { color: '#fff', fontSize: 16, fontWeight: '800', marginTop: 4 },
     balanceStripDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.08)' },
+
+    // Vacation Notice
+    vacationNotice: {
+        backgroundColor: 'rgba(249,115,22,0.15)', borderRadius: 12, padding: 14,
+        marginTop: 14, borderWidth: 1, borderColor: 'rgba(249,115,22,0.3)',
+    },
+    vacationNoticeText: { color: '#fdba74', fontSize: 12, fontWeight: '700', lineHeight: 18 },
 
     // Section
     section: { marginTop: 22 },
