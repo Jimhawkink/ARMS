@@ -152,70 +152,70 @@ The implementation is split into eight sequential groups: test scaffolding → v
     - Clear interval on unmount or modal close
     - _Requirements: 6.2, 6.3, 6.8, 6.9, 6.10, 6.11_
 
-- [-] 7. Refactor `PaymentModal` to wire all new components together
-  - [ ] 7.1 Extract the modal JSX from `PaymentsPage` into a dedicated `PaymentModal` component
+- [x] 7. Refactor `PaymentModal` to wire all new components together
+  - [x] 7.1 Extract the modal JSX from `PaymentsPage` into a dedicated `PaymentModal` component
     - Create `AlphaPlusApp/arms/src/components/PaymentModal.tsx`
     - Props: `{ isOpen: boolean, onClose: () => void, tenants: Tenant[], locationId: number | null, onPaymentRecorded: () => void }`
     - Move all modal-related state (`payForm`, `tenantArrearData`, `loadingArrears`, `selectedMonths`, `stkStatus`, etc.) into `PaymentModal`
     - Keep `PaymentsPage` responsible only for loading tenants/payments and passing them as props
     - _Requirements: 10.1, 10.3, 10.4, 10.5, 10.6_
 
-  - [ ] 7.2 Integrate `SearchableTenantSelector` into `PaymentModal`
+  - [x] 7.2 Integrate `SearchableTenantSelector` into `PaymentModal`
     - Replace the existing plain `<select>` for tenant selection with `<SearchableTenantSelector>`
     - On tenant select: auto-populate `mpesaPhone` from `tenant.phone`, fetch arrears via `getAccumulatedArrearsForTenant`, initialize `selectedMonths` to empty set
     - _Requirements: 5.1, 5.2, 5.7, 5.8, 3.1, 3.4_
 
-  - [ ] 7.3 Integrate `ArrearsBreakdownTable` into `PaymentModal`
+  - [x] 7.3 Integrate `ArrearsBreakdownTable` into `PaymentModal`
     - Render `<ArrearsBreakdownTable>` below the tenant selector when `arrearsData` is loaded
     - Pass `selectedMonths` state and `onSelectionChange` callback; update `selectedMonths` on checkbox toggle
     - Show loading spinner while `loadingArrears` is true; show fallback message on fetch error
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7, 3.8, 4.1, 4.2, 4.3_
 
-  - [ ] 7.4 Integrate `AllocationPreviewPanel` into `PaymentModal`
+  - [x] 7.4 Integrate `AllocationPreviewPanel` into `PaymentModal`
     - Render `<AllocationPreviewPanel>` below the amount input, passing `amount`, `arrearsData`, and `selectedMonths`
     - Panel updates in real-time as user types in the amount field or toggles month checkboxes
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 4.4, 4.7_
 
-  - [ ] 7.5 Integrate `StkPushSection` and `useStkPush` into `PaymentModal`
+  - [x] 7.5 Integrate `StkPushSection` and `useStkPush` into `PaymentModal`
     - Replace the existing Jenga STK Push section with `<StkPushSection>` wired to `useStkPush`
     - Add an "M-Pesa STK Push" tab/option in the payment source selector (alongside Cash, M-Pesa manual, Bank Transfer, Cheque)
     - When STK Push succeeds, auto-fill `mpesaReceipt` field and set `paymentMethod` to `'M-Pesa'`
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11_
 
-  - [ ] 7.6 Add payment month selector with vacation month indicators to `PaymentModal`
+  - [x] 7.6 Add payment month selector with vacation month indicators to `PaymentModal`
     - Render a `<select>` or custom dropdown for `paymentMonth` (YYYY-MM)
     - For each month option that is a vacation month (05–08), append a 🏖️ icon to the label
     - When selected tenant has `is_on_vacation = true` and selected month is a vacation month, display effective rent (50% of `monthly_rent`) in the UI
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ] 7.7 Add inline validation and error handling to `PaymentModal`
+  - [x] 7.7 Add inline validation and error handling to `PaymentModal`
     - Before calling `recordPayment`, validate: tenant selected, amount entered, amount > 0, phone present when STK Push is active
     - Use `toast.error(...)` for all validation failures and API errors
     - On `recordPayment` failure, keep modal open and show error toast; do not generate receipt
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8_
 
-- [ ] 8. Checkpoint — Ensure all tests pass
+- [x] 8. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 9. Integration and backward compatibility
-  - [ ] 9.1 Update `PaymentsPage` to use the new `PaymentModal` component
+- [x] 9. Integration and backward compatibility
+  - [x] 9.1 Update `PaymentsPage` to use the new `PaymentModal` component
     - Replace the inline modal JSX in `PaymentsPage` with `<PaymentModal isOpen={showPayModal} onClose={() => setShowPayModal(false)} tenants={tenants} locationId={locationId} onPaymentRecorded={() => loadData(locationId)} />`
     - Ensure `tenants` is still loaded on mount via `getTenants` and filtered to `status === 'Active'`
     - Verify the "Record Payment" button and `openPayModal` function still work correctly
     - _Requirements: 10.7, 10.8_
 
-  - [ ] 9.2 Verify backward compatibility of `recordPayment` call signature
+  - [x] 9.2 Verify backward compatibility of `recordPayment` call signature
     - Confirm `PaymentModal` calls `recordPayment` with the same argument shape as before: `{ tenant_id, amount, payment_method, mpesa_receipt, mpesa_phone, reference_no, notes, recorded_by, location_id }`
     - Confirm notes still include meta tags: `[Month: ...]`, `[Time: ...]`, `[ArrearsPaid: ...]`, `[CurrentRentPaid: ...]`, `[Credit: ...]`
     - Confirm `RentReceipt` is still generated on successful payment with correct props
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6_
 
-  - [ ] 9.3 Verify callback-linked payment flow still works
+  - [x] 9.3 Verify callback-linked payment flow still works
     - Confirm the M-Pesa C2B callback tab and Jenga IPN tab in the payment source selector still function
     - Confirm `selectCallback` auto-fill logic (phone matching, amount, receipt code) is preserved in the refactored modal
     - _Requirements: 10.8_
 
-- [ ] 10. Final checkpoint — Ensure all tests pass
+- [x] 10. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

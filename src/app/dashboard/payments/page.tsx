@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
+import PaymentModal from '@/components/PaymentModal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const parseNoteTag = (notes: string, tag: string): number => {
@@ -114,11 +115,7 @@ export default function PaymentsPage() {
     };
 
     const openPayModal = () => {
-        setPayForm({ tenant_id: 0, amount: '', payment_method: 'Cash', mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '', payment_month: new Date().toISOString().slice(0, 7) });
-        setPaymentSource('manual'); setSelectedCallback(null); setTenantArrearData(null);
-        setJengaStkResult(null); setJengaStkPhone('');
         setShowPayModal(true);
-        loadCallbacks(); // auto-load callbacks
     };
 
     // ── Select a callback → auto-fill form + auto-match tenant by phone ─────────
@@ -432,8 +429,17 @@ export default function PaymentsPage() {
                 )}
             </div>
 
-            {/* ════════════════ RECORD PAYMENT MODAL ════════════════ */}
-            {showPayModal && (
+            {/* ════════════════ RECORD PAYMENT MODAL (Ultra) ════════════════ */}
+            <PaymentModal
+                isOpen={showPayModal}
+                onClose={() => setShowPayModal(false)}
+                tenants={tenants}
+                locationId={locationId}
+                onPaymentRecorded={() => loadData(locationId)}
+            />
+
+            {/* LEGACY MODAL PLACEHOLDER - kept for reference, remove after verification */}
+            {false && (
                 <div className="modal-overlay" onClick={() => setShowPayModal(false)}>
                     <div className="modal-content" style={{maxWidth:680}} onClick={e => e.stopPropagation()}>
                         {/* Header */}
@@ -785,7 +791,7 @@ export default function PaymentsPage() {
 
                         <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
                             <button onClick={() => setShowPayModal(false)} className="btn-outline">Cancel</button>
-                            <button onClick={handlePay} disabled={!payForm.tenant_id||!payForm.amount} className="btn-success flex items-center gap-2"><FiDollarSign size={16}/> Record & Print Receipt</button>
+                            <button onClick={handlePay} disabled={!payForm.tenant_id||!payForm.amount} className="btn-success flex items-center gap-2"><FiDollarSign size={16}/> Record &amp; Print Receipt</button>
                         </div>
                     </div>
                 </div>
