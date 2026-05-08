@@ -46,6 +46,10 @@ export default function BillingPage() {
     const [unpaidData, setUnpaidData] = useState<any[]>([]);
     const [repairing, setRepairing] = useState(false);
 
+    // ── Pagination ────────────────────────────────────────────────────────────
+    const [billPage, setBillPage] = useState(1);
+    const [billPageSize, setBillPageSize] = useState(20);
+
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         try {
@@ -106,6 +110,10 @@ export default function BillingPage() {
 
     // Tenants with bills from multiple months (arrears present)
     const tenantsWithArrears = Object.values(tenantGrouped).filter((arr: any) => arr.length > 1 || (arr.length === 1 && arr[0].status !== 'Paid'));
+
+    // ── Pagination for bills table ─────────────────────────────────────────────
+    const billTotalPages = Math.max(1, Math.ceil(bills.length / billPageSize));
+    const paginatedBills = bills.slice((billPage - 1) * billPageSize, billPage * billPageSize);
 
     if (loading) return (
         <div className="flex flex-col items-center justify-center h-64 gap-3">
@@ -205,7 +213,7 @@ export default function BillingPage() {
                     </select>
                 </div>
                 <div className="self-end">
-                    <button onClick={() => loadData(locationId)} className="btn-outline flex items-center gap-2">
+                    <button onClick={() => { setBillPage(1); loadData(locationId); }} className="btn-outline flex items-center gap-2">
                         <FiRefreshCw size={14} /> Apply
                     </button>
                 </div>
@@ -216,10 +224,11 @@ export default function BillingPage() {
             </div>
 
             {/* KPI Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
                 {[
                     { label: 'Total Billed', value: fmt(totalBilled), icon: FiDollarSign, color: '#6366f1', bg: '#eef2ff', sub: `${bills.length} bills` },
                     { label: 'Collected', value: fmt(totalPaid), icon: FiCheckCircle, color: '#10b981', bg: '#f0fdf4', sub: `${paidCount} fully paid` },
+                    { label: '✅ Paid Bills', value: paidCount, icon: FiCheckCircle, color: '#059669', bg: '#ecfdf5', sub: `${bills.length > 0 ? Math.round((paidCount / bills.length) * 100) : 0}% of all bills` },
                     { label: 'Outstanding', value: fmt(totalBalance), icon: FiAlertTriangle, color: '#ef4444', bg: '#fef2f2', sub: `${unpaidCount} unpaid, ${partialCount} partial` },
                     { label: 'Collection Rate', value: `${collectionRate}%`, icon: FiZap, color: collectionRate >= 80 ? '#10b981' : collectionRate >= 50 ? '#f59e0b' : '#ef4444', bg: collectionRate >= 80 ? '#f0fdf4' : collectionRate >= 50 ? '#fffbeb' : '#fef2f2', sub: collectionRate >= 80 ? '🌟 Excellent' : collectionRate >= 50 ? '⚠️ Needs work' : '🚨 Critical' },
                     { label: 'Tenants w/ Arrears', value: tenantsWithArrears.length, icon: FiCalendar, color: '#c2410c', bg: '#fff7ed', sub: 'Need WhatsApp reminder' },
@@ -344,12 +353,21 @@ export default function BillingPage() {
 
             {/* Bills Table */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
                     <div>
                         <h2 className="text-sm font-bold text-gray-900">📋 Bill Records — {monthFilter ? new Date(monthFilter + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'All Months'}</h2>
                         <p className="text-[11px] text-gray-400 mt-0.5">📱 WhatsApp reminder buttons available for each unpaid tenant</p>
                     </div>
-                    {bills.filter(b => b.status !== 'Paid' && b.arms_tenants?.phone).length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {/* Page size selector */}
+                        <select
+                            value={billPageSize}
+                            onChange={e => { setBillPageSize(Number(e.target.value)); setBillPage(1); }}
+                            className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 focus:outline-none"
+                        >
+                            {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+                        </select>
+                        {bills.filter(b => b.status !== 'Paid' && b.arms_tenants?.phone).length > 0 && (
                         <button
                             onClick={() => {
                                 const unpaid = bills.filter(b => b.status !== 'Paid' && b.arms_tenants?.phone);
@@ -364,6 +382,7 @@ export default function BillingPage() {
                             📱 Bulk Remind ({bills.filter(b => b.status !== 'Paid').length})
                         </button>
                     )}
+                    </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full border-collapse" style={{ fontSize: 12 }}>
@@ -389,7 +408,7 @@ export default function BillingPage() {
                                         <p className="text-xs">Click &quot;Generate Bills&quot; to create rent bills for {monthFilter}</p>
                                     </div>
                                 </td></tr>
-                            ) : bills.map(b => {
+                            ) : paginatedBills.map(b => {
                                 const isOverdue = b.status !== 'Paid' && new Date(b.due_date) < new Date();
                                 const hasPhone = !!b.arms_tenants?.phone;
                                 const unpaidMonths = [b.billing_month].filter(Boolean);
@@ -460,6 +479,48 @@ export default function BillingPage() {
                         )}
                     </table>
                 </div>
+
+                {/* ── Pagination ── */}
+                {bills.length > 0 && (
+                    <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
+                        <p className="text-xs text-gray-400">
+                            {Math.min((billPage - 1) * billPageSize + 1, bills.length)}–{Math.min(billPage * billPageSize, bills.length)} of {bills.length} bills
+                            <span className="ml-3 font-semibold text-green-600">✅ {paidCount} paid</span>
+                            <span className="ml-2 font-semibold text-red-500">❌ {unpaidCount} unpaid</span>
+                            {partialCount > 0 && <span className="ml-2 font-semibold text-amber-600">⏳ {partialCount} partial</span>}
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                onClick={() => setBillPage(p => Math.max(1, p - 1))}
+                                disabled={billPage === 1}
+                                className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
+                            >
+                                ‹
+                            </button>
+                            {Array.from({ length: billTotalPages }, (_, i) => i + 1)
+                                .filter(p => p === 1 || p === billTotalPages || Math.abs(p - billPage) <= 1)
+                                .reduce((acc: (number | string)[], p, i, arr) => {
+                                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push('...');
+                                    acc.push(p);
+                                    return acc;
+                                }, [])
+                                .map((p, i) => p === '...'
+                                    ? <span key={`dot-${i}`} className="px-2 text-gray-400 text-xs">…</span>
+                                    : <button key={p} onClick={() => setBillPage(p as number)}
+                                        className={`min-w-[32px] h-8 rounded-xl text-xs font-bold transition-all ${billPage === p ? 'bg-indigo-600 text-white shadow-md' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                                        {p}
+                                    </button>
+                                )}
+                            <button
+                                onClick={() => setBillPage(p => Math.min(billTotalPages, p + 1))}
+                                disabled={billPage === billTotalPages}
+                                className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
+                            >
+                                ›
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Tenants with no bills (need to generate) */}
