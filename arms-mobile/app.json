@@ -37,6 +37,9 @@
       "eas": {
         "projectId": "dce11d02-c600-4311-b932-da8a7ad42138"
       }
+    },
+    "autolinking": {
+      "exclude": ["expo-crypto"]
     }
   }
 }
