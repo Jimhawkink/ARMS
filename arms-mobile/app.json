@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -21,7 +21,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#4f46e5"
       },
-      "edgeToEdgeEnabled": true,
+      "edgeToEdgeEnabled": false,
       "package": "com.arms.tenantapp",
       "versionCode": 1,
       "permissions": [
@@ -32,6 +32,11 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "owner": "jimhawkins"
+    "owner": "jimhawkins",
+    "extra": {
+      "eas": {
+        "projectId": "dce11d02-c600-4311-b932-da8a7ad42138"
+      }
+    }
   }
 }
