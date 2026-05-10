@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Toaster } from 'react-hot-toast';
+import TopProgressBar from '@/components/TopProgressBar';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <script dangerouslySetInnerHTML={{ __html: `if(window.Capacitor){document.documentElement.classList.add('capacitor');}` }} />
             </head>
             <body className={inter.className}>
+                <TopProgressBar />
                 <Toaster
                     position="top-center"
                     toastOptions={{

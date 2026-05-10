@@ -6,6 +6,7 @@ import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSma
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
 import PaymentModal from '@/components/PaymentModal';
+import { topProgress } from '@/components/TopProgressBar';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const parseNoteTag = (notes: string, tag: string): number => {
@@ -107,10 +108,13 @@ export default function PaymentsPage() {
     // ── Load C2B / Jenga callbacks ─────────────────────────────────────────
     const loadCallbacks = async () => {
         setLoadingCallbacks(true);
+        topProgress.start();
         try {
             const { data } = await c2bSupabase.from('c2b_transactions').select('*').order('created_at', { ascending: false }).limit(100);
             setC2bPayments(data || []);
-        } catch { setC2bPayments([]); }
+        } catch { setC2bPayments([]); } finally {
+            topProgress.done();
+        }
         setLoadingCallbacks(false);
     };
 
@@ -185,13 +189,15 @@ export default function PaymentsPage() {
     const handleDeleteConfirm = async () => {
         if (!deletingPayment) return;
         setActionLoading(true);
-        try { await deletePayment(deletingPayment.payment_id); toast.success('Deleted & balances restored'); setDeletingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Delete failed'); }
+        topProgress.start();
+        try { await deletePayment(deletingPayment.payment_id); toast.success('Deleted & balances restored'); setDeletingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Delete failed'); } finally { topProgress.done(); }
         setActionLoading(false);
     };
 
     const handleEditSave = async () => {
         if (!editingPayment) return; setActionLoading(true);
-        try { await updatePaymentNotes(editingPayment.payment_id, { reference_no: editForm.reference_no || undefined, notes: editForm.notes_display }); toast.success('Updated'); setEditingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Update failed'); }
+        topProgress.start();
+        try { await updatePaymentNotes(editingPayment.payment_id, { reference_no: editForm.reference_no || undefined, notes: editForm.notes_display }); toast.success('Updated'); setEditingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Update failed'); } finally { topProgress.done(); }
         setActionLoading(false);
     };
 
@@ -228,6 +234,7 @@ export default function PaymentsPage() {
         const phone = jengaStkPhone || tenant?.phone || '';
         if (!phone) { toast.error('Tenant phone number required for STK push'); return; }
         setJengaStkSending(true); setJengaStkResult(null);
+        topProgress.start();
         try {
             const res = await fetch('/api/jenga/stk-push', {
                 method: 'POST',
@@ -247,7 +254,7 @@ export default function PaymentsPage() {
             } else {
                 toast.error(data.error || 'STK Push failed');
             }
-        } catch (e: any) { toast.error(e.message); setJengaStkResult({ error: e.message }); }
+        } catch (e: any) { toast.error(e.message); setJengaStkResult({ error: e.message }); } finally { topProgress.done(); }
         setJengaStkSending(false);
     };
 
@@ -523,7 +530,7 @@ export default function PaymentsPage() {
                                                 className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-extrabold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                                 style={{background:'linear-gradient(135deg,#f59e0b,#d97706)',color:'white',boxShadow:'0 4px 14px rgba(245,158,11,0.4)'}}>
                                                 {jengaStkSending ? (
-                                                    <><div className="spinner" style={{width:16,height:16,borderColor:'white transparent white transparent'}}/> Sending STK Push…</>
+                                                    <><FiSend size={16}/> Sending STK Push…</>
                                                 ) : (
                                                     <><FiSend size={16}/> Send {jengaStkChannel==='mpesa' ? 'M-Pesa' : 'Equitel'} STK Push — KES {payForm.amount || '0'}</>
                                                 )}
@@ -558,13 +565,13 @@ export default function PaymentsPage() {
                                             {paymentSource==='mpesa' ? '📱 M-Pesa Transactions — click a row to select' : '🔗 Jenga / C2B Transactions — click a row to select'}
                                         </p>
                                         <button onClick={loadCallbacks} disabled={loadingCallbacks} className="text-[10px] font-bold px-2 py-1 rounded-lg text-indigo-600 hover:bg-indigo-50 flex items-center gap-1">
-                                            {loadingCallbacks ? <div className="spinner" style={{width:10,height:10}}/> : <FiRefreshCw size={10}/>} Refresh
+                                            {loadingCallbacks ? <FiRefreshCw size={10} className="animate-spin"/> : <FiRefreshCw size={10}/>} Refresh
                                         </button>
                                     </div>
                                     <div className="rounded-2xl border overflow-hidden" style={{borderColor:'#e2e8f0'}}>
                                         {loadingCallbacks ? (
                                             <div className="flex items-center justify-center py-8 gap-2">
-                                                <div className="spinner" style={{width:16,height:16}}/>
+                                                <FiRefreshCw size={16} className="animate-spin text-indigo-400"/>
                                                 <span className="text-xs text-gray-400">Loading transactions…</span>
                                             </div>
                                         ) : (
@@ -682,7 +689,7 @@ export default function PaymentsPage() {
                                 <div className="rounded-2xl overflow-hidden border" style={{borderColor:'#c7d2fe'}}>
                                     <div className="px-4 py-2.5 text-xs font-bold text-white" style={{background:'linear-gradient(90deg,#4f46e5,#7c3aed)'}}>📊 Actual Arrears from Billing Records</div>
                                     {loadingArrears ? (
-                                        <div className="flex items-center justify-center p-4 gap-2"><div className="spinner" style={{width:14,height:14}}/><span className="text-xs text-gray-400">Calculating…</span></div>
+                                        <div className="flex items-center justify-center p-4 gap-2"><FiRefreshCw size={14} className="animate-spin text-indigo-400"/><span className="text-xs text-gray-400">Calculating…</span></div>
                                     ) : tenantArrearData ? (
                                         <>
                                             <div className="grid grid-cols-3 gap-0">
@@ -809,7 +816,7 @@ export default function PaymentsPage() {
                         </div>
                         <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
                             <button onClick={() => setEditingPayment(null)} className="btn-outline">Cancel</button>
-                            <button onClick={handleEditSave} disabled={actionLoading} className="btn-primary flex items-center gap-2">{actionLoading?<div className="spinner" style={{width:14,height:14}}/>:<FiSave size={14}/>} Save</button>
+                            <button onClick={handleEditSave} disabled={actionLoading} className="btn-primary flex items-center gap-2">{actionLoading?<FiSave size={14} className="animate-pulse"/>:<FiSave size={14}/>} Save</button>
                         </div>
                     </div>
                 </div>
@@ -828,7 +835,7 @@ export default function PaymentsPage() {
                         </div>
                         <div className="px-6 pb-6 flex gap-3">
                             <button onClick={() => setDeletingPayment(null)} className="btn-outline flex-1">Cancel</button>
-                            <button onClick={handleDeleteConfirm} disabled={actionLoading} className="flex-1 px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition flex items-center justify-center gap-2">{actionLoading?<div className="spinner" style={{width:14,height:14}}/>:<FiTrash2 size={14}/>} Delete</button>
+                            <button onClick={handleDeleteConfirm} disabled={actionLoading} className="flex-1 px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition flex items-center justify-center gap-2">{actionLoading?<FiTrash2 size={14} className="animate-pulse"/>:<FiTrash2 size={14}/>} Delete</button>
                         </div>
                     </div>
                 </div>

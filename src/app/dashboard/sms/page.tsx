@@ -13,6 +13,7 @@ import {
     FiSearch, FiChevronLeft, FiChevronRight, FiSave, FiZap,
     FiPhone, FiMail, FiToggleLeft, FiToggleRight, FiInfo,
 } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 const C = {
@@ -214,6 +215,7 @@ export default function MessagingHubPage() {
         if (channel !== 'SMS' && !waConfig?.phoneNumberId) return toast.error('Configure WhatsApp settings first (Settings page)');
 
         setSending(true);
+        topProgress.start();
         let sent = 0, failed = 0;
 
         for (const tenant of recipients) {
@@ -266,6 +268,7 @@ export default function MessagingHubPage() {
         toast.success(`✅ ${channel}: Sent ${sent}${failed > 0 ? `, Failed ${failed}` : ''}`);
         setMessage(''); setSelectedTenants([]); setSendToAll(false); setSendToOverdue(false);
         loadData(globalLocationId);
+        topProgress.done();
         setSending(false);
     };
 
@@ -280,6 +283,7 @@ export default function MessagingHubPage() {
         if (!templateText) return toast.error('Select a template');
 
         setBlasting(true);
+        topProgress.start();
         setBlastProgress({ sent: 0, failed: 0, total: recipients.length });
         let sent = 0, failed = 0;
 
@@ -309,6 +313,7 @@ export default function MessagingHubPage() {
         }
 
         toast.success(`🚀 Blast complete! Sent: ${sent}, Failed: ${failed}`);
+        topProgress.done();
         setBlasting(false);
         loadData(globalLocationId);
     };
@@ -615,8 +620,8 @@ export default function MessagingHubPage() {
                             <button onClick={handleSend} disabled={sending}
                                 className="w-full py-3 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
                                 style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)' }}>
-                                {sending ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSend size={14} />}
-                                {sending ? 'Sending…' : `Send ${channel} to ${sendToOverdue ? overdue.length : sendToAll ? tenants.length : selectedTenants.length} recipients`}
+                                {sending ? 'Sending…' : <FiSend size={14} />}
+                                {sending ? '' : `Send ${channel} to ${sendToOverdue ? overdue.length : sendToAll ? tenants.length : selectedTenants.length} recipients`}
                             </button>
                         </div>
                     </div>
@@ -734,8 +739,7 @@ export default function MessagingHubPage() {
                             <button onClick={handleBlast} disabled={blasting}
                                 className="w-full py-3 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
                                 style={{ background: 'linear-gradient(135deg,#dc2626,#b91c1c)' }}>
-                                {blasting ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiZap size={14} />}
-                                {blasting ? 'Blasting…' : `🚀 Blast to ${blastTarget === 'overdue' ? overdue.length : tenants.length} tenants`}
+                                {blasting ? '🚀 Blasting…' : `🚀 Blast to ${blastTarget === 'overdue' ? overdue.length : tenants.length} tenants`}
                             </button>
                         </div>
                     </div>

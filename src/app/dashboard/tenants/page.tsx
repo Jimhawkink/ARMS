@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent, getMoveInPayment, updateMoveInPayment } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
 
 // ── Color tokens per column ────────────────────────────────────────────────────
@@ -174,11 +175,14 @@ export default function TenantsPage() {
     // ── Sync all tenant balances by generating missing bills ──────────────────
     const handleSyncBalances = async () => {
         setSyncing(true);
+        topProgress.start();
         try {
             const result = await generateMonthlyBills(currentMonth, globalLocationId ?? undefined);
             toast.success(`✅ Synced! ${result.generated} bills generated, ${result.catchUpMonths || 0} catch-up months processed.`);
             loadData(globalLocationId);
-        } catch (err: any) { toast.error(err.message || 'Sync failed'); }
+        } catch (err: any) { toast.error(err.message || 'Sync failed'); } finally {
+            topProgress.done();
+        }
         setSyncing(false);
     };
 
@@ -319,9 +323,25 @@ export default function TenantsPage() {
             payload.mobile_pin = pinValue.slice(0, 6);
         }
 
-        // ── Close modal immediately for snappy UX ────────────────────────────
-        setShowModal(false);
+        // ── For new tenant: clear form immediately so modal is ready for next entry ──
+        // For edit: close the modal immediately
+        if (!editItem) {
+            setEditItem(null);
+            setForm({
+                tenant_name: '', phone: '', email: '', id_number: '',
+                unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
+                monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
+                emergency_contact: '', emergency_phone: '', notes: '',
+                password_hash: '',
+                is_on_vacation: isVacationMonth(currentMonth),
+                initial_payment: '',
+            });
+            // Keep modal open, cleared and ready for next tenant
+        } else {
+            setShowModal(false);
+        }
 
+        topProgress.start();
         try {
             if (editItem) {
                 await updateTenant(editItem.tenant_id, payload);
@@ -338,7 +358,9 @@ export default function TenantsPage() {
         } catch (err: any) {
             toast.error(err.message || 'Save failed');
             // Re-open modal on failure so user can retry
-            setShowModal(true);
+            if (editItem) setShowModal(true);
+        } finally {
+            topProgress.done();
         }
         setSaving(false);
     };
@@ -380,7 +402,7 @@ export default function TenantsPage() {
                     <button onClick={handleSyncBalances} disabled={syncing}
                         className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition border"
                         style={{ background: '#fff7ed', color: '#c2410c', borderColor: '#fed7aa' }}>
-                        {syncing ? <div className="spinner" style={{ width: 14, height: 14 }} /> : '🔄'}
+                        🔄
                         {syncing ? 'Syncing…' : 'Sync Balances'}
                     </button>
                     <button onClick={openAdd} className="btn-primary flex items-center gap-2"><FiPlus size={15} /> Add Tenant</button>
@@ -1165,7 +1187,7 @@ export default function TenantsPage() {
                             <button onClick={handleSave} id="tenants-save-btn" disabled={saving}
                                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-60"
                                 style={{ background: editItem ? 'linear-gradient(135deg,#4f46e5,#7c3aed)' : 'linear-gradient(135deg,#059669,#0d9488)' }}>
-                                {saving ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSave size={14} />}
+                                <FiSave size={14} />
                                 {editItem ? '💾 Update Tenant' : '✅ Register & Auto-Generate Bills'}
                             </button>
                         </div>
