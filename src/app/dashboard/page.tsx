@@ -19,6 +19,7 @@ import {
     RadialLinearScale, RadarController
 } from 'chart.js';
 import { Bar, Line, Doughnut, Radar } from 'react-chartjs-2';
+import { topProgress } from '@/components/TopProgressBar';
 
 ChartJS.register(
     CategoryScale, LinearScale, BarElement, LineElement, PointElement,
@@ -256,6 +257,7 @@ export default function DashboardPage() {
     //  Data loading 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const lid = locId ?? undefined;
             const [s, rp, ur, an, mg, apd, nr] = await Promise.all([
@@ -266,7 +268,7 @@ export default function DashboardPage() {
             setStats(s); setRecentPayments(rp); setUnpaidRentData(ur);
             setAnalytics(an); setMonthGrid(mg); setArrearsPaymentsDetail(apd);
             setNetRevenue(nr);
-        } catch (err) { console.error(err); }
+        } catch (err) { console.error(err); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

@@ -123,6 +123,7 @@ export default function MessagingHubPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [config, logs, rules, tenantList, overdueList, msgConfig] = await Promise.all([
                 getSMSConfig(),
@@ -149,7 +150,7 @@ export default function MessagingHubPage() {
             setReminderRules(rules);
             setTenants(tenantList.filter((t: any) => t.status === 'Active'));
             setOverdue(overdueList);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

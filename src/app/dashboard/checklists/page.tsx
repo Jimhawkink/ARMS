@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getChecklists, getChecklistTemplates, createChecklist, getChecklistItems, updateChecklistItem, completeChecklist, getTenants, getUnits } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiClipboard, FiPlus, FiCheck, FiEye, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const C = {
@@ -39,10 +40,11 @@ export default function ChecklistsPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [cl, tmpl, t, u] = await Promise.all([getChecklists(locId ? {} : undefined), getChecklistTemplates(), getTenants(locId ?? undefined), getUnits(locId ?? undefined)]);
             setChecklists(cl); setTemplates(tmpl); setTenants(t.filter((x: any) => x.status === 'Active')); setUnits(u);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

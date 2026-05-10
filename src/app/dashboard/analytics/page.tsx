@@ -11,6 +11,7 @@ import {
 } from 'chart.js';
 import { FiRefreshCw, FiPrinter, FiTrendingUp, FiShield, FiMapPin, FiBarChart2, FiZap } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import RevenueSection from './RevenueSection';
 import OccupancyRiskSection from './OccupancyRiskSection';
 import LocationBenchmarkSection from './LocationBenchmarkSection';
@@ -44,6 +45,7 @@ export default function SuperAnalyticsPage() {
 
     const loadAll = useCallback(async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const [s, l, t, u, p, arr, an, exp] = await Promise.all([
                 getDashboardStats(),
@@ -74,7 +76,7 @@ export default function SuperAnalyticsPage() {
         } catch (e) {
             toast.error('Failed to load analytics data');
             console.error(e);
-        }
+        } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

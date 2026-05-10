@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getUtilityTypes, getMeterReadings, addMeterReading, getLatestReading, getUtilityBills, generateUtilityBills, getUtilityRates, getUnits, getTenants } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiDroplet, FiZap, FiPlus, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const C = {
@@ -45,6 +46,7 @@ export default function UtilitiesPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [types, readingData, billData, rateData, unitData, tenantData] = await Promise.all([
                 getUtilityTypes(),
@@ -55,7 +57,7 @@ export default function UtilitiesPage() {
                 getTenants(locId ?? undefined),
             ]);
             setUtilityTypes(types); setReadings(readingData); setBills(billData); setRates(rateData); setUnits(unitData); setTenants(tenantData.filter((t: any) => t.status === 'Active'));
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

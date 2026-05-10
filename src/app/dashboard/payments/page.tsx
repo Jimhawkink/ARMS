@@ -74,6 +74,7 @@ export default function PaymentsPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [p, t, l, m] = await Promise.all([
                 getPayments({ locationId: locId ?? undefined }),
@@ -83,7 +84,7 @@ export default function PaymentsPage() {
             ]);
             setPayments(p); setTenants(t.filter((te: any) => te.status === 'Active'));
             setLocations(l); setMpesaTxns(m);
-        } catch { toast.error('Failed to load payments'); }
+        } catch { toast.error('Failed to load payments'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

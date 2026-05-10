@@ -132,6 +132,7 @@ export default function TenantsPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [t, u, l, ur] = await Promise.all([
                 getTenants(locId ?? undefined),
@@ -158,7 +159,7 @@ export default function TenantsPage() {
             setTenants(t);
             setUnits(u);
             setLocations(l);
-        } catch { toast.error('Failed to load tenants'); }
+        } catch { toast.error('Failed to load tenants'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

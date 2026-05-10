@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getExpenses, addExpense, updateExpense, deleteExpense, getExpenseCategories, getExpenseSummary, getLocations } from '@/lib/supabase';
 import { FiPlus, FiEdit2, FiTrash2, FiX, FiSearch, FiTrendingDown, FiRefreshCw, FiChevronLeft, FiChevronRight, FiSave, FiTag, FiMapPin } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
 const PAGE_SIZES = [10, 25, 50];
@@ -104,6 +105,7 @@ export default function ExpenseMasterPage() {
 
     const loadData = useCallback(async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const filters: any = {};
             if (filterLocation) filters.locationId = filterLocation;
@@ -117,7 +119,7 @@ export default function ExpenseMasterPage() {
                 getExpenseSummary(filterLocation || undefined),
             ]);
             setExpenses(exps); setLocations(locs); setCategories(cats); setSummary(summ);
-        } catch (e) { console.error(e); toast.error('Failed to load expenses'); }
+        } catch (e) { console.error(e); toast.error('Failed to load expenses'); } finally { topProgress.done(); }
         setLoading(false);
     }, [filterCategory, filterLocation, filterDateFrom, filterDateTo]);
 

@@ -5,6 +5,7 @@ import { getRolePermissions, updateRolePermissions, getARMSUsers, createARMSUser
 import { parseStoredUser } from '@/lib/rbac';
 import toast from 'react-hot-toast';
 import { FiShield, FiCheck, FiX, FiRefreshCw, FiPlus, FiEdit2, FiUserX, FiSave, FiEye, FiEyeOff } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 const PERMISSION_LABELS: Record<string, string> = {
     can_manage_tenants: 'Manage Tenants',
@@ -65,10 +66,11 @@ export default function UsersAccessPage() {
 
     const loadData = useCallback(async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const [r, u] = await Promise.all([getRolePermissions(), getARMSUsers()]);
             setRoles(r); setUsers(u);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 
@@ -86,6 +88,7 @@ export default function UsersAccessPage() {
         if (!form.name.trim() || !form.user_name.trim()) return toast.error('Name and username are required');
         if (!editUser && !form.password_hash.trim()) return toast.error('Password is required for new users');
         setSaving(true);
+        topProgress.start();
         try {
             if (editUser) {
                 const updates: any = { name: form.name, email: form.email, phone: form.phone, user_role: form.user_role };
@@ -99,7 +102,9 @@ export default function UsersAccessPage() {
             setShowAddUser(false); setEditUser(null);
             setForm({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager' });
             loadData();
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally {
+            topProgress.done();
+        }
         setSaving(false);
     };
 
@@ -165,7 +170,7 @@ export default function UsersAccessPage() {
                                 <div className="col-span-2 flex gap-3 justify-end pt-2">
                                     <button onClick={() => { setShowAddUser(false); setEditUser(null); }} className="btn-outline flex items-center gap-2"><FiX size={14} /> Cancel</button>
                                     <button onClick={handleSaveUser} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)' }}>
-                                        {saving ? <div className="spinner" style={{ width: 14, height: 14 }} /> : <FiSave size={14} />} {editUser ? 'Update User' : 'Create User'}
+                                        <FiSave size={14} /> {editUser ? 'Update User' : 'Create User'}
                                     </button>
                                 </div>
                             </div>

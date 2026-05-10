@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { getLocations, addLocation, updateLocation, deleteLocation, getLocationSummary } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 export default function LocationsPage() {
     const [locations, setLocations] = useState<any[]>([]);
@@ -14,13 +15,16 @@ export default function LocationsPage() {
 
     const loadData = async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const locs = await getLocations();
             setLocations(locs);
             const sums: Record<number, any> = {};
             for (const loc of locs) { sums[loc.location_id] = await getLocationSummary(loc.location_id); }
             setSummaries(sums);
-        } catch { toast.error('Failed to load'); }
+        } catch { toast.error('Failed to load'); } finally {
+            topProgress.done();
+        }
         setLoading(false);
     };
     useEffect(() => { loadData(); }, []);
@@ -42,7 +46,11 @@ export default function LocationsPage() {
         try { await deleteLocation(id); toast.success('Removed'); loadData(); } catch { toast.error('Failed'); }
     };
 
-    if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner"></div></div>;
+    if (loading) return (
+        <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <p className="text-sm font-bold text-gray-500">Loading locations…</p>
+        </div>
+    );
 
     return (
         <div className="animate-fadeIn space-y-6">

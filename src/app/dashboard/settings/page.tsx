@@ -8,6 +8,7 @@ import {
     FiCheckCircle, FiCopy, FiRefreshCw, FiZap, FiShield, FiLink,
     FiGlobe
 } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 /* ─── Section definitions ─── */
 const settingGroups = [
@@ -450,12 +451,15 @@ export default function SettingsPage() {
 
     const loadSettings = async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const s = await getSettings();
             const map: Record<string, string> = {};
             s.forEach((item: any) => { map[item.setting_key] = item.setting_value || ''; });
             setSettings(map);
-        } catch { toast.error('Failed to load settings'); }
+        } catch { toast.error('Failed to load settings'); } finally {
+            topProgress.done();
+        }
         setLoading(false);
     };
 
@@ -465,6 +469,7 @@ export default function SettingsPage() {
 
     const handleSave = async () => {
         setSaving(true);
+        topProgress.start();
         try {
             const entries = Object.entries(settings);
             for (const [key, value] of entries) {
@@ -472,15 +477,17 @@ export default function SettingsPage() {
                     .upsert({ setting_key: key, setting_value: value }, { onConflict: 'setting_key' });
             }
             toast.success('✅ All settings saved successfully!');
-        } catch (err: any) { toast.error(err.message || 'Failed to save'); }
+        } catch (err: any) { toast.error(err.message || 'Failed to save'); } finally {
+            topProgress.done();
+        }
         setSaving(false);
     };
 
     const activeGroup = settingGroups.find(g => g.key === activeTab) || settingGroups[0];
 
     if (loading) return (
-        <div className="flex items-center justify-center h-64">
-            <div className="spinner" style={{ width: 32, height: 32 }} />
+        <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <p className="text-sm font-bold text-gray-500">Loading settings…</p>
         </div>
     );
 

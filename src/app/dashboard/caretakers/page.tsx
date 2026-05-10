@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getCaretakers, addCaretaker, updateCaretaker, getCaretakerSalaries, recordCaretakerSalary, getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiUserCheck, FiPlus, FiDollarSign, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const C = {
@@ -36,10 +37,11 @@ export default function CaretakersPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [c, s, l] = await Promise.all([getCaretakers(locId ?? undefined), getCaretakerSalaries(locId ? { locationId: locId } : undefined), getLocations()]);
             setCaretakers(c); setSalaries(s); setLocations(l);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

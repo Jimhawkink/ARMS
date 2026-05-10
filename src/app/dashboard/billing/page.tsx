@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getBilling, generateMonthlyBills, getLocations, getTenants, calculateUnpaidRent, isVacationMonth, repairVacationBills } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiFileText, FiRefreshCw, FiDollarSign, FiCheckCircle, FiAlertTriangle, FiPhone, FiCalendar, FiZap, FiInfo } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 // ── WhatsApp reminder helper ──────────────────────────────────────────────────
 function buildWhatsAppLink(phone: string, tenantName: string, amount: number, months: string[], locationName: string) {
@@ -52,6 +53,7 @@ export default function BillingPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [b, l, t, ur] = await Promise.all([
                 getBilling({ locationId: locId ?? undefined, month: monthFilter || undefined, status: statusFilter || undefined }),
@@ -60,7 +62,7 @@ export default function BillingPage() {
                 calculateUnpaidRent(locId ?? undefined),
             ]);
             setBills(b); setLocations(l); setTenants(t); setUnpaidData(ur || []);
-        } catch { toast.error('Failed to load billing data'); }
+        } catch { toast.error('Failed to load billing data'); } finally { topProgress.done(); }
         setLoading(false);
     }, [monthFilter, statusFilter]);
 
@@ -77,6 +79,7 @@ export default function BillingPage() {
         if (!monthFilter) { toast.error('Select a month first'); return; }
         setGenerating(true);
         setGenResult(null);
+        topProgress.start();
         try {
             const result = await generateMonthlyBills(monthFilter, locationId ?? undefined);
             setGenResult({ generated: result.generated, skipped: result.skipped, catchUpMonths: result.catchUpMonths, errors: result.errors });
@@ -87,7 +90,9 @@ export default function BillingPage() {
             }
             if (result.errors.length > 0) result.errors.forEach(e => toast.error(e));
             loadData(locationId);
-        } catch (err: any) { toast.error(err.message || 'Failed to generate bills'); }
+        } catch (err: any) { toast.error(err.message || 'Failed to generate bills'); } finally {
+            topProgress.done();
+        }
         setGenerating(false);
     };
 
@@ -139,22 +144,25 @@ export default function BillingPage() {
                     </button>
                     <button onClick={handleGenerate} disabled={generating}
                         className="btn-success flex items-center gap-2 shadow-md">
-                        {generating ? <div className="spinner" style={{ width: 16, height: 16 }} /> : <FiZap size={16} />}
+                        <FiZap size={16} />
                         Generate Bills for {monthFilter}
                     </button>
                     <button onClick={async () => {
                         setRepairing(true);
+                        topProgress.start();
                         try {
                             const r = await repairVacationBills();
                             if (r.fixed > 0) toast.success(`✅ Fixed ${r.fixed} vacation bill(s)`);
                             else toast('No bills needed fixing', { icon: 'ℹ️' });
                             if (r.errors.length > 0) r.errors.forEach(e => toast.error(e));
                             loadData(locationId);
-                        } catch (err: any) { toast.error(err.message); }
+                        } catch (err: any) { toast.error(err.message); } finally {
+                            topProgress.done();
+                        }
                         setRepairing(false);
                     }} disabled={repairing}
                         className="btn-outline flex items-center gap-2 text-orange-700 border-orange-300 hover:bg-orange-50">
-                        {repairing ? <div className="spinner" style={{ width: 16, height: 16 }} /> : '🏖️'}
+                        🏖️
                         Fix Vacation Bills
                     </button>
                 </div>

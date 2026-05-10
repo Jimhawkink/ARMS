@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getPrepaidTokens, addPrepaidToken, getUtilityTypes, getTenants } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiZap, FiPlus, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const C = {
@@ -33,10 +34,11 @@ export default function PrepaidTokensPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [t, ut, tn] = await Promise.all([getPrepaidTokens(locId ? { locationId: locId } : undefined), getUtilityTypes(), getTenants(locId ?? undefined)]);
             setTokens(t); setUtilityTypes(ut.filter((u: any) => u.billing_method === 'prepaid')); setTenants(tn.filter((x: any) => x.status === 'Active'));
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { calculateUnpaidRent, getLocations } from '@/lib/supabase';
 import { FiSearch, FiEye, FiAlertTriangle, FiMapPin, FiUsers, FiDollarSign, FiCalendar, FiX, FiCreditCard, FiRefreshCw, FiPrinter, FiChevronLeft, FiChevronRight, FiPhone } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
 const PAGE_SIZES = [10, 25, 50];
@@ -92,6 +93,7 @@ export default function UnpaidRentPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [unpaidData, locs] = await Promise.all([
                 calculateUnpaidRent(locId ?? undefined),
@@ -99,7 +101,7 @@ export default function UnpaidRentPage() {
             ]);
             setTenants(unpaidData || []);
             setLocations(locs || []);
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error(e); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

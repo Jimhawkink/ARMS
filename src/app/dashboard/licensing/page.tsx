@@ -5,6 +5,7 @@ import { parseStoredUser } from '@/lib/rbac';
 import { createClient } from '@supabase/supabase-js';
 import toast from 'react-hot-toast';
 import { FiKey, FiPlus, FiRefreshCw, FiCopy, FiCheck, FiX, FiShield, FiAlertTriangle, FiCalendar, FiUser } from 'react-icons/fi';
+import { topProgress } from '@/components/TopProgressBar';
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -69,6 +70,7 @@ export default function LicensingPage() {
 
         setGenerating(true);
         setGeneratedKey(null);
+        topProgress.start();
         try {
             const res = await fetch('/api/license/generate', {
                 method: 'POST',
@@ -91,6 +93,8 @@ export default function LicensingPage() {
             loadLicenses();
         } catch (e: any) {
             toast.error(e.message);
+        } finally {
+            topProgress.done();
         }
         setGenerating(false);
     };
@@ -98,6 +102,7 @@ export default function LicensingPage() {
     const handleRevoke = async (licenseId: string, clientName: string) => {
         if (!confirm(`Revoke license for "${clientName}"?\n\nThis will immediately block access on their machine. This action cannot be undone.`)) return;
         setRevoking(licenseId);
+        topProgress.start();
         try {
             const res = await fetch('/api/license/revoke', {
                 method: 'POST',
@@ -110,6 +115,8 @@ export default function LicensingPage() {
             loadLicenses();
         } catch (e: any) {
             toast.error(e.message);
+        } finally {
+            topProgress.done();
         }
         setRevoking(null);
     };
@@ -249,7 +256,7 @@ export default function LicensingPage() {
                         <button onClick={handleGenerate} disabled={generating}
                             className="w-full py-3 rounded-xl text-sm font-bold text-white transition shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
                             style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
-                            {generating ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Generating…</> : <>🔑 Generate License Key</>}
+                            {generating ? <>Generating…</> : <>🔑 Generate License Key</>}
                         </button>
 
                         {/* Generated key display */}
@@ -333,7 +340,7 @@ export default function LicensingPage() {
                                         <button onClick={() => handleRevoke(lic.license_id, lic.client_name)}
                                             disabled={revoking === lic.license_id}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition disabled:opacity-50 flex-shrink-0">
-                                            {revoking === lic.license_id ? <div className="spinner" style={{ width: 12, height: 12 }} /> : <FiX size={12} />}
+                                            <FiX size={12} />
                                             Revoke
                                         </button>
                                     )}

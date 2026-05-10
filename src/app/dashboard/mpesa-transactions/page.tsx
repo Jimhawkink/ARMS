@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getMpesaTransactions, getLocations, getTenants, supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import {
     FiSearch, FiRefreshCw, FiX, FiChevronLeft, FiChevronRight,
     FiSmartphone, FiDollarSign, FiHash, FiClock, FiMapPin,
@@ -39,12 +40,13 @@ export default function MpesaTransactionsPage() {
 
     const loadData = useCallback(async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const { data: txns } = await supabase.from('arms_mpesa_transactions')
                 .select('*').order('created_at', { ascending: false }).limit(5000);
             const [t, l] = await Promise.all([getTenants(), getLocations()]);
             setAllTxns(txns || []); setTenants(t); setLocations(l);
-        } catch { toast.error('Failed to load M-Pesa data'); }
+        } catch { toast.error('Failed to load M-Pesa data'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

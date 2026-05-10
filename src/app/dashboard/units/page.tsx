@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getUnits, addUnit, updateUnit, deleteUnit, getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiPlus, FiEdit2, FiTrash2, FiX, FiSave, FiSearch, FiRefreshCw, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
@@ -55,10 +56,11 @@ export default function UnitsPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [u, l] = await Promise.all([getUnits(locId ?? undefined), getLocations()]);
             setUnits(u); setLocations(l);
-        } catch { toast.error('Failed to load units'); }
+        } catch { toast.error('Failed to load units'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

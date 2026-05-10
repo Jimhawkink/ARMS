@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getTenants, getLocations, getTenantStatement, getPayments, calculateUnpaidRent, getLocationSummary, getUnits, getProfitAndLoss, getCashFlowStatement, getOccupancyAndROI } from '@/lib/supabase';
 import { FiPrinter, FiRefreshCw, FiChevronRight, FiTrendingUp, FiTrendingDown, FiBarChart2, FiMapPin, FiUsers, FiDollarSign, FiAlertTriangle, FiCalendar, FiHome, FiCheckCircle } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
 const pct = (a: number, b: number) => b > 0 ? Math.round((a / b) * 100) : 0;
@@ -94,6 +95,7 @@ export default function ReportsPage() {
 
     const loadAll = useCallback(async () => {
         setLoading(true);
+        topProgress.start();
         try {
             const [t, l, u, p, arr] = await Promise.all([
                 getTenants(),
@@ -116,7 +118,7 @@ export default function ReportsPage() {
                 };
             }));
             setLocationSummaries(summaries);
-        } catch (e) { toast.error('Failed to load analytics'); console.error(e); }
+        } catch (e) { toast.error('Failed to load analytics'); console.error(e); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 
@@ -197,10 +199,13 @@ export default function ReportsPage() {
     const loadStatement = async () => {
         if (!selectedTenant) return;
         setStmtLoading(true);
+        topProgress.start();
         try {
             const data = await getTenantStatement(selectedTenant);
             setStatement(data);
-        } catch { toast.error('Failed to load statement'); }
+        } catch { toast.error('Failed to load statement'); } finally {
+            topProgress.done();
+        }
         setStmtLoading(false);
     };
 
@@ -846,7 +851,7 @@ export default function ReportsPage() {
                             <button onClick={loadStatement} disabled={!selectedTenant || stmtLoading}
                                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90"
                                 style={{ background: 'linear-gradient(135deg,#0891b2,#06b6d4)' }}>
-                                {stmtLoading ? <div className="spinner" style={{ width: 14, height: 14 }} /> : '📄'}
+                                📄
                                 Generate Statement
                             </button>
                         </div>

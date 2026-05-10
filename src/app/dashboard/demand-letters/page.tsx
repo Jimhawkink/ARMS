@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getDemandLetters, createDemandLetter, updateDemandLetter, getOverdueTenants, getTenants } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiFileText, FiPlus, FiPrinter, FiSend, FiCheck, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const LETTER_TEMPLATES: Record<string, { subject: string; body: string }> = {
@@ -44,10 +45,11 @@ export default function DemandLettersPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [l, t, o] = await Promise.all([getDemandLetters(locId ? { locationId: locId } : undefined), getTenants(locId ?? undefined), getOverdueTenants(locId ?? undefined as any)]);
             setLetters(l); setTenants(t.filter((x: any) => x.status === 'Active')); setOverdue(o);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

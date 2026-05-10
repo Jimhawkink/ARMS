@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getPettyCash, addPettyCash, getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { topProgress } from '@/components/TopProgressBar';
 import { FiDollarSign, FiPlus, FiTrendingUp, FiTrendingDown, FiRefreshCw, FiSearch, FiChevronLeft, FiChevronRight, FiX, FiSave } from 'react-icons/fi';
 
 const C = {
@@ -29,10 +30,11 @@ export default function PettyCashPage() {
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
+        topProgress.start();
         try {
             const [e, l] = await Promise.all([getPettyCash(globalLocationId ? { locationId: globalLocationId } : undefined), getLocations()]);
             setEntries(e); setLocations(l);
-        } catch (e: any) { toast.error(e.message); }
+        } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
 

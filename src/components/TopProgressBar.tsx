@@ -85,7 +85,7 @@ export default function TopProgressBar() {
             }}
         >
             {/* Track */}
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(99,102,241,0.12)' }} />
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(16,185,129,0.1)' }} />
             {/* Bar */}
             <div
                 style={{
@@ -94,7 +94,7 @@ export default function TopProgressBar() {
                     left: 0,
                     height: '100%',
                     width: `${width}%`,
-                    background: 'linear-gradient(90deg, #4f46e5, #6366f1, #818cf8)',
+                    background: 'linear-gradient(90deg, #059669, #10b981, #34d399)',
                     borderRadius: '0 2px 2px 0',
                     transition: width === 100
                         ? 'width 0.15s ease-out'
@@ -102,7 +102,7 @@ export default function TopProgressBar() {
                     opacity: fading ? 0 : 1,
                     transitionProperty: fading ? 'opacity' : 'width',
                     transitionDuration: fading ? '0.3s' : undefined,
-                    boxShadow: '0 0 8px rgba(99,102,241,0.6), 0 0 2px rgba(99,102,241,0.4)',
+                    boxShadow: '0 0 8px rgba(16,185,129,0.7), 0 0 2px rgba(16,185,129,0.5)',
                 }}
             />
             {/* Glowing tip */}
@@ -113,7 +113,7 @@ export default function TopProgressBar() {
                     left: `${width}%`,
                     width: 80,
                     height: 5,
-                    background: 'radial-gradient(ellipse at left, rgba(129,140,248,0.8) 0%, transparent 70%)',
+                    background: 'radial-gradient(ellipse at left, rgba(52,211,153,0.9) 0%, transparent 70%)',
                     transform: 'translateX(-100%)',
                     opacity: fading ? 0 : 1,
                     transition: fading ? 'opacity 0.3s' : undefined,
