@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
-import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent } from '@/lib/supabase';
+import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent, getMoveInPayment, updateMoveInPayment } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
@@ -255,8 +255,10 @@ export default function TenantsPage() {
         });
         setShowModal(true);
     };
-    const openEdit = (t: any) => {
+    const openEdit = async (t: any) => {
         setEditItem(t);
+        // Fetch the move-in payment so we can pre-fill the field
+        const moveInPmt = await getMoveInPayment(t.tenant_id);
         setForm({
             tenant_name: t.tenant_name, phone: t.phone || '', email: t.email || '', id_number: t.id_number || '',
             unit_id: t.unit_id || 0, location_id: t.location_id || 0,
@@ -265,7 +267,7 @@ export default function TenantsPage() {
             emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
             password_hash: '',
             is_on_vacation: t.is_on_vacation || false,
-            initial_payment: '',
+            initial_payment: moveInPmt ? String(moveInPmt.amount) : '',
         });
         setShowModal(true);
     };
@@ -274,44 +276,70 @@ export default function TenantsPage() {
         if (!form.tenant_name.trim() || !form.phone.trim() || !form.unit_id || !form.monthly_rent) {
             toast.error('Name, Phone, Unit & Rent are required'); return;
         }
-        setSaving(true);
-        try {
-            const payload: any = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_paid: parseFloat(form.deposit_paid || '0'), is_on_vacation: form.is_on_vacation, initial_payment: parseFloat(form.initial_payment || '0') };
 
-            // Auto-derive PIN from last 6 digits of phone if not manually set
-            const autoPin = derivePinFromPhone(form.phone);
-            const pinValue = payload.password_hash?.trim() || autoPin;
-
-            if (!pinValue) {
-                delete payload.password_hash;
-                delete payload.mobile_pin;
-            } else {
-                // SECURITY: Hash PIN with bcrypt before storing in password_hash
-                const hashedPin = await hashPassword(pinValue);
-                payload.password_hash = hashedPin;
-                // Store plain PIN (max 6 digits) in mobile_pin for reference
-                payload.mobile_pin = pinValue.slice(0, 6);
+        // ── Strict unit-occupancy check (prevent double-booking) ─────────────
+        const selectedUnit = units.find(u => u.unit_id === form.unit_id);
+        if (!editItem) {
+            // New tenant: unit must be Vacant
+            if (selectedUnit && selectedUnit.status !== 'Vacant') {
+                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied. Please choose a vacant unit.`);
+                return;
             }
+        } else {
+            // Editing: if unit changed, new unit must be Vacant
+            if (form.unit_id !== editItem.unit_id && selectedUnit && selectedUnit.status !== 'Vacant') {
+                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied. Please choose a vacant unit.`);
+                return;
+            }
+        }
 
+        setSaving(true);
+
+        // ── Build payload — strip fields that don't exist in arms_tenants ────
+        const { initial_payment: _ip, ...formWithoutInitialPayment } = form;
+        const payload: any = {
+            ...formWithoutInitialPayment,
+            monthly_rent: parseFloat(form.monthly_rent),
+            deposit_paid: parseFloat(form.deposit_paid || '0'),
+            is_on_vacation: form.is_on_vacation,
+        };
+
+        // Auto-derive PIN from last 6 digits of phone if not manually set
+        const autoPin = derivePinFromPhone(form.phone);
+        const pinValue = payload.password_hash?.trim() || autoPin;
+
+        if (!pinValue) {
+            delete payload.password_hash;
+            delete payload.mobile_pin;
+        } else {
+            // SECURITY: Hash PIN with bcrypt before storing in password_hash
+            const hashedPin = await hashPassword(pinValue);
+            payload.password_hash = hashedPin;
+            // Store plain PIN (max 6 digits) in mobile_pin for reference
+            payload.mobile_pin = pinValue.slice(0, 6);
+        }
+
+        // ── Close modal immediately for snappy UX ────────────────────────────
+        setShowModal(false);
+
+        try {
             if (editItem) {
                 await updateTenant(editItem.tenant_id, payload);
+                // Update move-in payment if the amount changed
+                const newInitialPayment = parseFloat(form.initial_payment || '0');
+                await updateMoveInPayment(editItem.tenant_id, newInitialPayment, editItem.location_id || form.location_id);
                 toast.success('✅ Tenant updated!');
-                setShowModal(false);
             } else {
-                await addTenant(payload);
+                const addPayload = { ...payload, initial_payment: parseFloat(form.initial_payment || '0') };
+                await addTenant(addPayload);
                 toast.success('✅ Tenant registered! Bills auto-generated.');
-                setForm({
-                    tenant_name: '', phone: '', email: '', id_number: '',
-                    unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
-                    monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
-                    emergency_contact: '', emergency_phone: '', notes: '',
-                    password_hash: '',
-                    is_on_vacation: isVacationMonth(currentMonth),
-                    initial_payment: '',
-                });
             }
             loadData(globalLocationId);
-        } catch (err: any) { toast.error(err.message || 'Save failed'); }
+        } catch (err: any) {
+            toast.error(err.message || 'Save failed');
+            // Re-open modal on failure so user can retry
+            setShowModal(true);
+        }
         setSaving(false);
     };
     const handleDeactivate = async (id: number, name: string) => {
@@ -1094,20 +1122,24 @@ export default function TenantsPage() {
                                         );
                                     })()}
 
-                                    {/* Initial Payment */}
-                                    {!editItem && (
-                                        <div>
-                                            <label className="text-xs font-bold text-orange-700 mb-1 block">💰 Initial Move-In Payment (KES)</label>
-                                            <input
-                                                type="number"
-                                                value={form.initial_payment}
-                                                onChange={e => setForm({ ...form, initial_payment: e.target.value })}
-                                                className="input-field"
-                                                placeholder="Amount paid at move-in (optional)"
-                                            />
-                                            <p className="text-[10px] text-orange-600 mt-1">💡 Applied FIFO to oldest bills first. The preview above updates live. Leave blank if no payment yet.</p>
-                                        </div>
-                                    )}
+                                    {/* Initial Payment — shown for both new and edit */}
+                                    <div>
+                                        <label className="text-xs font-bold text-orange-700 mb-1 block">
+                                            💰 {editItem ? 'Move-In Payment (KES)' : 'Initial Move-In Payment (KES)'}
+                                        </label>
+                                        <input
+                                            type="number"
+                                            value={form.initial_payment}
+                                            onChange={e => setForm({ ...form, initial_payment: e.target.value })}
+                                            className="input-field"
+                                            placeholder="Amount paid at move-in (optional)"
+                                        />
+                                        <p className="text-[10px] text-orange-600 mt-1">
+                                            {editItem
+                                                ? '💡 Edit the move-in payment amount. Saving will re-apply FIFO allocation across all bills.'
+                                                : '💡 Applied FIFO to oldest bills first. The preview above updates live. Leave blank if no payment yet.'}
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 

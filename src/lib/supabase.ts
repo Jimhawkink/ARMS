@@ -279,9 +279,126 @@ export async function addTenant(tenant: {
 }
 
 export async function updateTenant(id: number, updates: any) {
-    const { data, error } = await supabase.from('arms_tenants').update({ ...updates, updated_at: new Date().toISOString() }).eq('tenant_id', id).select().single();
+    // Strip fields that don't exist in arms_tenants to avoid schema cache errors
+    const { initial_payment: _ip, ...safeUpdates } = updates;
+    const { data, error } = await supabase.from('arms_tenants').update({ ...safeUpdates, updated_at: new Date().toISOString() }).eq('tenant_id', id).select().single();
     if (error) throw error;
     return data;
+}
+
+// Fetch the move-in payment record for a tenant (recorded at registration)
+export async function getMoveInPayment(tenantId: number): Promise<{ payment_id: number; amount: number } | null> {
+    const { data, error } = await supabase
+        .from('arms_payments')
+        .select('payment_id, amount')
+        .eq('tenant_id', tenantId)
+        .eq('recorded_by', 'Move-In Payment')
+        .order('payment_id', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+    if (error) return null;
+    return data || null;
+}
+
+// Update the move-in payment amount for a tenant.
+// If a move-in payment record exists, update its amount and re-run FIFO allocation.
+// If none exists and newAmount > 0, create one.
+export async function updateMoveInPayment(tenantId: number, newAmount: number, locationId: number): Promise<void> {
+    const existing = await getMoveInPayment(tenantId);
+
+    if (existing) {
+        if (newAmount <= 0) {
+            // Remove the payment record entirely — reverse its effect
+            await supabase.from('arms_payments').delete().eq('payment_id', existing.payment_id);
+        } else {
+            // Update the amount on the record
+            await supabase.from('arms_payments').update({
+                amount: newAmount,
+                notes: 'Move-in payment (updated)',
+            }).eq('payment_id', existing.payment_id);
+        }
+    } else if (newAmount > 0) {
+        // No prior move-in payment — create one now
+        await supabase.from('arms_payments').insert([{
+            tenant_id: tenantId,
+            location_id: locationId,
+            amount: newAmount,
+            payment_method: 'Cash',
+            recorded_by: 'Move-In Payment',
+            notes: 'Move-in payment',
+            payment_date: new Date().toISOString(),
+        }]);
+    }
+
+    // Re-run FIFO: reset all bills to unpaid, then replay all payments in order
+    // 1. Reset all bills for this tenant
+    const { data: allBills } = await supabase
+        .from('arms_billing')
+        .select('billing_id, rent_amount')
+        .eq('tenant_id', tenantId)
+        .order('billing_date', { ascending: true });
+
+    if (allBills && allBills.length > 0) {
+        await Promise.all(allBills.map(b =>
+            supabase.from('arms_billing').update({
+                amount_paid: 0,
+                balance: b.rent_amount,
+                status: 'Unpaid',
+                updated_at: new Date().toISOString(),
+            }).eq('billing_id', b.billing_id)
+        ));
+    }
+
+    // 2. Replay all payments in chronological order
+    const { data: allPayments } = await supabase
+        .from('arms_payments')
+        .select('payment_id, amount')
+        .eq('tenant_id', tenantId)
+        .order('payment_date', { ascending: true });
+
+    let runningBalance = (allBills || []).reduce((s, b) => s + (b.rent_amount || 0), 0);
+
+    for (const pmt of (allPayments || [])) {
+        let remaining = Math.round((pmt.amount || 0) * 100) / 100;
+        if (remaining <= 0) continue;
+
+        const { data: unpaidBills } = await supabase
+            .from('arms_billing')
+            .select('billing_id, rent_amount, amount_paid, balance')
+            .eq('tenant_id', tenantId)
+            .gt('balance', 0)
+            .order('billing_date', { ascending: true });
+
+        for (const bill of (unpaidBills || [])) {
+            if (remaining <= 0) break;
+            const allocAmount = Math.min(remaining, bill.balance);
+            const newAmountPaid = Math.round(((bill.amount_paid || 0) + allocAmount) * 100) / 100;
+            const newBalance = Math.max(0, Math.round((bill.rent_amount - newAmountPaid) * 100) / 100);
+            const newStatus = newBalance <= 0 ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+            await supabase.from('arms_billing').update({
+                amount_paid: newAmountPaid,
+                balance: newBalance,
+                status: newStatus,
+                updated_at: new Date().toISOString(),
+            }).eq('billing_id', bill.billing_id);
+            remaining = Math.round((remaining - allocAmount) * 100) / 100;
+            runningBalance = Math.round((runningBalance - allocAmount) * 100) / 100;
+        }
+    }
+
+    // 3. Recalculate tenant balance from all unpaid bill balances
+    const { data: remainingBills } = await supabase
+        .from('arms_billing')
+        .select('balance')
+        .eq('tenant_id', tenantId)
+        .gt('balance', 0);
+    const newTenantBalance = Math.round(
+        (remainingBills || []).reduce((s, b) => s + (b.balance || 0), 0) * 100
+    ) / 100;
+    await supabase.from('arms_tenants').update({
+        balance: newTenantBalance,
+        updated_at: new Date().toISOString(),
+    }).eq('tenant_id', tenantId);
 }
 
 export async function deactivateTenant(id: number) {
