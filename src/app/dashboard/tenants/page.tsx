@@ -323,6 +323,14 @@ export default function TenantsPage() {
             is_on_vacation: form.is_on_vacation,
         };
 
+        // ── Sync billing_start_month → move_in_date for edits ──
+        // billing_start_month is not a DB column, but it controls when billing starts.
+        // If the user changed it, update move_in_date to match (1st of that month).
+        if (isEdit && form.billing_start_month) {
+            const newMoveInDate = form.billing_start_month + '-01';
+            payload.move_in_date = newMoveInDate;
+        }
+
         // Auto-derive PIN from last 6 digits of phone if not manually set
         const autoPin = derivePinFromPhone(form.phone);
         const pinValue = payload.password_hash?.trim() || autoPin;
