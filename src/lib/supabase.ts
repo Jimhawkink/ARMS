@@ -280,7 +280,7 @@ export async function addTenant(tenant: {
 
 export async function updateTenant(id: number, updates: any) {
     // Strip fields that don't exist in arms_tenants to avoid schema cache errors
-    const { initial_payment: _ip, billing_start_month: _bsm, ...safeUpdates } = updates;
+    const { initial_payment: _ip, ...safeUpdates } = updates;
 
     // ── Handle room/unit change: update occupancy status ──
     // Fetch old tenant data to detect unit change
@@ -365,7 +365,8 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
     }
 
     const monthlyRent = tenant.monthly_rent || 0;
-    const moveInDate = tenant.move_in_date;
+    // billing_start_month is the authoritative billing start; fall back to move_in_date
+    const moveInDate = tenant.billing_start_month || tenant.move_in_date;
     const tenantOnVacation = tenant.is_on_vacation || false;
     const nowLocal = new Date();
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;

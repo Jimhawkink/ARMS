@@ -314,22 +314,14 @@ export default function TenantsPage() {
         const editTenantId = editItem?.tenant_id;
         const editLocationId = editItem?.location_id || form.location_id;
 
-        // ── Build payload — strip fields that don't exist in arms_tenants ────
-        const { initial_payment: _ip, billing_start_month: _bsm, ...formClean } = form;
+        // ── Build payload — strip only non-DB fields ────
+        const { initial_payment: _ip, ...formClean } = form;
         const payload: any = {
             ...formClean,
             monthly_rent: parseFloat(form.monthly_rent),
             deposit_paid: parseFloat(form.deposit_paid || '0'),
             is_on_vacation: form.is_on_vacation,
         };
-
-        // ── Sync billing_start_month → move_in_date for edits ──
-        // billing_start_month is not a DB column, but it controls when billing starts.
-        // If the user changed it, update move_in_date to match (1st of that month).
-        if (isEdit && form.billing_start_month) {
-            const newMoveInDate = form.billing_start_month + '-01';
-            payload.move_in_date = newMoveInDate;
-        }
 
         // Auto-derive PIN from last 6 digits of phone if not manually set
         const autoPin = derivePinFromPhone(form.phone);
