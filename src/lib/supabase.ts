@@ -353,16 +353,19 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
     }
 
     // ── Read tenant's current data (move_in_date may have just been updated) ──
-    const { data: tenant } = await supabase
+    const { data: tenant, error: tenantErr } = await supabase
         .from('arms_tenants')
-        .select('move_in_date, monthly_rent, is_on_vacation, location_id, unit_id, billing_start_month')
+        .select('*')
         .eq('tenant_id', tenantId)
         .single();
 
-    if (!tenant) return;
+    if (tenantErr || !tenant) {
+        console.error('updateMoveInPayment: could not read tenant', tenantErr);
+        return;
+    }
 
     const monthlyRent = tenant.monthly_rent || 0;
-    const moveInDate = tenant.billing_start_month || tenant.move_in_date;
+    const moveInDate = tenant.move_in_date;
     const tenantOnVacation = tenant.is_on_vacation || false;
     const nowLocal = new Date();
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
