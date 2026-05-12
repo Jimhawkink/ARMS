@@ -244,8 +244,17 @@ export default function TenantsPage() {
     const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
 
     // ── Modal helpers ─────────────────────────────────────────────────────────
+    // Cross-check: even if DB says 'Vacant', check if an active tenant occupies it
+    const occupiedUnitIds = new Set(
+        tenants.filter(t => t.status === 'Active' && t.unit_id).map(t => t.unit_id)
+    );
     const availableUnits = units.filter(u =>
-        u.location_id === form.location_id && (u.status === 'Vacant' || u.unit_id === editItem?.unit_id)
+        u.location_id === form.location_id && (
+            // Show unit if it's truly vacant (both status AND no active tenant)
+            (u.status === 'Vacant' && !occupiedUnitIds.has(u.unit_id)) ||
+            // Always show the current tenant's own unit in edit mode
+            u.unit_id === editItem?.unit_id
+        )
     );
     const openAdd = () => {
         setEditItem(null);

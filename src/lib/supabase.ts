@@ -323,8 +323,8 @@ export async function getMoveInPayment(tenantId: number): Promise<{ payment_id: 
 }
 
 // Update the move-in payment amount for a tenant.
-// If a move-in payment record exists, update its amount and re-run FIFO allocation.
-// If none exists and newAmount > 0, create one.
+// Also handles move-in date changes: removes bills before new move-in, creates missing bills,
+// then re-runs full FIFO allocation across all payments.
 export async function updateMoveInPayment(tenantId: number, newAmount: number, locationId: number): Promise<void> {
     const existing = await getMoveInPayment(tenantId);
 
@@ -352,8 +352,75 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
         }]);
     }
 
-    // Re-run FIFO: reset all bills to unpaid, then replay all payments in order
-    // 1. Reset all bills for this tenant
+    // ── Read tenant's current data (move_in_date may have just been updated) ──
+    const { data: tenant } = await supabase
+        .from('arms_tenants')
+        .select('move_in_date, monthly_rent, is_on_vacation, location_id, unit_id, billing_start_month')
+        .eq('tenant_id', tenantId)
+        .single();
+
+    if (!tenant) return;
+
+    const monthlyRent = tenant.monthly_rent || 0;
+    const moveInDate = tenant.billing_start_month || tenant.move_in_date;
+    const tenantOnVacation = tenant.is_on_vacation || false;
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+    const moveInMonth = moveInDate ? moveInDate.slice(0, 7) : currentMonth;
+
+    // ── Step 1: Delete billing records for months BEFORE the move-in month ──
+    // These shouldn't exist since tenant wasn't here yet
+    const { data: oldBills } = await supabase
+        .from('arms_billing')
+        .select('billing_id, billing_month')
+        .eq('tenant_id', tenantId)
+        .lt('billing_month', moveInMonth);
+
+    if (oldBills && oldBills.length > 0) {
+        const oldIds = oldBills.map(b => b.billing_id);
+        await supabase.from('arms_billing').delete().in('billing_id', oldIds);
+    }
+
+    // ── Step 2: Ensure billing records exist from move-in month to current month ──
+    const { data: existingBills } = await supabase
+        .from('arms_billing')
+        .select('billing_month')
+        .eq('tenant_id', tenantId);
+    const existingMonths = new Set((existingBills || []).map((b: any) => b.billing_month));
+
+    const billsToCreate: any[] = [];
+    if (monthlyRent > 0 && moveInMonth <= currentMonth) {
+        let [sy, sm] = moveInMonth.split('-').map(Number);
+        const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+
+        while (sy < ey || (sy === ey && sm <= em)) {
+            const curM = `${sy}-${String(sm).padStart(2, '0')}`;
+            if (!existingMonths.has(curM)) {
+                const effectiveRent = getEffectiveRent(monthlyRent, curM, tenantOnVacation);
+                billsToCreate.push({
+                    tenant_id: tenantId,
+                    location_id: tenant.location_id,
+                    unit_id: tenant.unit_id,
+                    billing_month: curM,
+                    billing_date: `${curM}-01`,
+                    due_date: `${curM}-05`,
+                    rent_amount: effectiveRent,
+                    amount_paid: 0,
+                    balance: effectiveRent,
+                    status: 'Unpaid',
+                    notes: tenantOnVacation && isVacationMonth(curM) ? 'Vacation half-rent (50%)' : null,
+                });
+            }
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
+        }
+    }
+
+    if (billsToCreate.length > 0) {
+        await supabase.from('arms_billing').insert(billsToCreate);
+    }
+
+    // ── Step 3: Reset ALL remaining bills to unpaid ──
     const { data: allBills } = await supabase
         .from('arms_billing')
         .select('billing_id, rent_amount')
@@ -371,14 +438,12 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
         ));
     }
 
-    // 2. Replay all payments in chronological order
+    // ── Step 4: Replay ALL payments in chronological FIFO order ──
     const { data: allPayments } = await supabase
         .from('arms_payments')
         .select('payment_id, amount')
         .eq('tenant_id', tenantId)
         .order('payment_date', { ascending: true });
-
-    let runningBalance = (allBills || []).reduce((s, b) => s + (b.rent_amount || 0), 0);
 
     for (const pmt of (allPayments || [])) {
         let remaining = Math.round((pmt.amount || 0) * 100) / 100;
@@ -404,11 +469,10 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
                 updated_at: new Date().toISOString(),
             }).eq('billing_id', bill.billing_id);
             remaining = Math.round((remaining - allocAmount) * 100) / 100;
-            runningBalance = Math.round((runningBalance - allocAmount) * 100) / 100;
         }
     }
 
-    // 3. Recalculate tenant balance from all unpaid bill balances
+    // ── Step 5: Recalculate tenant balance from all unpaid bill balances ──
     const { data: remainingBills } = await supabase
         .from('arms_billing')
         .select('balance')
