@@ -280,7 +280,29 @@ export async function addTenant(tenant: {
 
 export async function updateTenant(id: number, updates: any) {
     // Strip fields that don't exist in arms_tenants to avoid schema cache errors
-    const { initial_payment: _ip, ...safeUpdates } = updates;
+    const { initial_payment: _ip, billing_start_month: _bsm, ...safeUpdates } = updates;
+
+    // ── Handle room/unit change: update occupancy status ──
+    // Fetch old tenant data to detect unit change
+    if (safeUpdates.unit_id) {
+        const { data: oldTenant } = await supabase
+            .from('arms_tenants')
+            .select('unit_id')
+            .eq('tenant_id', id)
+            .single();
+
+        if (oldTenant && oldTenant.unit_id !== safeUpdates.unit_id) {
+            // Old unit → Vacant
+            await supabase.from('arms_units')
+                .update({ status: 'Vacant', updated_at: new Date().toISOString() })
+                .eq('unit_id', oldTenant.unit_id);
+            // New unit → Occupied
+            await supabase.from('arms_units')
+                .update({ status: 'Occupied', updated_at: new Date().toISOString() })
+                .eq('unit_id', safeUpdates.unit_id);
+        }
+    }
+
     const { data, error } = await supabase.from('arms_tenants').update({ ...safeUpdates, updated_at: new Date().toISOString() }).eq('tenant_id', id).select().single();
     if (error) throw error;
     return data;

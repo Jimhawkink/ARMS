@@ -300,10 +300,15 @@ export default function TenantsPage() {
 
         setSaving(true);
 
+        // ── Capture whether this is an edit or add BEFORE clearing form ────
+        const isEdit = !!editItem;
+        const editTenantId = editItem?.tenant_id;
+        const editLocationId = editItem?.location_id || form.location_id;
+
         // ── Build payload — strip fields that don't exist in arms_tenants ────
-        const { initial_payment: _ip, ...formWithoutInitialPayment } = form;
+        const { initial_payment: _ip, billing_start_month: _bsm, ...formClean } = form;
         const payload: any = {
-            ...formWithoutInitialPayment,
+            ...formClean,
             monthly_rent: parseFloat(form.monthly_rent),
             deposit_paid: parseFloat(form.deposit_paid || '0'),
             is_on_vacation: form.is_on_vacation,
@@ -324,9 +329,8 @@ export default function TenantsPage() {
             payload.mobile_pin = pinValue.slice(0, 6);
         }
 
-        // ── For new tenant: clear form immediately so modal is ready for next entry ──
-        // For edit: close the modal immediately
-        if (!editItem) {
+        // ── For new tenant: clear form IMMEDIATELY so modal is ready ──
+        if (!isEdit) {
             setEditItem(null);
             setForm({
                 tenant_name: '', phone: '', email: '', id_number: '',
@@ -344,26 +348,28 @@ export default function TenantsPage() {
 
         topProgress.start();
         try {
-            if (editItem) {
-                await updateTenant(editItem.tenant_id, payload);
+            if (isEdit) {
+                await updateTenant(editTenantId, payload);
                 // Update move-in payment if the amount changed
                 const newInitialPayment = parseFloat(form.initial_payment || '0');
-                await updateMoveInPayment(editItem.tenant_id, newInitialPayment, editItem.location_id || form.location_id);
+                await updateMoveInPayment(editTenantId, newInitialPayment, editLocationId);
                 toast.success('✅ Tenant updated!');
             } else {
-                const addPayload = { ...payload, initial_payment: parseFloat(form.initial_payment || '0') };
+                const addPayload = { ...payload, billing_start_month: form.billing_start_month, initial_payment: parseFloat(form.initial_payment || '0') };
                 await addTenant(addPayload);
                 toast.success('✅ Tenant registered! Bills auto-generated.');
             }
+            // Refresh data in background — don't block the UI
+            setSaving(false);
+            topProgress.done();
             loadData(globalLocationId);
         } catch (err: any) {
             toast.error(err.message || 'Save failed');
             // Re-open modal on failure so user can retry
-            if (editItem) setShowModal(true);
-        } finally {
+            if (isEdit) setShowModal(true);
+            setSaving(false);
             topProgress.done();
         }
-        setSaving(false);
     };
     const handleDeactivate = async (id: number, name: string) => {
         if (!confirm(`Move out ${name}?\n\nThis will:\n• Mark their unit as vacant\n• Block their mobile app access\n\nIf they return later, re-register them to restore access.`)) return;
