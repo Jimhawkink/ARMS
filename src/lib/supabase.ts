@@ -1076,16 +1076,15 @@ export async function calculateUnpaidRent(locationId?: number) {
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
     const results = activeTenants.map(tenant => {
-        const moveIn = tenant.move_in_date || tenant.billing_start_month || tenant.created_at?.slice(0, 10);
+        // billing_start_month is authoritative; fall back to move_in_date
+        const moveIn = tenant.billing_start_month || tenant.move_in_date || tenant.created_at?.slice(0, 10);
         if (!moveIn) return null;
 
         // Parse month directly from the string — never use new Date(dateStr) for month arithmetic
-        // because "2026-03-01" parses as UTC midnight which shifts to Feb in UTC+3 timezones
-        const moveInMonth = moveIn.slice(0, 7); // "2026-03"
+        const moveInMonth = moveIn.slice(0, 7); // "2026-05"
         const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
 
         const expectedMonths: string[] = [];
-        // Build month list by incrementing year/month integers — no Date timezone issues
         let [sy, sm] = moveInMonth.split('-').map(Number);
         const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
         while (sy < ey || (sy === ey && sm <= em)) {
@@ -1094,73 +1093,71 @@ export async function calculateUnpaidRent(locationId?: number) {
             if (sm > 12) { sm = 1; sy++; }
         }
 
-        const tenantBills = allBills.filter(b => b.tenant_id === tenant.tenant_id);
         const tenantPayments = allPayments.filter(p => p.tenant_id === tenant.tenant_id);
         const totalPaidAllTime = tenantPayments.reduce((s, p) => s + (p.amount || 0), 0);
+
+        // ── FIFO allocation: compute paid/balance per month from raw payments ──
+        // This is independent of billing table state — always accurate
+        const monthRents = expectedMonths.map(month => {
+            const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
+            const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
+            return { month, rent: effectiveRent, isVacation: isVac };
+        });
+
+        // Sort payments by date for FIFO
+        const sortedPayments = [...tenantPayments].sort((a, b) =>
+            (a.payment_date || a.created_at || '').localeCompare(b.payment_date || b.created_at || '')
+        );
+
+        // Allocate payments to months in chronological order (FIFO)
+        const monthAllocations = monthRents.map(m => ({ ...m, paid: 0, balance: m.rent }));
+        for (const pmt of sortedPayments) {
+            let remaining = Math.round((pmt.amount || 0) * 100) / 100;
+            if (remaining <= 0) continue;
+            for (const ma of monthAllocations) {
+                if (remaining <= 0) break;
+                if (ma.balance <= 0) continue;
+                const alloc = Math.min(remaining, ma.balance);
+                ma.paid = Math.round((ma.paid + alloc) * 100) / 100;
+                ma.balance = Math.round((ma.balance - alloc) * 100) / 100;
+                remaining = Math.round((remaining - alloc) * 100) / 100;
+            }
+        }
 
         let totalUnpaid = 0;
         let totalPenalty = 0;
         const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
         const allMonths: { month: string; rent: number; paid: number; balance: number; isVacation: boolean; status: string }[] = [];
 
-        for (const month of expectedMonths) {
-            const existingBill = tenantBills.find(b => b.billing_month === month);
-            const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
+        for (const ma of monthAllocations) {
+            const status = ma.balance <= 0 ? 'Paid' : ma.paid > 0 ? 'Partial' : 'Unpaid';
+            allMonths.push({
+                month: ma.month,
+                rent: ma.rent,
+                paid: ma.paid,
+                balance: ma.balance,
+                isVacation: ma.isVacation,
+                status,
+            });
 
-            if (existingBill) {
-                const billBalance = existingBill.balance || 0;
-                allMonths.push({
-                    month,
-                    rent: existingBill.rent_amount || monthlyRent,
-                    paid: existingBill.amount_paid || 0,
-                    balance: billBalance,
-                    isVacation: isVac,
-                    status: existingBill.status,
-                });
-                if (existingBill.status !== 'Paid' && billBalance > 0) {
-                    const billMonthDate = new Date(month + '-05');
-                    const isLate = nowLocal > billMonthDate;
-                    const penalty = isLate ? Math.round((existingBill.rent_amount || monthlyRent) * 0.02) : 0;
-
-                    unpaidMonths.push({
-                        month,
-                        rent: existingBill.rent_amount || monthlyRent,
-                        paid: existingBill.amount_paid || 0,
-                        balance: billBalance,
-                        penalty,
-                        status: existingBill.status,
-                    });
-                    totalUnpaid += billBalance;
-                    totalPenalty += penalty;
-                }
-            } else {
-                const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
-                const billMonthDate = new Date(month + '-05');
+            if (ma.balance > 0) {
+                const billMonthDate = new Date(ma.month + '-05');
                 const isLate = nowLocal > billMonthDate;
-                const penalty = isLate ? Math.round(effectiveRent * 0.02) : 0;
+                const penalty = isLate ? Math.round(ma.rent * 0.02) : 0;
 
-                allMonths.push({
-                    month,
-                    rent: effectiveRent,
-                    paid: 0,
-                    balance: effectiveRent,
-                    isVacation: isVac,
-                    status: 'Unbilled',
-                });
                 unpaidMonths.push({
-                    month,
-                    rent: effectiveRent,
-                    paid: 0,
-                    balance: effectiveRent,
+                    month: ma.month,
+                    rent: ma.rent,
+                    paid: ma.paid,
+                    balance: ma.balance,
                     penalty,
-                    status: 'Unpaid',
+                    status,
                 });
-                totalUnpaid += effectiveRent;
+                totalUnpaid += ma.balance;
                 totalPenalty += penalty;
             }
         }
 
-        // Return data even for tenants with no arrears (for full breakdown view)
         return {
             ...tenant,
             allMonths,
