@@ -174,6 +174,78 @@ export async function repairVacationBills(): Promise<{ fixed: number; errors: st
     return { fixed, errors };
 }
 
+// ==================== TENANT UNITS (Multi-Room) ====================
+export async function getTenantUnits(tenantId: number) {
+    const { data, error } = await supabase
+        .from('arms_tenant_units')
+        .select('*, arms_units(unit_name, unit_type, monthly_rent)')
+        .eq('tenant_id', tenantId)
+        .order('is_primary', { ascending: false });
+    if (error) return []; // Table might not exist yet
+    return data || [];
+}
+
+export async function getAllTenantUnits(tenantIds?: number[]) {
+    let query = supabase
+        .from('arms_tenant_units')
+        .select('*, arms_units(unit_name, unit_type, monthly_rent)')
+        .order('is_primary', { ascending: false });
+    if (tenantIds && tenantIds.length > 0) {
+        query = query.in('tenant_id', tenantIds);
+    }
+    const { data, error } = await query;
+    if (error) return []; // Graceful fallback if table doesn't exist
+    return data || [];
+}
+
+export async function saveTenantUnits(
+    tenantId: number,
+    units: { unit_id: number; is_primary: boolean; custom_rent: number }[]
+) {
+    // Get current units to handle occupancy status changes
+    const { data: currentUnits } = await supabase
+        .from('arms_tenant_units')
+        .select('unit_id')
+        .eq('tenant_id', tenantId);
+
+    const currentUnitIds = new Set((currentUnits || []).map(u => u.unit_id));
+    const newUnitIds = new Set(units.map(u => u.unit_id));
+
+    // Units being removed → set to Vacant
+    for (const cuid of currentUnitIds) {
+        if (!newUnitIds.has(cuid)) {
+            await supabase.from('arms_units')
+                .update({ status: 'Vacant', updated_at: new Date().toISOString() })
+                .eq('unit_id', cuid);
+        }
+    }
+
+    // Delete all existing for this tenant
+    await supabase.from('arms_tenant_units').delete().eq('tenant_id', tenantId);
+
+    if (units.length === 0) return;
+
+    // Insert new
+    const rows = units.map(u => ({
+        tenant_id: tenantId,
+        unit_id: u.unit_id,
+        is_primary: u.is_primary,
+        custom_rent: u.custom_rent,
+    }));
+
+    const { error } = await supabase.from('arms_tenant_units').insert(rows);
+    if (error) console.error('saveTenantUnits error:', error);
+
+    // Mark all new units as Occupied
+    for (const u of units) {
+        if (!currentUnitIds.has(u.unit_id)) {
+            await supabase.from('arms_units')
+                .update({ status: 'Occupied', updated_at: new Date().toISOString() })
+                .eq('unit_id', u.unit_id);
+        }
+    }
+}
+
 // ==================== TENANTS ====================
 export async function getTenants(locationId?: number) {
     let query = supabase.from('arms_tenants').select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)').order('tenant_name');
@@ -196,23 +268,45 @@ export async function addTenant(tenant: {
     notes?: string; emergency_contact?: string; emergency_phone?: string;
     password_hash?: string; mobile_pin?: string;
     is_on_vacation?: boolean; initial_payment?: number;
+    additional_units?: { unit_id: number; rent: number }[];
 }) {
     const initialPayment = tenant.initial_payment || 0;
     const isOnVacation = tenant.is_on_vacation || false;
+    const additionalUnits = tenant.additional_units || [];
     // Remove non-DB fields before insert
-    const { initial_payment: _ip, ...tenantData } = tenant;
+    const { initial_payment: _ip, additional_units: _au, ...tenantData } = tenant;
 
     // IMPORTANT: Always store the FULL/BASE monthly rent in arms_tenants.
+    // monthly_rent = total across ALL rooms (primary + additional)
     // Vacation half-rent is computed dynamically per bill — never store halved rent.
     const { data, error } = await supabase.from('arms_tenants').insert([{
         ...tenantData,
-        monthly_rent: tenant.monthly_rent, // always full base rent
+        monthly_rent: tenant.monthly_rent, // total across all rooms
         status: 'Active',
         balance: 0,
         is_on_vacation: isOnVacation,
     }]).select().single();
     if (error) throw error;
     await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
+
+    // Save multi-room assignments to arms_tenant_units
+    const primaryRent = additionalUnits.length > 0
+        ? tenant.monthly_rent - additionalUnits.reduce((s, u) => s + (u.rent || 0), 0)
+        : tenant.monthly_rent;
+    const allUnitAssignments = [
+        { unit_id: tenant.unit_id, is_primary: true, custom_rent: primaryRent },
+        ...additionalUnits.map(u => ({ unit_id: u.unit_id, is_primary: false, custom_rent: u.rent })),
+    ];
+    try {
+        await saveTenantUnits(data.tenant_id, allUnitAssignments);
+    } catch (e) {
+        console.error('Failed to save tenant units (table may not exist yet):', e);
+    }
+
+    // Mark additional units as Occupied
+    for (const au of additionalUnits) {
+        await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', au.unit_id);
+    }
 
     // Use billing_start_month if provided, otherwise fall back to move_in_date
     const rawMoveIn = tenant.billing_start_month || tenant.move_in_date;
@@ -493,8 +587,22 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
 
 export async function deactivateTenant(id: number) {
     const tenant = await getTenantById(id);
+    // Vacate primary unit
     if (tenant?.unit_id) {
         await supabase.from('arms_units').update({ status: 'Vacant' }).eq('unit_id', tenant.unit_id);
+    }
+    // Vacate ALL additional units from arms_tenant_units
+    try {
+        const tenantUnits = await getTenantUnits(id);
+        for (const tu of tenantUnits) {
+            await supabase.from('arms_units')
+                .update({ status: 'Vacant', updated_at: new Date().toISOString() })
+                .eq('unit_id', tu.unit_id);
+        }
+        // Clean up junction table
+        await supabase.from('arms_tenant_units').delete().eq('tenant_id', id);
+    } catch (e) {
+        console.error('Multi-room cleanup (table may not exist):', e);
     }
     const { error } = await supabase.from('arms_tenants').update({
         status: 'Inactive',

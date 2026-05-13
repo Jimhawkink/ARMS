@@ -1,10 +1,10 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
-import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent, getMoveInPayment, updateMoveInPayment } from '@/lib/supabase';
+import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent, getMoveInPayment, updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
-import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield, FiTrash2, FiLayers } from 'react-icons/fi';
 
 // ── Color tokens per column ────────────────────────────────────────────────────
 const C = {
@@ -106,6 +106,8 @@ export default function TenantsPage() {
     const [globalLocationId, setGlobalLocationId] = useState<number | null>(null);
     const [expandedTenants, setExpandedTenants] = useState<Set<number>>(new Set());
     const [tenantDetails, setTenantDetails] = useState<Record<number, any>>({});
+    const [tenantUnitsMap, setTenantUnitsMap] = useState<Record<number, any[]>>({});
+    const [additionalUnits, setAdditionalUnits] = useState<Array<{ unit_id: number; rent: string }>>([]);
     const [form, setForm] = useState({
         tenant_name: '', phone: '', email: '', id_number: '',
         unit_id: 0, location_id: 0, monthly_rent: '', deposit_paid: '',
@@ -159,6 +161,18 @@ export default function TenantsPage() {
             setTenants(t);
             setUnits(u);
             setLocations(l);
+
+            // Fetch multi-room assignments for display
+            try {
+                const tenantIds = t.map((x: any) => x.tenant_id);
+                const tu = tenantIds.length > 0 ? await getAllTenantUnits(tenantIds) : [];
+                const tuMap: Record<number, any[]> = {};
+                tu.forEach((item: any) => {
+                    if (!tuMap[item.tenant_id]) tuMap[item.tenant_id] = [];
+                    tuMap[item.tenant_id].push(item);
+                });
+                setTenantUnitsMap(tuMap);
+            } catch { /* table may not exist yet */ }
         } catch { toast.error('Failed to load tenants'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
@@ -248,23 +262,44 @@ export default function TenantsPage() {
     const occupiedUnitIds = new Set(
         tenants.filter(t => t.status === 'Active' && t.unit_id).map(t => t.unit_id)
     );
+    // Also collect all unit_ids from tenant_units for occupied check
+    const allOccupiedUnitIds = new Set(occupiedUnitIds);
+    Object.values(tenantUnitsMap).forEach(tuList => {
+        tuList.forEach(tu => allOccupiedUnitIds.add(tu.unit_id));
+    });
+    // IDs of units the CURRENT tenant owns (edit mode)
+    const editTenantUnitIds = new Set(
+        editItem ? (tenantUnitsMap[editItem.tenant_id] || []).map((tu: any) => tu.unit_id) : []
+    );
+    // Selected additional unit IDs (to exclude from dropdowns)
+    const selectedAdditionalIds = new Set(additionalUnits.map(au => au.unit_id).filter(Boolean));
+
     const availableUnits = units.filter(u =>
         u.location_id === form.location_id && (
-            // Show unit if it's truly vacant (both status AND no active tenant)
-            (u.status === 'Vacant' && !occupiedUnitIds.has(u.unit_id)) ||
-            // Always show the current tenant's own unit in edit mode
-            u.unit_id === editItem?.unit_id
-        )
+            (u.status === 'Vacant' && !allOccupiedUnitIds.has(u.unit_id)) ||
+            u.unit_id === editItem?.unit_id ||
+            editTenantUnitIds.has(u.unit_id)
+        ) && !selectedAdditionalIds.has(u.unit_id)
+    );
+    // Available units for additional room dropdowns (exclude primary + other selected)
+    const availableForAdditional = (excludeIdx: number) => units.filter(u =>
+        u.location_id === form.location_id && (
+            (u.status === 'Vacant' && !allOccupiedUnitIds.has(u.unit_id)) ||
+            editTenantUnitIds.has(u.unit_id)
+        ) &&
+        u.unit_id !== form.unit_id &&
+        !additionalUnits.some((au, i) => i !== excludeIdx && au.unit_id === u.unit_id)
     );
     const openAdd = () => {
         setEditItem(null);
+        setAdditionalUnits([]);
         setForm({
             tenant_name: '', phone: '', email: '', id_number: '',
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
             monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
             emergency_contact: '', emergency_phone: '', notes: '',
             password_hash: '',
-            is_on_vacation: isVacationMonth(currentMonth), // Auto-detect vacation month
+            is_on_vacation: isVacationMonth(currentMonth),
             initial_payment: '',
         });
         setShowModal(true);
@@ -273,10 +308,26 @@ export default function TenantsPage() {
         setEditItem(t);
         // Fetch the move-in payment so we can pre-fill the field
         const moveInPmt = await getMoveInPayment(t.tenant_id);
+        // Load additional units for this tenant
+        let loadedAdditional: Array<{ unit_id: number; rent: string }> = [];
+        try {
+            const tuList = await getTenantUnits(t.tenant_id);
+            loadedAdditional = tuList
+                .filter((tu: any) => !tu.is_primary && tu.unit_id !== t.unit_id)
+                .map((tu: any) => ({ unit_id: tu.unit_id, rent: String(tu.custom_rent || 0) }));
+        } catch { /* table may not exist */ }
+        setAdditionalUnits(loadedAdditional);
+
+        // Compute primary rent (total - additional)
+        const totalRent = t.monthly_rent || 0;
+        const additionalRentSum = loadedAdditional.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
+        const primaryRent = totalRent - additionalRentSum;
+
         setForm({
             tenant_name: t.tenant_name, phone: t.phone || '', email: t.email || '', id_number: t.id_number || '',
             unit_id: t.unit_id || 0, location_id: t.location_id || 0,
-            monthly_rent: String(t.monthly_rent || ''), deposit_paid: String(t.deposit_paid || ''),
+            monthly_rent: String(primaryRent > 0 ? primaryRent : totalRent),
+            deposit_paid: String(t.deposit_paid || ''),
             move_in_date: t.move_in_date || '', billing_start_month: t.billing_start_month || t.move_in_date?.slice(0, 7) || '',
             emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
             password_hash: '',
@@ -285,40 +336,49 @@ export default function TenantsPage() {
         });
         setShowModal(true);
     };
+    // Compute total rent from primary + additional rooms
+    const primaryRentNum = parseFloat(form.monthly_rent) || 0;
+    const additionalRentTotal = additionalUnits.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
+    const totalCombinedRent = primaryRentNum + additionalRentTotal;
+    const totalRoomCount = 1 + additionalUnits.length;
+
     const handleSave = async () => {
         if (saving) return;
         if (!form.tenant_name.trim() || !form.phone.trim() || !form.unit_id || !form.monthly_rent) {
-            toast.error('Name, Phone, Unit & Rent are required'); return;
+            toast.error('Name, Phone, Primary Unit & Rent are required'); return;
+        }
+
+        // Validate additional units have valid selections
+        for (const au of additionalUnits) {
+            if (!au.unit_id || !(parseFloat(au.rent) > 0)) {
+                toast.error('All additional rooms must have a unit selected and a rent amount'); return;
+            }
         }
 
         // ── Strict unit-occupancy check (prevent double-booking) ─────────────
         const selectedUnit = units.find(u => u.unit_id === form.unit_id);
         if (!editItem) {
-            // New tenant: unit must be Vacant
             if (selectedUnit && selectedUnit.status !== 'Vacant') {
-                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied. Please choose a vacant unit.`);
-                return;
+                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied.`); return;
             }
         } else {
-            // Editing: if unit changed, new unit must be Vacant
             if (form.unit_id !== editItem.unit_id && selectedUnit && selectedUnit.status !== 'Vacant') {
-                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied. Please choose a vacant unit.`);
-                return;
+                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied.`); return;
             }
         }
 
         setSaving(true);
 
-        // ── Capture whether this is an edit or add BEFORE clearing form ────
         const isEdit = !!editItem;
         const editTenantId = editItem?.tenant_id;
         const editLocationId = editItem?.location_id || form.location_id;
+        const capturedAdditionalUnits = [...additionalUnits];
 
-        // ── Build payload — strip only non-DB fields ────
+        // ── Build payload — total rent across all rooms ────
         const { initial_payment: _ip, ...formClean } = form;
         const payload: any = {
             ...formClean,
-            monthly_rent: parseFloat(form.monthly_rent),
+            monthly_rent: totalCombinedRent, // TOTAL across all rooms
             deposit_paid: parseFloat(form.deposit_paid || '0'),
             is_on_vacation: form.is_on_vacation,
         };
@@ -331,16 +391,15 @@ export default function TenantsPage() {
             delete payload.password_hash;
             delete payload.mobile_pin;
         } else {
-            // SECURITY: Hash PIN with bcrypt before storing in password_hash
             const hashedPin = await hashPassword(pinValue);
             payload.password_hash = hashedPin;
-            // Store plain PIN (max 6 digits) in mobile_pin for reference
             payload.mobile_pin = pinValue.slice(0, 6);
         }
 
         // ── For new tenant: clear form IMMEDIATELY so modal is ready ──
         if (!isEdit) {
             setEditItem(null);
+            setAdditionalUnits([]);
             setForm({
                 tenant_name: '', phone: '', email: '', id_number: '',
                 unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
@@ -350,7 +409,6 @@ export default function TenantsPage() {
                 is_on_vacation: isVacationMonth(currentMonth),
                 initial_payment: '',
             });
-            // Keep modal open, cleared and ready for next tenant
         } else {
             setShowModal(false);
         }
@@ -359,29 +417,45 @@ export default function TenantsPage() {
         try {
             if (isEdit) {
                 await updateTenant(editTenantId, payload);
-                // Update move-in payment if the amount changed
+                // Save multi-room assignments
+                try {
+                    const allUnitAssignments = [
+                        { unit_id: form.unit_id, is_primary: true, custom_rent: primaryRentNum },
+                        ...capturedAdditionalUnits.map(au => ({
+                            unit_id: au.unit_id, is_primary: false, custom_rent: parseFloat(au.rent) || 0,
+                        })),
+                    ];
+                    await saveTenantUnits(editTenantId, allUnitAssignments);
+                } catch { /* table may not exist yet */ }
                 const newInitialPayment = parseFloat(form.initial_payment || '0');
                 await updateMoveInPayment(editTenantId, newInitialPayment, editLocationId);
-                toast.success('✅ Tenant updated!');
+                toast.success(`✅ Tenant updated! (${totalRoomCount} room${totalRoomCount > 1 ? 's' : ''})`);
             } else {
-                const addPayload = { ...payload, billing_start_month: form.billing_start_month, initial_payment: parseFloat(form.initial_payment || '0') };
+                const addPayload = {
+                    ...payload,
+                    billing_start_month: form.billing_start_month,
+                    initial_payment: parseFloat(form.initial_payment || '0'),
+                    additional_units: capturedAdditionalUnits.map(au => ({
+                        unit_id: au.unit_id, rent: parseFloat(au.rent) || 0,
+                    })),
+                };
                 await addTenant(addPayload);
-                toast.success('✅ Tenant registered! Bills auto-generated.');
+                toast.success(`✅ Tenant registered with ${totalRoomCount} room${totalRoomCount > 1 ? 's' : ''}! Bills auto-generated.`);
             }
-            // Refresh data in background — don't block the UI
             setSaving(false);
             topProgress.done();
             loadData(globalLocationId);
         } catch (err: any) {
             toast.error(err.message || 'Save failed');
-            // Re-open modal on failure so user can retry
             if (isEdit) setShowModal(true);
             setSaving(false);
             topProgress.done();
         }
     };
     const handleDeactivate = async (id: number, name: string) => {
-        if (!confirm(`Move out ${name}?\n\nThis will:\n• Mark their unit as vacant\n• Block their mobile app access\n\nIf they return later, re-register them to restore access.`)) return;
+        const roomCount = tenantUnitsMap[id]?.length || 1;
+        const roomText = roomCount > 1 ? `${roomCount} rooms` : 'their unit';
+        if (!confirm(`Move out ${name}?\n\nThis will:\n• Mark ${roomText} as vacant\n• Block their mobile app access\n\nIf they return later, re-register them to restore access.`)) return;
         try {
             await deactivateTenant(id);
             toast.success(`${name} moved out. Mobile app access blocked.`);
@@ -438,7 +512,15 @@ export default function TenantsPage() {
                                 <TenantAvatar name={t.tenant_name} status="Active" size={48} />
                                 <div className="flex-1 min-w-0">
                                     <p className="font-black text-green-900 truncate text-sm">{t.tenant_name}</p>
-                                    <p className="text-xs text-green-700 mt-0.5 truncate">🏠 {t.arms_units?.unit_name} · 📍 {t.arms_locations?.location_name}</p>
+                                    <p className="text-xs text-green-700 mt-0.5 truncate">
+                                        🏠 {t.arms_units?.unit_name}
+                                        {(tenantUnitsMap[t.tenant_id]?.length || 0) > 1 && (
+                                            <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 font-bold">
+                                                +{(tenantUnitsMap[t.tenant_id]?.length || 1) - 1} rooms
+                                            </span>
+                                        )}
+                                        {' '}· 📍 {t.arms_locations?.location_name}
+                                    </p>
                                     <p className="text-[10px] text-green-600 mt-1">{fmt(t.monthly_rent)}/month · Moved in today</p>
                                 </div>
                                 <span className="flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black bg-green-300 text-green-900 animate-pulse">🆕 NEW</span>
@@ -636,9 +718,32 @@ export default function TenantsPage() {
                                             )}
                                         </td>
 
-                                        {/* Unit */}
-                                        <td className="px-3 py-3 whitespace-nowrap font-bold" style={{ background: C.unit.bg + '60', color: C.unit.text }}>
-                                            🏠 {t.arms_units?.unit_name || '—'}
+                                        {/* Unit (Multi-Room) */}
+                                        <td className="px-3 py-3" style={{ background: C.unit.bg + '60', color: C.unit.text }}>
+                                            {(() => {
+                                                const tuList = tenantUnitsMap[t.tenant_id];
+                                                if (tuList && tuList.length > 1) {
+                                                    return (
+                                                        <div>
+                                                            <div className="flex items-center gap-1 font-bold whitespace-nowrap">
+                                                                <FiLayers size={11} />
+                                                                {t.arms_units?.unit_name || '—'}
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black bg-purple-100 text-purple-700 border border-purple-200">
+                                                                    +{tuList.length - 1}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                                {tuList.filter((tu: any) => !tu.is_primary).map((tu: any) => (
+                                                                    <span key={tu.unit_id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-violet-50 text-violet-600 border border-violet-200 whitespace-nowrap">
+                                                                        {tu.arms_units?.unit_name || `#${tu.unit_id}`}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+                                                return <span className="font-bold whitespace-nowrap">🏠 {t.arms_units?.unit_name || '—'}</span>;
+                                            })()}
                                         </td>
 
                                         {/* Location */}
@@ -993,14 +1098,116 @@ export default function TenantsPage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Monthly Rent (KES) * — Full Base Rent</label>
+                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">💰 Primary Room Rent (KES) *</label>
                                     <input id="t-rent" type="number" value={form.monthly_rent} onChange={e => setForm({ ...form, monthly_rent: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-deposit') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
-                                    <p className="text-[10px] text-gray-400 mt-1">⚠️ Always enter the <strong>full rent</strong>. Vacation 50% is computed automatically — never enter the halved amount here.</p>
+                                    <p className="text-[10px] text-gray-400 mt-1">⚠️ Always enter the <strong>full rent</strong> for this room. Vacation 50% is computed automatically.</p>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🔐 Deposit Paid</label>
                                     <input id="t-deposit" type="number" value={form.deposit_paid} onChange={e => setForm({ ...form, deposit_paid: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (document.getElementById('t-movein') as HTMLInputElement)?.focus(); } }} className="input-field" placeholder="0" />
                                 </div>
+                            </div>
+
+                            {/* ── Additional Rooms Section ── */}
+                            <div className="rounded-xl overflow-hidden border-2 border-violet-300">
+                                <div className="px-4 py-2.5 flex items-center justify-between" style={{ background: 'linear-gradient(90deg,#f5f3ff,#ede9fe)' }}>
+                                    <div className="flex items-center gap-2.5">
+                                        <FiLayers size={14} className="text-violet-600 flex-shrink-0" />
+                                        <div>
+                                            <p className="text-xs font-bold text-violet-800 uppercase tracking-wider">🏠 Additional Rooms</p>
+                                            <p className="text-[10px] text-violet-500 mt-0.5">Assign multiple rooms — e.g. Room 1, Room 2, Store, Hardware</p>
+                                        </div>
+                                    </div>
+                                    <button type="button" onClick={() => setAdditionalUnits(prev => [...prev, { unit_id: 0, rent: '' }])}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white transition hover:opacity-90"
+                                        style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
+                                        <FiPlus size={12} /> Add Room
+                                    </button>
+                                </div>
+
+                                {additionalUnits.length > 0 ? (
+                                    <div className="p-4 space-y-3">
+                                        {additionalUnits.map((au, idx) => (
+                                            <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-violet-50 border border-violet-200 relative group">
+                                                <span className="flex items-center justify-center w-7 h-7 rounded-lg text-[11px] font-black text-white flex-shrink-0"
+                                                    style={{ background: 'linear-gradient(135deg,#8b5cf6,#7c3aed)' }}>
+                                                    {idx + 2}
+                                                </span>
+                                                <div className="flex-1 grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-violet-700 mb-1 block uppercase">Room / Unit</label>
+                                                        <select value={au.unit_id} onChange={e => {
+                                                            const uid = parseInt(e.target.value);
+                                                            const unit = units.find(u => u.unit_id === uid);
+                                                            setAdditionalUnits(prev => prev.map((item, i) => i === idx
+                                                                ? { ...item, unit_id: uid, rent: unit ? String(unit.monthly_rent) : item.rent }
+                                                                : item
+                                                            ));
+                                                        }} className="select-field text-sm">
+                                                            <option value={0}>Select room…</option>
+                                                            {availableForAdditional(idx).map(u => (
+                                                                <option key={u.unit_id} value={u.unit_id}>
+                                                                    {u.unit_name} — KES {(u.monthly_rent || 0).toLocaleString()}
+                                                                </option>
+                                                            ))}
+                                                            {/* Show currently selected unit even if it's not in available list */}
+                                                            {au.unit_id > 0 && !availableForAdditional(idx).some(u => u.unit_id === au.unit_id) && (() => {
+                                                                const u = units.find(u => u.unit_id === au.unit_id);
+                                                                return u ? <option key={u.unit_id} value={u.unit_id}>{u.unit_name} — KES {(u.monthly_rent || 0).toLocaleString()}</option> : null;
+                                                            })()}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-violet-700 mb-1 block uppercase">Rent (KES)</label>
+                                                        <input type="number" value={au.rent} onChange={e => {
+                                                            setAdditionalUnits(prev => prev.map((item, i) => i === idx
+                                                                ? { ...item, rent: e.target.value }
+                                                                : item
+                                                            ));
+                                                        }} className="input-field text-sm" placeholder="0" />
+                                                    </div>
+                                                </div>
+                                                <button type="button" onClick={() => setAdditionalUnits(prev => prev.filter((_, i) => i !== idx))}
+                                                    className="p-2 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 transition border border-red-200 flex-shrink-0"
+                                                    title="Remove this room">
+                                                    <FiTrash2 size={13} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="px-4 py-3 text-center">
+                                        <p className="text-[11px] text-violet-400">No additional rooms. Click "Add Room" to assign more units.</p>
+                                    </div>
+                                )}
+
+                                {/* Total Rent Summary */}
+                                {additionalUnits.length > 0 && (
+                                    <div className="mx-4 mb-4 p-3 rounded-xl border-2 border-violet-300" style={{ background: 'linear-gradient(135deg,#f5f3ff,#ede9fe)' }}>
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wider">💰 Total Monthly Rent ({totalRoomCount} rooms)</p>
+                                                <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-violet-700 border border-violet-200">
+                                                        🏠 Primary: KES {primaryRentNum.toLocaleString()}
+                                                    </span>
+                                                    {additionalUnits.map((au, i) => {
+                                                        const unitName = units.find(u => u.unit_id === au.unit_id)?.unit_name || `Room ${i + 2}`;
+                                                        return (
+                                                            <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-violet-600 border border-violet-200">
+                                                                + {unitName}: KES {(parseFloat(au.rent) || 0).toLocaleString()}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                            <div className="text-right flex-shrink-0 ml-3">
+                                                <p className="text-2xl font-black text-violet-900">KES {totalCombinedRent.toLocaleString()}</p>
+                                                <p className="text-[10px] text-violet-500 font-semibold">per month (all rooms)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Dates — Critical */}
@@ -1066,7 +1273,7 @@ export default function TenantsPage() {
 
                                     {/* Live Billing Preview — shown when adding a new tenant with rent + move-in date */}
                                     {!editItem && form.monthly_rent && form.move_in_date && (() => {
-                                        const baseRent = parseFloat(form.monthly_rent) || 0;
+                                        const baseRent = totalCombinedRent; // Use TOTAL rent across all rooms
                                         const moveInMonth = form.move_in_date.slice(0, 7);
                                         const curMonth = new Date().toISOString().slice(0, 7);
                                         if (!baseRent || moveInMonth > curMonth) return null;
