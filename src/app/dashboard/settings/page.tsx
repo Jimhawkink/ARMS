@@ -575,6 +575,20 @@ function UnitTillsPanel() {
                 </button>
             </div>
 
+            {/* Callback URL info */}
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl border bg-blue-50 border-blue-200">
+                <span className="text-xl">🔗</span>
+                <div className="flex-1">
+                    <p className="text-sm font-bold text-blue-800">STK Callback URL (shared across all tills)</p>
+                    <p className="text-xs mt-0.5 text-blue-600 font-mono">
+                        https://arms-opal.vercel.app/api/mpesa/stk-callback
+                    </p>
+                    <p className="text-[10px] mt-1 text-gray-500">
+                        ✅ This URL is the same for all locations — Safaricom sends payment confirmations here. Each payment is routed to the correct tenant via <strong>CheckoutRequestID</strong>.
+                    </p>
+                </div>
+            </div>
+
             {/* One card per location */}
             <div className="space-y-4">
                 {[...locations].sort((a: any, b: any) => a.location_name.localeCompare(b.location_name)).map((loc: any) => {
