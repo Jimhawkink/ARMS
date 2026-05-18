@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getUnits, addUnit, updateUnit, deleteUnit, getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
-import { FiPlus, FiEdit2, FiTrash2, FiX, FiSave, FiSearch, FiRefreshCw, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiX, FiSave, FiSearch, FiRefreshCw, FiChevronLeft, FiChevronRight, FiEye, FiEyeOff, FiSmartphone } from 'react-icons/fi';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
 
@@ -24,6 +24,7 @@ const C = {
     deposit:  { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
     floor:    { bg: '#fffbeb', text: '#b45309', head: '#fde68a' },
     status:   { bg: '#ecfdf5', text: '#059669', head: '#a7f3d0' },
+    till:     { bg: '#fdf4ff', text: '#7e22ce', head: '#f3e8ff' },
     actions:  { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
 };
 
@@ -35,6 +36,209 @@ const LOC_COLORS = [
     { bg: '#f0fdf4', border: '#4ade80', text: '#15803d', grad: 'linear-gradient(135deg,#059669,#10b981)' },
     { bg: '#eff6ff', border: '#60a5fa', text: '#1d4ed8', grad: 'linear-gradient(135deg,#1d4ed8,#3b82f6)' },
 ];
+
+/* ─────────────────────────────────────────────────────────────
+   Quick-Assign Panel: configure till for a specific unit
+───────────────────────────────────────────────────────────── */
+interface QuickAssignPanelProps {
+    unit: any;
+    allConfigs: Record<number, any>;
+    onClose: () => void;
+    onSaved: () => void;
+}
+
+function QuickAssignPanel({ unit, allConfigs, onClose, onSaved }: QuickAssignPanelProps) {
+    const [form, setForm] = useState({
+        till_number: '', shortcode: '', consumer_key: '',
+        consumer_secret: '', passkey: '', environment: 'production',
+    });
+    const [show, setShow] = useState<Record<string, boolean>>({});
+    const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Load existing config (till_number/shortcode/environment only — never pre-fill secrets)
+        fetch(`/api/mpesa/unit-config/by-unit?unit_id=${unit.unit_id}`)
+            .then(r => r.json())
+            .then(d => {
+                if (d.config_id) {
+                    setForm(prev => ({
+                        ...prev,
+                        till_number: d.till_number || '',
+                        shortcode:   d.shortcode?.includes('****') ? '' : (d.shortcode || ''),
+                        environment: d.environment || 'production',
+                        // Never pre-fill masked secrets
+                        consumer_key: '', consumer_secret: '', passkey: '',
+                    }));
+                }
+            })
+            .catch(() => {/* no config yet — blank form is fine */})
+            .finally(() => setLoading(false));
+    }, [unit.unit_id]);
+
+    // "Copy from Location" — pre-fill from first configured unit in same location
+    const copyFromLocation = () => {
+        const sameLocConfig = Object.values(allConfigs).find(
+            (c: any) => c.location_id === unit.location_id && c.unit_id !== unit.unit_id && c.till_number
+        ) as any;
+        if (!sameLocConfig) { toast.error('No configured unit found in this location'); return; }
+        setForm(prev => ({
+            ...prev,
+            till_number: sameLocConfig.till_number || prev.till_number,
+            shortcode:   sameLocConfig.shortcode?.includes('****') ? prev.shortcode : (sameLocConfig.shortcode || prev.shortcode),
+            environment: sameLocConfig.environment || prev.environment,
+        }));
+        toast.success('Copied till number from location');
+    };
+
+    const handleSave = async () => {
+        if (!form.till_number.trim()) { toast.error('Till number is required'); return; }
+        setSaving(true);
+        try {
+            const res = await fetch('/api/mpesa/unit-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ unit_id: unit.unit_id, ...form }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast.success(`✅ Till configured for ${unit.unit_name}`);
+                onSaved();
+                onClose();
+            } else {
+                toast.error(data.error || 'Failed to save');
+            }
+        } catch (e: any) {
+            toast.error(e.message || 'Failed to save');
+        }
+        setSaving(false);
+    };
+
+    const SecretField = ({ label, fieldKey, placeholder }: { label: string; fieldKey: string; placeholder: string }) => (
+        <div>
+            <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">{label}</label>
+            <div className="relative">
+                <input
+                    type={show[fieldKey] ? 'text' : 'password'}
+                    value={(form as any)[fieldKey]}
+                    onChange={e => setForm(prev => ({ ...prev, [fieldKey]: e.target.value }))}
+                    placeholder={placeholder}
+                    className="w-full pl-3 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-50 transition"
+                />
+                <button
+                    type="button"
+                    onClick={() => setShow(prev => ({ ...prev, [fieldKey]: !prev[fieldKey] }))}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-400 hover:text-purple-600 transition"
+                >
+                    {show[fieldKey] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+                </button>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="px-6 py-4 flex items-center justify-between relative overflow-hidden"
+                    style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}>
+                    <div className="absolute right-0 top-0 w-24 h-24 rounded-full -translate-y-8 translate-x-8 opacity-10 bg-white" />
+                    <div>
+                        <h2 className="text-base font-bold text-white flex items-center gap-2">
+                            <FiSmartphone size={16} /> Configure Till
+                        </h2>
+                        <p className="text-xs text-purple-200 mt-0.5">
+                            {unit.unit_name} · {unit.arms_locations?.location_name || ''}
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="p-2 rounded-xl bg-white/20 text-white hover:bg-white/30 transition">
+                        <FiX size={16} />
+                    </button>
+                </div>
+
+                {/* Per-unit note */}
+                <div className="mx-5 mt-4 px-3 py-2 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-700 flex items-start gap-2">
+                    <span className="mt-0.5">ℹ️</span>
+                    <span>This till is specific to <strong>{unit.unit_name}</strong> only. Other units are not affected.</span>
+                </div>
+
+                {loading ? (
+                    <div className="flex items-center justify-center py-10 gap-2 text-gray-400">
+                        <FiRefreshCw size={14} className="animate-spin" />
+                        <span className="text-sm">Loading config…</span>
+                    </div>
+                ) : (
+                    <div className="p-5 space-y-4">
+                        {/* Till Number + Shortcode */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📱 Till Number *</label>
+                                <input
+                                    value={form.till_number}
+                                    onChange={e => setForm(prev => ({ ...prev, till_number: e.target.value }))}
+                                    placeholder="e.g. 9438697"
+                                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-50 transition font-mono"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🏢 Shortcode</label>
+                                <input
+                                    value={form.shortcode}
+                                    onChange={e => setForm(prev => ({ ...prev, shortcode: e.target.value }))}
+                                    placeholder="e.g. 603123"
+                                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-50 transition font-mono"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Environment */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">🌍 Environment</label>
+                            <select
+                                value={form.environment}
+                                onChange={e => setForm(prev => ({ ...prev, environment: e.target.value }))}
+                                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition"
+                            >
+                                <option value="production">Production</option>
+                                <option value="sandbox">Sandbox</option>
+                            </select>
+                        </div>
+
+                        {/* Secrets */}
+                        <SecretField label="🔑 Consumer Key" fieldKey="consumer_key" placeholder="Enter new value to update" />
+                        <SecretField label="🔐 Consumer Secret" fieldKey="consumer_secret" placeholder="Enter new value to update" />
+                        <SecretField label="🗝️ Passkey" fieldKey="passkey" placeholder="Enter new value to update" />
+
+                        {/* Copy from Location */}
+                        <button
+                            type="button"
+                            onClick={copyFromLocation}
+                            className="w-full py-2 rounded-xl text-xs font-bold border border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100 transition"
+                        >
+                            📋 Copy Till Number from Another Unit in This Location
+                        </button>
+                    </div>
+                )}
+
+                {/* Footer */}
+                <div className="px-5 pb-5 flex gap-3 justify-end border-t border-gray-100 pt-4">
+                    <button onClick={onClose} className="px-4 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 transition">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={handleSave}
+                        disabled={saving || loading}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition disabled:opacity-60"
+                        style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
+                    >
+                        {saving ? <FiRefreshCw size={13} className="animate-spin" /> : <FiSave size={13} />}
+                        {saving ? 'Saving…' : 'Save Till Config'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default function UnitsPage() {
     const [units, setUnits] = useState<any[]>([]);
@@ -54,6 +258,21 @@ export default function UnitsPage() {
     });
     const [saving, setSaving] = useState(false);
 
+    // ── Till config state ──
+    const [tillConfigs, setTillConfigs] = useState<Record<number, any>>({});
+    const [quickAssignUnit, setQuickAssignUnit] = useState<any>(null);
+
+    const loadTillConfigs = useCallback(async () => {
+        try {
+            const res = await fetch('/api/mpesa/unit-config');
+            if (!res.ok) return;
+            const data = await res.json();
+            const map: Record<number, any> = {};
+            (data || []).forEach((c: any) => { map[c.unit_id] = c; });
+            setTillConfigs(map);
+        } catch { /* graceful — show "Till Not Configured" for all */ }
+    }, []);
+
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         topProgress.start();
@@ -67,11 +286,13 @@ export default function UnitsPage() {
     useEffect(() => {
         const saved = localStorage.getItem('arms_location');
         const lid = saved ? parseInt(saved) : null;
-        setLocationId(lid); loadData(lid);
+        setLocationId(lid);
+        loadData(lid);
+        loadTillConfigs();
         const handler = (e: any) => { setLocationId(e.detail); loadData(e.detail); };
         window.addEventListener('arms-location-change', handler);
         return () => window.removeEventListener('arms-location-change', handler);
-    }, [loadData]);
+    }, [loadData, loadTillConfigs]);
 
     const openAdd = () => {
         setEditItem(null);
@@ -260,6 +481,7 @@ export default function UnitsPage() {
                                     { label: '🔐 Deposit', col: C.deposit },
                                     { label: '🏗️ Floor', col: C.floor },
                                     { label: '✅ Status', col: C.status },
+                                    { label: '📱 Till', col: C.till },
                                     { label: '⚙️ Actions', col: C.actions },
                                 ].map((h, i) => (
                                     <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
@@ -271,7 +493,7 @@ export default function UnitsPage() {
                         </thead>
                         <tbody>
                             {paginated.length === 0 ? (
-                                <tr><td colSpan={9} className="text-center py-14 text-gray-400">
+                                <tr><td colSpan={10} className="text-center py-14 text-gray-400">
                                     <div className="flex flex-col items-center gap-2">
                                         <span className="text-5xl">🏠</span>
                                         <p className="text-sm font-medium">No units found</p>
@@ -318,6 +540,26 @@ export default function UnitsPage() {
                                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border whitespace-nowrap ${u.status === 'Occupied' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                                             {u.status === 'Occupied' ? '✅' : '🔓'} {u.status}
                                         </span>
+                                    </td>
+                                    {/* ── Till Badge ── */}
+                                    <td className="px-3 py-3" style={{ background: C.till.bg + '60' }}>
+                                        {(() => {
+                                            const cfg = tillConfigs[u.unit_id];
+                                            const configured = cfg?.till_number && cfg.till_number.length > 0;
+                                            return (
+                                                <button
+                                                    onClick={() => setQuickAssignUnit(u)}
+                                                    title={configured ? `Till: ${cfg.till_number} — click to edit` : 'Click to configure till'}
+                                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border whitespace-nowrap transition hover:opacity-80 ${
+                                                        configured
+                                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                                            : 'bg-red-50 text-red-700 border-red-200'
+                                                    }`}
+                                                >
+                                                    {configured ? `📱 ${cfg.till_number}` : '⚠️ Till Not Configured'}
+                                                </button>
+                                            );
+                                        })()}
                                     </td>
                                     <td className="px-3 py-3" style={{ background: C.actions.bg + '60' }}>
                                         <div className="flex items-center gap-1.5">
@@ -420,6 +662,16 @@ export default function UnitsPage() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Quick-Assign Till Panel */}
+            {quickAssignUnit && (
+                <QuickAssignPanel
+                    unit={quickAssignUnit}
+                    allConfigs={tillConfigs}
+                    onClose={() => setQuickAssignUnit(null)}
+                    onSaved={() => loadTillConfigs()}
+                />
             )}
         </div>
     );

@@ -153,7 +153,12 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
 
             if (!res.ok || data.error) {
                 setStatus('failed');
-                setError(data.error || data.errorMessage || 'STK Push request failed');
+                // Special handling for till not configured — clear, actionable message
+                if (data.tillNotConfigured) {
+                    setError("This unit's till is not configured yet. Please contact your administrator to configure it in Settings → Unit Tills.");
+                } else {
+                    setError(data.error || data.errorMessage || 'STK Push request failed');
+                }
                 return;
             }
 

@@ -154,20 +154,29 @@ export default function StkPushSection({
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-bold text-red-800">STK Push failed</p>
                                 <p className="text-[10px] text-red-600 mt-0.5 break-words">{error || 'Unknown error'}</p>
+                                {/* Till not configured — prominent admin action hint */}
+                                {error?.includes("till is not configured") && (
+                                    <p className="text-[10px] text-red-700 font-bold mt-1.5 px-2 py-1 bg-red-100 rounded-lg border border-red-200">
+                                        👉 Admin: Go to Settings → Unit Tills to configure this unit's till number.
+                                    </p>
+                                )}
                             </div>
                         </div>
-                        <div className="flex gap-2">
-                            <button
-                                type="button"
-                                onClick={onRetry}
-                                className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition"
-                            >
-                                <FiRefreshCw size={13} /> Retry STK Push
-                            </button>
-                            <p className="flex-1 text-[10px] text-gray-500 self-center text-center leading-tight">
-                                Or enter the M-Pesa receipt manually below
-                            </p>
-                        </div>
+                        {/* Only show retry if it's not a till config issue */}
+                        {!error?.includes("till is not configured") && (
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={onRetry}
+                                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition"
+                                >
+                                    <FiRefreshCw size={13} /> Retry STK Push
+                                </button>
+                                <p className="flex-1 text-[10px] text-gray-500 self-center text-center leading-tight">
+                                    Or enter the M-Pesa receipt manually below
+                                </p>
+                            </div>
+                        )}
                     </div>
                 )}
 
