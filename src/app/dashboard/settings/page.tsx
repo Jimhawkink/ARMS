@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useState, useEffect } from 'react';
 import { getSettings, supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
@@ -471,16 +471,25 @@ function UnitTillsPanel() {
             const locData: any[] = locRes.ok ? await locRes.json() : [];
             const cfgData: any[] = cfgRes.ok ? await cfgRes.json() : [];
 
-            // Build per-location stats and pick one representative config per location
-            const stats:  Record<number, { total: number; configured: number }> = {};
+            // Build per-location stats using REAL unit_count from location-list API
+            // and configured count from config data
+            const configuredCount: Record<number, number> = {};
             const repCfg: Record<number, any> = {};
             cfgData.forEach((c: any) => {
                 const lid = c.location_id;
                 if (!lid) return;
-                if (!stats[lid]) stats[lid] = { total: 0, configured: 0 };
-                stats[lid].total++;
-                if (c.is_configured) stats[lid].configured++;
+                if (!configuredCount[lid]) configuredCount[lid] = 0;
+                if (c.is_configured) configuredCount[lid]++;
                 if (!repCfg[lid]) repCfg[lid] = c;
+            });
+
+            // Use real unit_count from the API (fetched from arms_units)
+            const stats: Record<number, { total: number; configured: number }> = {};
+            locData.forEach((loc: any) => {
+                stats[loc.location_id] = {
+                    total: loc.unit_count || 0,  // Real count from arms_units
+                    configured: configuredCount[loc.location_id] || 0,
+                };
             });
 
             setLocations(locData);
