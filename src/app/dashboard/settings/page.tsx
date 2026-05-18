@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useState, useEffect } from 'react';
 import { getSettings, supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
@@ -449,232 +449,243 @@ function JengaTestPanel() {
     );
 }
 
-/* ─── Unit Tills Panel ─── */
+/*  Unit Tills Panel 
+   ONE card per LOCATION. Save once  applies to ALL units in that location.
+ */
 function UnitTillsPanel() {
-    const [configs, setConfigs] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState<Record<number, boolean>>({});
-    const [forms, setForms] = useState<Record<number, any>>({});
-    const [show, setShow] = useState<Record<string, boolean>>({});
+    const [locations, setLocations]   = useState<any[]>([]);
+    const [locStats, setLocStats]     = useState<Record<number, { total: number; configured: number }>>({});
+    const [repConfig, setRepConfig]   = useState<Record<number, any>>({});
+    const [loading, setLoading]       = useState(true);
+    const [saving, setSaving]         = useState<Record<number, boolean>>({});
+    const [forms, setForms]           = useState<Record<number, any>>({});
+    const [show, setShow]             = useState<Record<string, boolean>>({});
 
-    const loadConfigs = async () => {
+    const loadData = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/mpesa/unit-config');
-            const data = await res.json();
-            setConfigs(data || []);
-            // Init forms with till_number, shortcode, environment (never pre-fill masked secrets)
+            const [locRes, cfgRes] = await Promise.all([
+                fetch('/api/mpesa/location-list'),
+                fetch('/api/mpesa/unit-config'),
+            ]);
+            const locData: any[] = locRes.ok ? await locRes.json() : [];
+            const cfgData: any[] = cfgRes.ok ? await cfgRes.json() : [];
+
+            // Build per-location stats and pick one representative config per location
+            const stats:  Record<number, { total: number; configured: number }> = {};
+            const repCfg: Record<number, any> = {};
+            cfgData.forEach((c: any) => {
+                const lid = c.location_id;
+                if (!lid) return;
+                if (!stats[lid]) stats[lid] = { total: 0, configured: 0 };
+                stats[lid].total++;
+                if (c.is_configured) stats[lid].configured++;
+                if (!repCfg[lid]) repCfg[lid] = c;
+            });
+
+            setLocations(locData);
+            setLocStats(stats);
+            setRepConfig(repCfg);
+
+            // Init one form per location
             const initForms: Record<number, any> = {};
-            (data || []).forEach((c: any) => {
-                initForms[c.unit_id] = {
-                    till_number: c.till_number || '',
-                    shortcode: c.shortcode?.includes('****') ? '' : (c.shortcode || ''),
-                    consumer_key: '',
+            locData.forEach((loc: any) => {
+                const rep = repCfg[loc.location_id];
+                initForms[loc.location_id] = {
+                    till_number:     rep?.till_number || '',
+                    shortcode:       rep?.shortcode?.includes('****') ? '' : (rep?.shortcode || ''),
+                    consumer_key:    '',
                     consumer_secret: '',
-                    passkey: '',
-                    environment: c.environment || 'production',
+                    passkey:         '',
+                    environment:     rep?.environment || 'production',
                 };
             });
             setForms(initForms);
-        } catch { toast.error('Failed to load unit till configs'); }
+        } catch { toast.error('Failed to load till configs'); }
         setLoading(false);
     };
 
-    useEffect(() => { loadConfigs(); }, []);
+    useEffect(() => { loadData(); }, []);
 
-    const handleSave = async (unitId: number, unitName: string) => {
-        const form = forms[unitId];
+    // Save credentials → bulk-upsert all units in this location
+    const handleSave = async (locationId: number, locationName: string) => {
+        const form = forms[locationId];
         if (!form?.till_number?.trim()) { toast.error('Till number is required'); return; }
-        setSaving(prev => ({ ...prev, [unitId]: true }));
+        setSaving(prev => ({ ...prev, [locationId]: true }));
         try {
-            const res = await fetch('/api/mpesa/unit-config', {
+            const res = await fetch('/api/mpesa/location-till-config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ unit_id: unitId, ...form }),
+                body: JSON.stringify({ location_id: locationId, ...form }),
             });
             const data = await res.json();
             if (res.ok) {
-                toast.success(`✅ Till saved for ${unitName}`);
-                loadConfigs();
+                toast.success(` Till saved for all ${data.updated} units in ${locationName}`);
+                loadData();
             } else {
                 toast.error(data.error || 'Failed to save');
             }
         } catch (e: any) { toast.error(e.message); }
-        setSaving(prev => ({ ...prev, [unitId]: false }));
+        setSaving(prev => ({ ...prev, [locationId]: false }));
     };
 
-    const updateForm = (unitId: number, key: string, value: string) => {
-        setForms(prev => ({ ...prev, [unitId]: { ...prev[unitId], [key]: value } }));
-    };
+    const updateForm = (lid: number, key: string, value: string) =>
+        setForms(prev => ({ ...prev, [lid]: { ...prev[lid], [key]: value } }));
 
-    const toggleShow = (key: string) => setShow(prev => ({ ...prev, [key]: !prev[key] }));
+    const toggleShow = (key: string) =>
+        setShow(prev => ({ ...prev, [key]: !prev[key] }));
 
     if (loading) return (
         <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
             <FiRefreshCw size={16} className="animate-spin" />
-            <span className="text-sm">Loading unit till configs…</span>
+            <span className="text-sm">Loading location till configs</span>
         </div>
     );
 
-    const configured = configs.filter(c => c.is_configured).length;
-    const total = configs.length;
-
-    // Group by location
-    const byLocation: Record<string, any[]> = {};
-    configs.forEach(c => {
-        const loc = c.location_name || 'Unknown';
-        if (!byLocation[loc]) byLocation[loc] = [];
-        byLocation[loc].push(c);
-    });
+    const totalLocs      = locations.length;
+    const configuredLocs = locations.filter((l: any) => {
+        const s = locStats[l.location_id];
+        return s && s.total > 0 && s.configured === s.total;
+    }).length;
 
     return (
         <div className="space-y-5">
             {/* Summary banner */}
-            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${configured === total ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                <span className="text-xl">{configured === total ? '✅' : '⚠️'}</span>
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${configuredLocs === totalLocs && totalLocs > 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                <span className="text-xl">{configuredLocs === totalLocs && totalLocs > 0 ? '✅' : '⚠️'}</span>
                 <div>
-                    <p className={`text-sm font-bold ${configured === total ? 'text-green-800' : 'text-amber-800'}`}>
-                        {configured} of {total} units configured
+                    <p className={`text-sm font-bold ${configuredLocs === totalLocs && totalLocs > 0 ? 'text-green-800' : 'text-amber-800'}`}>
+                        {configuredLocs} of {totalLocs} locations fully configured
                     </p>
-                    <p className={`text-xs mt-0.5 ${configured === total ? 'text-green-600' : 'text-amber-600'}`}>
-                        {total - configured > 0 ? `${total - configured} unit(s) will block STK Push until configured` : 'All units have a till configured'}
+                    <p className="text-xs mt-0.5 text-gray-500">
+                        Saving a location applies the till to <strong>all units</strong> in that location at once
                     </p>
                 </div>
-                <button onClick={loadConfigs} className="ml-auto p-2 rounded-lg text-gray-400 hover:text-purple-600 transition">
+                <button onClick={loadData} className="ml-auto p-2 rounded-lg text-gray-400 hover:text-purple-600 transition">
                     <FiRefreshCw size={14} />
                 </button>
             </div>
 
-            {/* Location groups */}
-            {Object.entries(byLocation).sort(([a], [b]) => a.localeCompare(b)).map(([locName, units]) => (
-                <div key={locName}>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">📍 {locName}</p>
-                    <div className="space-y-3">
-                        {units.map(cfg => {
-                            const form = forms[cfg.unit_id] || {};
-                            const isSaving = saving[cfg.unit_id];
-                            return (
-                                <div key={cfg.unit_id} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-                                    {/* Card header */}
-                                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100"
-                                        style={{ background: cfg.is_configured ? '#f0fdf4' : '#fef2f2' }}>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-bold text-gray-800">🏠 {cfg.unit_name}</span>
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${cfg.is_configured ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                                {cfg.is_configured ? '✅ Configured' : '⚠️ Till Not Configured'}
-                                            </span>
-                                        </div>
-                                        <button
-                                            onClick={() => handleSave(cfg.unit_id, cfg.unit_name)}
-                                            disabled={isSaving}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60"
-                                            style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
-                                        >
-                                            {isSaving ? <FiRefreshCw size={11} className="animate-spin" /> : <FiSave size={11} />}
-                                            {isSaving ? 'Saving…' : 'Save'}
+            {/* One card per location */}
+            <div className="space-y-4">
+                {[...locations].sort((a: any, b: any) => a.location_name.localeCompare(b.location_name)).map((loc: any) => {
+                    const lid      = loc.location_id;
+                    const form     = forms[lid] || {};
+                    const isSaving = saving[lid];
+                    const stats    = locStats[lid] || { total: 0, configured: 0 };
+                    const allOk    = stats.total > 0 && stats.configured === stats.total;
+                    const partial  = stats.configured > 0 && stats.configured < stats.total;
+
+                    return (
+                        <div key={lid} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                            {/* Card header */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100"
+                                style={{ background: allOk ? '#f0fdf4' : partial ? '#fffbeb' : '#fef2f2' }}>
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                                        style={{ background: allOk ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#7c3aed,#a855f7)' }}>
+                                        
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-extrabold text-gray-900">{loc.location_name}</p>
+                                        <p className="text-[11px] text-gray-500 mt-0.5">
+                                            {stats.total} units  {stats.configured} configured
+                                        </p>
+                                    </div>
+                                    <span className={`ml-2 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                        allOk    ? 'bg-green-50 text-green-700 border-green-200' :
+                                        partial  ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                                   'bg-red-50 text-red-700 border-red-200'
+                                    }`}>
+                                        {allOk ? ' All Configured' : partial ? ' Partial' : ' Till Not Configured'}
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => handleSave(lid, loc.location_name)}
+                                    disabled={isSaving}
+                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
+                                    style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
+                                >
+                                    {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
+                                    {isSaving ? 'Saving' : `Save  Apply to All ${stats.total} Units`}
+                                </button>
+                            </div>
+
+                            {/* Info note */}
+                            <div className="mx-5 mt-4 px-3 py-2 rounded-xl bg-purple-50 border border-purple-100 text-xs text-purple-700">
+                                 These credentials apply to <strong>all {stats.total} units</strong> in <strong>{loc.location_name}</strong>. All rooms in this location pay to this till.
+                            </div>
+
+                            {/* Credential fields */}
+                            <div className="p-5 grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Till Number *</label>
+                                    <input value={form.till_number || ''} onChange={e => updateForm(lid, 'till_number', e.target.value)}
+                                        placeholder="e.g. 9438697"
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-50 transition" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Business Shortcode</label>
+                                    <input value={form.shortcode || ''} onChange={e => updateForm(lid, 'shortcode', e.target.value)}
+                                        placeholder="e.g. 603123"
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-50 transition" />
+                                </div>
+                                {/* Consumer Key */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Consumer Key</label>
+                                    <div className="relative">
+                                        <input type={show[`ck_${lid}`] ? 'text' : 'password'} value={form.consumer_key || ''}
+                                            onChange={e => updateForm(lid, 'consumer_key', e.target.value)} placeholder="Enter new value to update"
+                                            className="w-full pl-3 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition" />
+                                        <button type="button" onClick={() => toggleShow(`ck_${lid}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
+                                            {show[`ck_${lid}`] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
                                         </button>
                                     </div>
-
-                                    {/* Warning for unconfigured */}
-                                    {!cfg.is_configured && (
-                                        <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-                                            ⚠️ STK Push is blocked for this unit until a till is configured.
-                                        </div>
-                                    )}
-
-                                    {/* Fields */}
-                                    <div className="p-4 grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">📱 Till Number</label>
-                                            <input
-                                                value={form.till_number || ''}
-                                                onChange={e => updateForm(cfg.unit_id, 'till_number', e.target.value)}
-                                                placeholder="e.g. 9438697"
-                                                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:border-purple-400 transition"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">🏢 Shortcode</label>
-                                            <input
-                                                value={form.shortcode || ''}
-                                                onChange={e => updateForm(cfg.unit_id, 'shortcode', e.target.value)}
-                                                placeholder="e.g. 603123"
-                                                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:border-purple-400 transition"
-                                            />
-                                        </div>
-                                        {/* Consumer Key */}
-                                        <div className="relative">
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">🔑 Consumer Key</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={show[`ck_${cfg.unit_id}`] ? 'text' : 'password'}
-                                                    value={form.consumer_key || ''}
-                                                    onChange={e => updateForm(cfg.unit_id, 'consumer_key', e.target.value)}
-                                                    placeholder="Enter new value to update"
-                                                    className="w-full pl-3 pr-9 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition"
-                                                />
-                                                <button type="button" onClick={() => toggleShow(`ck_${cfg.unit_id}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
-                                                    {show[`ck_${cfg.unit_id}`] ? <FiEyeOff size={12} /> : <FiEye size={12} />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {/* Consumer Secret */}
-                                        <div className="relative">
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">🔐 Consumer Secret</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={show[`cs_${cfg.unit_id}`] ? 'text' : 'password'}
-                                                    value={form.consumer_secret || ''}
-                                                    onChange={e => updateForm(cfg.unit_id, 'consumer_secret', e.target.value)}
-                                                    placeholder="Enter new value to update"
-                                                    className="w-full pl-3 pr-9 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition"
-                                                />
-                                                <button type="button" onClick={() => toggleShow(`cs_${cfg.unit_id}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
-                                                    {show[`cs_${cfg.unit_id}`] ? <FiEyeOff size={12} /> : <FiEye size={12} />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {/* Passkey */}
-                                        <div className="relative">
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">🗝️ Passkey</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={show[`pk_${cfg.unit_id}`] ? 'text' : 'password'}
-                                                    value={form.passkey || ''}
-                                                    onChange={e => updateForm(cfg.unit_id, 'passkey', e.target.value)}
-                                                    placeholder="Enter new value to update"
-                                                    className="w-full pl-3 pr-9 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition"
-                                                />
-                                                <button type="button" onClick={() => toggleShow(`pk_${cfg.unit_id}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
-                                                    {show[`pk_${cfg.unit_id}`] ? <FiEyeOff size={12} /> : <FiEye size={12} />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {/* Environment */}
-                                        <div>
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">🌍 Environment</label>
-                                            <select
-                                                value={form.environment || 'production'}
-                                                onChange={e => updateForm(cfg.unit_id, 'environment', e.target.value)}
-                                                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition"
-                                            >
-                                                <option value="production">Production</option>
-                                                <option value="sandbox">Sandbox</option>
-                                            </select>
-                                        </div>
+                                </div>
+                                {/* Consumer Secret */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Consumer Secret</label>
+                                    <div className="relative">
+                                        <input type={show[`cs_${lid}`] ? 'text' : 'password'} value={form.consumer_secret || ''}
+                                            onChange={e => updateForm(lid, 'consumer_secret', e.target.value)} placeholder="Enter new value to update"
+                                            className="w-full pl-3 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition" />
+                                        <button type="button" onClick={() => toggleShow(`cs_${lid}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
+                                            {show[`cs_${lid}`] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+                                        </button>
                                     </div>
                                 </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            ))}
+                                {/* Passkey */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Passkey</label>
+                                    <div className="relative">
+                                        <input type={show[`pk_${lid}`] ? 'text' : 'password'} value={form.passkey || ''}
+                                            onChange={e => updateForm(lid, 'passkey', e.target.value)} placeholder="Enter new value to update"
+                                            className="w-full pl-3 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition" />
+                                        <button type="button" onClick={() => toggleShow(`pk_${lid}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600">
+                                            {show[`pk_${lid}`] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {/* Environment */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block"> Environment</label>
+                                    <select value={form.environment || 'production'} onChange={e => updateForm(lid, 'environment', e.target.value)}
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-purple-400 transition">
+                                        <option value="production">Production</option>
+                                        <option value="sandbox">Sandbox</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
 
-            {configs.length === 0 && (
+            {locations.length === 0 && (
                 <div className="text-center py-12 text-gray-400">
-                    <p className="text-4xl mb-3">📱</p>
-                    <p className="text-sm font-medium">No units found</p>
-                    <p className="text-xs mt-1">Run the migration SQL first, then add units in the Units page</p>
+                    <p className="text-4xl mb-3"></p>
+                    <p className="text-sm font-medium">No locations found</p>
+                    <p className="text-xs mt-1">Add locations first, then run the migration SQL</p>
                 </div>
             )}
         </div>
