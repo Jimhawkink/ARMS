@@ -21,15 +21,15 @@ interface PaymentModalProps {
     onPaymentRecorded: () => void;
 }
 
-function getMonthOptions() {
+function getMonthOptions(isVacationTenant: boolean) {
     const options: { value: string; label: string }[] = [];
     const now = new Date();
     for (let i = -12; i <= 3; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
         const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const isVac = ['05', '06', '07', '08'].includes(mm);
-        const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) + (isVac ? ' 🏖️' : '');
+        const isVac = isVacationTenant && ['05', '06', '07', '08'].includes(mm);
+        const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) + (isVac ? ' 🏖️ 50%' : '');
         options.push({ value: val, label });
     }
     return options;
@@ -82,7 +82,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const effectiveRent = selectedTenant
         ? getEffectiveRent(selectedTenant.monthly_rent || 0, paymentMonth, isVacationTenant)
         : 0;
-    const monthOptions = getMonthOptions();
+    const monthOptions = getMonthOptions(isVacationTenant);
 
     const { status: stkStatus, error: stkError, send: stkSend, retry: stkRetry, reset: stkReset } = useStkPush({
         onReceiptReceived: (receipt) => {

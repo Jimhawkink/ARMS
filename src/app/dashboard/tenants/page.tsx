@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
-import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, isVacationMonth, getEffectiveRent, getMoveInPayment, updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits } from '@/lib/supabase';
+import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLocations, calculateUnpaidRent, generateMonthlyBills, getMoveInPayment, updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
@@ -299,7 +299,7 @@ export default function TenantsPage() {
             monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
             emergency_contact: '', emergency_phone: '', notes: '',
             password_hash: '',
-            is_on_vacation: isVacationMonth(currentMonth),
+            is_on_vacation: false,
             initial_payment: '',
         });
         setShowModal(true);
@@ -406,7 +406,7 @@ export default function TenantsPage() {
                 monthly_rent: '', deposit_paid: '', move_in_date: today, billing_start_month: currentMonth,
                 emergency_contact: '', emergency_phone: '', notes: '',
                 password_hash: '',
-                is_on_vacation: isVacationMonth(currentMonth),
+                is_on_vacation: false,
                 initial_payment: '',
             });
         } else {
