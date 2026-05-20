@@ -108,53 +108,83 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
             }
 
             try {
-                const res = await fetch(
+                // ── Strategy: poll DB first (fast), fall back to M-Pesa Query API ──
+                // The DB is updated by the STK callback (usually within 5-30s after action)
+                // The M-Pesa Query API is the authoritative source but is rate-limited
+                const dbRes = await fetch(
                     `/api/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(checkoutRequestId)}`
                 );
-                const data = await res.json();
+                const dbData = await dbRes.json();
 
-                if (!activeRef.current) return; // reset was called while fetching
+                if (!activeRef.current) return;
 
-                const stkStatus: string = data.status || 'Pending';
-                const resultCode: number | null = data.resultCode ?? null;
-                const resultDesc: string | null = data.resultDesc ?? null;
-                const mpesaReceipt: string | null = data.mpesaReceipt ?? null;
+                const stkStatus: string = dbData.status || 'Pending';
+                const dbResultCode: number | null = dbData.resultCode ?? null;
+                const dbResultDesc: string | null = dbData.resultDesc ?? null;
+                const mpesaReceipt: string | null = dbData.mpesaReceipt ?? null;
 
-                // Still pending — schedule next poll
-                if (stkStatus === 'Pending') {
-                    scheduleNextPoll(checkoutRequestId, poll);
+                // DB has a definitive non-pending result — use it
+                if (stkStatus !== 'Pending') {
+                    stopPolling();
+                    if (dbResultCode === 0 || stkStatus === 'Completed') {
+                        const receiptCode = mpesaReceipt || '';
+                        setReceipt(receiptCode);
+                        setStatus('success');
+                        onReceiptReceived(receiptCode);
+                    } else {
+                        setStatus('failed');
+                        setError(getErrorMessage(dbResultCode, dbResultDesc));
+                    }
                     return;
                 }
 
-                // Non-pending status — stop polling
-                stopPolling();
+                // DB still pending — also query M-Pesa Query API every 3rd poll (every ~4.5s)
+                // This catches cancellations faster when Safaricom callback is delayed
+                const pollCount = Math.floor(elapsed / FAST_INTERVAL_MS);
+                if (pollCount % 3 === 2) {
+                    try {
+                        const mpesaRes = await fetch(
+                            `/api/mpesa/stk-push?checkoutRequestId=${encodeURIComponent(checkoutRequestId)}`
+                        );
+                        const mpesaData = await mpesaRes.json();
 
-                if (resultCode === 0 || stkStatus === 'Completed') {
-                    // SUCCESS
-                    const receiptCode = mpesaReceipt || '';
-                    setReceipt(receiptCode);
-                    setStatus('success');
-                    onReceiptReceived(receiptCode);
+                        if (!activeRef.current) return;
 
-                    // Also try to fetch from DB in case callback hasn't updated yet
-                    if (!receiptCode) {
-                        try {
-                            const { data: stkRow } = await supabase
-                                .from('arms_stk_requests')
-                                .select('mpesa_receipt')
-                                .eq('checkout_request_id', checkoutRequestId)
-                                .single();
-                            if (stkRow?.mpesa_receipt) {
-                                setReceipt(stkRow.mpesa_receipt);
-                                onReceiptReceived(stkRow.mpesa_receipt);
+                        const mpesaResultCode = mpesaData.ResultCode ?? mpesaData.resultCode ?? null;
+                        const mpesaResultDesc = mpesaData.ResultDesc ?? mpesaData.resultDesc ?? null;
+
+                        if (mpesaResultCode !== null && mpesaResultCode !== undefined && mpesaResultCode !== '') {
+                            const code = Number(mpesaResultCode);
+                            if (!isNaN(code)) {
+                                stopPolling();
+                                if (code === 0) {
+                                    // Success — get receipt from DB
+                                    try {
+                                        const { data: stkRow } = await supabase
+                                            .from('arms_stk_requests')
+                                            .select('mpesa_receipt')
+                                            .eq('checkout_request_id', checkoutRequestId)
+                                            .single();
+                                        const receiptCode = stkRow?.mpesa_receipt || '';
+                                        setReceipt(receiptCode);
+                                        setStatus('success');
+                                        onReceiptReceived(receiptCode);
+                                    } catch {
+                                        setStatus('success');
+                                        onReceiptReceived('');
+                                    }
+                                } else {
+                                    setStatus('failed');
+                                    setError(getErrorMessage(code, String(mpesaResultDesc || '')));
+                                }
+                                return;
                             }
-                        } catch { /* ignore */ }
-                    }
-                } else {
-                    // FAILED / CANCELLED / INSUFFICIENT BALANCE
-                    setStatus('failed');
-                    setError(getErrorMessage(resultCode, resultDesc));
+                        }
+                    } catch { /* M-Pesa query failed — continue DB polling */ }
                 }
+
+                // Still pending — schedule next poll
+                scheduleNextPoll(checkoutRequestId, poll);
             } catch {
                 // Network error during poll — keep trying until timeout
                 if (activeRef.current) {
