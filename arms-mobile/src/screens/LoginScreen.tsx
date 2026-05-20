@@ -2,15 +2,129 @@ import React, { useState, useEffect } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, StyleSheet,
     KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
-    Dimensions, Animated,
+    Dimensions, Animated, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, spacing, borderRadius, fontSize, fontWeight, shadows } from '../theme';
-import { loginTenant, normalizePhone, formatPhoneDisplay } from '../lib/supabase';
-import type { Tenant } from '../lib/supabase';
+import { loginTenant, checkTenantLicense, normalizePhone } from '../../lib/supabase';
+import type { Tenant } from '../../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
+// ── LicenseGate ───────────────────────────────────────────────
+interface LicenseGateProps {
+    reason?: string;
+    onBack?: () => void;
+}
+
+function LicenseGate({ reason, onBack }: LicenseGateProps) {
+    const handleContactLandlord = () => {
+        // Open dialer — replace with actual landlord number if known
+        Linking.openURL('tel:+254700000000').catch(() => {
+            Alert.alert('Contact Landlord', 'Please call your landlord to restore access.');
+        });
+    };
+
+    return (
+        <View style={gateStyles.container}>
+            <LinearGradient colors={['#1e1b4b', '#312e81', '#1e1b4b']} style={StyleSheet.absoluteFill} />
+
+            {/* Background circles */}
+            <View style={[gateStyles.circle, { top: -80, right: -60, width: 220, height: 220, borderRadius: 110 }]} />
+            <View style={[gateStyles.circle, { bottom: 80, left: -80, width: 180, height: 180, borderRadius: 90 }]} />
+
+            <View style={gateStyles.content}>
+                {/* Icon */}
+                <View style={gateStyles.iconContainer}>
+                    <Text style={gateStyles.iconText}>🔒</Text>
+                </View>
+
+                <Text style={gateStyles.title}>Access Revoked</Text>
+                <Text style={gateStyles.message}>
+                    Your access has been revoked. Please contact your landlord.
+                </Text>
+
+                {reason ? (
+                    <View style={gateStyles.reasonBox}>
+                        <Text style={gateStyles.reasonLabel}>Reason:</Text>
+                        <Text style={gateStyles.reasonText}>{reason}</Text>
+                    </View>
+                ) : null}
+
+                <TouchableOpacity
+                    style={gateStyles.contactBtn}
+                    onPress={handleContactLandlord}
+                    activeOpacity={0.85}
+                >
+                    <LinearGradient
+                        colors={['#6366f1', '#4338ca']}
+                        style={gateStyles.contactBtnGradient}
+                    >
+                        <Text style={gateStyles.contactBtnText}>📞 Contact Landlord</Text>
+                    </LinearGradient>
+                </TouchableOpacity>
+
+                {onBack && (
+                    <TouchableOpacity onPress={onBack} style={gateStyles.backBtn}>
+                        <Text style={gateStyles.backBtnText}>← Back to Login</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+        </View>
+    );
+}
+
+const gateStyles = StyleSheet.create({
+    container: { flex: 1, backgroundColor: '#1e1b4b' },
+    circle: {
+        position: 'absolute',
+        backgroundColor: 'rgba(99,102,241,0.12)',
+    },
+    content: {
+        flex: 1, justifyContent: 'center', alignItems: 'center',
+        paddingHorizontal: 32, paddingVertical: 40,
+    },
+    iconContainer: {
+        width: 80, height: 80, borderRadius: 24,
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        borderWidth: 2, borderColor: 'rgba(239,68,68,0.3)',
+        justifyContent: 'center', alignItems: 'center',
+        marginBottom: 24,
+    },
+    iconText: { fontSize: 36 },
+    title: {
+        color: '#fff', fontSize: 26, fontWeight: '900',
+        textAlign: 'center', marginBottom: 12, letterSpacing: 0.5,
+    },
+    message: {
+        color: 'rgba(255,255,255,0.7)', fontSize: 15,
+        textAlign: 'center', lineHeight: 22, marginBottom: 24,
+    },
+    reasonBox: {
+        backgroundColor: 'rgba(239,68,68,0.1)',
+        borderRadius: 12, padding: 14, marginBottom: 28,
+        borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+        width: '100%',
+    },
+    reasonLabel: {
+        color: 'rgba(239,68,68,0.8)', fontSize: 10,
+        fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4,
+    },
+    reasonText: {
+        color: 'rgba(255,255,255,0.8)', fontSize: 13, lineHeight: 18,
+    },
+    contactBtn: { borderRadius: 14, overflow: 'hidden', width: '100%', marginBottom: 16 },
+    contactBtnGradient: {
+        height: 52, justifyContent: 'center', alignItems: 'center',
+    },
+    contactBtnText: {
+        color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.5,
+    },
+    backBtn: { paddingVertical: 8 },
+    backBtnText: { color: 'rgba(255,255,255,0.4)', fontSize: 13 },
+});
+
+// ── LoginScreen ───────────────────────────────────────────────
 interface LoginScreenProps {
     onLoginSuccess: (tenant: Tenant) => void;
 }
@@ -19,10 +133,15 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     const [phone, setPhone] = useState('');
     const [pin, setPin] = useState('');
     const [loading, setLoading] = useState(false);
+    const [checkingLicense, setCheckingLicense] = useState(false);
     const [error, setError] = useState('');
     const [showPin, setShowPin] = useState(false);
     const [currentTime, setCurrentTime] = useState('');
     const [currentDate, setCurrentDate] = useState('');
+
+    // License gate state
+    const [licenseRevoked, setLicenseRevoked] = useState(false);
+    const [revokeReason, setRevokeReason] = useState<string | undefined>(undefined);
 
     // Animation
     const floatAnim = React.useRef(new Animated.Value(0)).current;
@@ -70,17 +189,70 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         setLoading(true);
         try {
             const result = await loginTenant(phone.trim(), pin.trim());
+
             if (result.success && result.tenant) {
-                onLoginSuccess(result.tenant);
+                setLoading(false);
+
+                // ── License check after successful PIN auth ──
+                setCheckingLicense(true);
+                try {
+                    const licenseResult = await checkTenantLicense(
+                        result.tenant.tenant_id,
+                        result.tenant.phone || normalizePhone(phone.trim())
+                    );
+
+                    if (!licenseResult.licensed) {
+                        // Access revoked — show License Gate
+                        setLicenseRevoked(true);
+                        setRevokeReason(licenseResult.reason);
+                    } else {
+                        // Licensed (or auto-licensed) — proceed to dashboard
+                        onLoginSuccess(result.tenant);
+                    }
+                } catch {
+                    // Fail-open: license check error → allow login
+                    onLoginSuccess(result.tenant);
+                } finally {
+                    setCheckingLicense(false);
+                }
             } else {
                 setError(result.error || 'Login failed');
+                setLoading(false);
             }
-        } catch (e: any) {
+        } catch (e: unknown) {
             setError('Connection error. Please try again.');
-        } finally {
             setLoading(false);
         }
     };
+
+    // Show License Gate if revoked
+    if (licenseRevoked) {
+        return (
+            <LicenseGate
+                reason={revokeReason}
+                onBack={() => {
+                    setLicenseRevoked(false);
+                    setRevokeReason(undefined);
+                    setPin('');
+                }}
+            />
+        );
+    }
+
+    // Show license checking overlay
+    if (checkingLicense) {
+        return (
+            <View style={styles.container}>
+                <LinearGradient colors={['#0f172a', '#1e1b4b', '#0f172a']} style={StyleSheet.absoluteFill} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+                    <ActivityIndicator color="#6366f1" size="large" />
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' }}>
+                        Verifying access...
+                    </Text>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <KeyboardAvoidingView

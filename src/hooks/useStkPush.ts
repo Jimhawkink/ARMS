@@ -12,6 +12,7 @@ interface UseStkPushOptions {
 interface UseStkPushReturn {
     status: StkStatus;
     error: string | null;
+    receipt: string | null;
     send: (params: StkSendParams) => Promise<void>;
     retry: () => void;
     reset: () => void;
@@ -24,98 +25,147 @@ interface StkSendParams {
     tenantName: string;
 }
 
-const MAX_POLL_ITERATIONS = 40; // 40 × 3s = 2 minutes
-const POLL_INTERVAL_MS = 3000;
+// ── Timing constants ──────────────────────────────────────────
+const FAST_INTERVAL_MS = 1500;          // first 20 seconds: poll every 1.5s
+const SLOW_INTERVAL_MS = 3000;          // after 20 seconds: poll every 3s
+const FAST_PHASE_DURATION_MS = 20000;   // switch to slow after 20s
+const MAX_POLL_DURATION_MS = 120000;    // give up after 2 minutes
+
+// ── ResultCode → message mapping ─────────────────────────────
+function getErrorMessage(resultCode: number | null, resultDesc: string | null): string {
+    if (resultCode === 0) return ''; // success — no error
+    if (resultCode === 1032) {
+        return '❌ Payment Cancelled — You cancelled the M-Pesa prompt. Tap Retry to try again.';
+    }
+    if (resultCode === 1037) {
+        return '💸 Insufficient M-Pesa Balance — Please top up your M-Pesa and try again.';
+    }
+    if (resultCode !== null) {
+        return resultDesc || `Payment failed (code ${resultCode})`;
+    }
+    return resultDesc || 'Payment failed';
+}
 
 /**
- * useStkPush
+ * useStkPush — Ultra-fast M-Pesa STK Push hook
  *
- * Custom hook that encapsulates the full M-Pesa STK Push lifecycle:
- *   1. POST /api/mpesa/stk-push  → get CheckoutRequestID
- *   2. Poll GET /api/mpesa/stk-push?checkoutRequestId=... every 3 seconds
- *   3. On success: call onReceiptReceived with the M-Pesa receipt code
- *   4. On failure / timeout: set status to 'failed' with error message
- *
- * Feature: ultra-rent-payment-modal
- * Requirements: 6.2, 6.3, 6.8, 6.9, 6.10, 6.11
+ * Improvements over the original:
+ * 1. Polls the new DB-based /api/mpesa/stk-status endpoint (no M-Pesa API call)
+ * 2. Adaptive polling: 1.5s for first 20s, then 3s — using setTimeout chains
+ * 3. Instant detection of cancellation (1032) and insufficient balance (1037)
+ * 4. Exposes `receipt` state for the ReceiptCard component
+ * 5. Improved timeout message after 2 minutes
  */
 export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPushReturn {
     const [status, setStatus] = useState<StkStatus>('idle');
     const [error, setError] = useState<string | null>(null);
+    const [receipt, setReceipt] = useState<string | null>(null);
 
-    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const pollCountRef = useRef(0);
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const startTimeRef = useRef<number>(0);
     const lastParamsRef = useRef<StkSendParams | null>(null);
+    const checkoutRequestIdRef = useRef<string | null>(null);
+    const activeRef = useRef(false); // prevents stale closures from continuing after reset
 
     const stopPolling = useCallback(() => {
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
+        activeRef.current = false;
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
         }
-        pollCountRef.current = 0;
     }, []);
 
     const reset = useCallback(() => {
         stopPolling();
         setStatus('idle');
         setError(null);
+        setReceipt(null);
+        checkoutRequestIdRef.current = null;
     }, [stopPolling]);
 
+    const scheduleNextPoll = useCallback((checkoutRequestId: string, pollFn: () => void) => {
+        if (!activeRef.current) return;
+        const elapsed = Date.now() - startTimeRef.current;
+        const interval = elapsed < FAST_PHASE_DURATION_MS ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS;
+        timeoutRef.current = setTimeout(pollFn, interval);
+    }, []);
+
     const startPolling = useCallback((checkoutRequestId: string) => {
-        pollCountRef.current = 0;
+        activeRef.current = true;
+        startTimeRef.current = Date.now();
 
-        intervalRef.current = setInterval(async () => {
-            pollCountRef.current += 1;
+        const poll = async () => {
+            if (!activeRef.current) return;
 
-            // Timeout after MAX_POLL_ITERATIONS
-            if (pollCountRef.current > MAX_POLL_ITERATIONS) {
+            const elapsed = Date.now() - startTimeRef.current;
+
+            // Timeout after 2 minutes
+            if (elapsed >= MAX_POLL_DURATION_MS) {
                 stopPolling();
                 setStatus('failed');
-                setError('No response from M-Pesa after 2 minutes — please enter the receipt manually.');
+                setError('⏱ No response from M-Pesa — Did you see a prompt on your phone? You can enter the receipt manually below.');
                 return;
             }
 
             try {
-                const res = await fetch(`/api/mpesa/stk-push?checkoutRequestId=${encodeURIComponent(checkoutRequestId)}`);
+                const res = await fetch(
+                    `/api/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(checkoutRequestId)}`
+                );
                 const data = await res.json();
 
-                // ResultCode '0' = success
-                if (data.ResultCode === '0' || data.ResultCode === 0) {
-                    stopPolling();
-                    setStatus('success');
+                if (!activeRef.current) return; // reset was called while fetching
 
-                    // Try to fetch the receipt from arms_stk_requests
-                    try {
-                        const { data: stkRow } = await supabase
-                            .from('arms_stk_requests')
-                            .select('mpesa_receipt')
-                            .eq('checkout_request_id', checkoutRequestId)
-                            .single();
-                        if (stkRow?.mpesa_receipt) {
-                            onReceiptReceived(stkRow.mpesa_receipt);
-                        }
-                    } catch {
-                        // Receipt fetch failed — not critical, user can enter manually
-                    }
+                const stkStatus: string = data.status || 'Pending';
+                const resultCode: number | null = data.resultCode ?? null;
+                const resultDesc: string | null = data.resultDesc ?? null;
+                const mpesaReceipt: string | null = data.mpesaReceipt ?? null;
+
+                // Still pending — schedule next poll
+                if (stkStatus === 'Pending') {
+                    scheduleNextPoll(checkoutRequestId, poll);
                     return;
                 }
 
-                // ResultCode '1032' = user cancelled; other non-zero = failed
-                if (data.ResultCode !== undefined && data.ResultCode !== null && data.ResultCode !== '') {
-                    const code = String(data.ResultCode);
-                    if (code !== '0') {
-                        stopPolling();
-                        setStatus('failed');
-                        setError(data.ResultDesc || `Payment failed (code ${code})`);
-                    }
-                }
+                // Non-pending status — stop polling
+                stopPolling();
 
-                // If no ResultCode yet, keep polling (payment still pending)
+                if (resultCode === 0 || stkStatus === 'Completed') {
+                    // SUCCESS
+                    const receiptCode = mpesaReceipt || '';
+                    setReceipt(receiptCode);
+                    setStatus('success');
+                    onReceiptReceived(receiptCode);
+
+                    // Also try to fetch from DB in case callback hasn't updated yet
+                    if (!receiptCode) {
+                        try {
+                            const { data: stkRow } = await supabase
+                                .from('arms_stk_requests')
+                                .select('mpesa_receipt')
+                                .eq('checkout_request_id', checkoutRequestId)
+                                .single();
+                            if (stkRow?.mpesa_receipt) {
+                                setReceipt(stkRow.mpesa_receipt);
+                                onReceiptReceived(stkRow.mpesa_receipt);
+                            }
+                        } catch { /* ignore */ }
+                    }
+                } else {
+                    // FAILED / CANCELLED / INSUFFICIENT BALANCE
+                    setStatus('failed');
+                    setError(getErrorMessage(resultCode, resultDesc));
+                }
             } catch {
                 // Network error during poll — keep trying until timeout
+                if (activeRef.current) {
+                    scheduleNextPoll(checkoutRequestId, poll);
+                }
             }
-        }, POLL_INTERVAL_MS);
-    }, [stopPolling, onReceiptReceived]);
+        };
+
+        // Start first poll immediately
+        poll();
+    }, [stopPolling, scheduleNextPoll, onReceiptReceived]);
 
     const send = useCallback(async (params: StkSendParams) => {
         const { phone, amount, tenantId, tenantName } = params;
@@ -135,6 +185,7 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
         stopPolling();
         setStatus('sending');
         setError(null);
+        setReceipt(null);
 
         try {
             const res = await fetch('/api/mpesa/stk-push', {
@@ -153,7 +204,6 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
 
             if (!res.ok || data.error) {
                 setStatus('failed');
-                // Special handling for till not configured — clear, actionable message
                 if (data.tillNotConfigured) {
                     setError("This unit's till is not configured yet. Please contact your administrator to configure it in Settings → Unit Tills.");
                 } else {
@@ -163,16 +213,16 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
             }
 
             if (data.ResponseCode === '0' && data.CheckoutRequestID) {
-                // STK Push accepted — start polling
+                checkoutRequestIdRef.current = data.CheckoutRequestID;
                 setStatus('pending');
                 startPolling(data.CheckoutRequestID);
             } else {
                 setStatus('failed');
                 setError(data.errorMessage || data.ResponseDescription || 'STK Push was not accepted by M-Pesa');
             }
-        } catch (e: any) {
+        } catch (e: unknown) {
             setStatus('failed');
-            setError(e.message || 'Network error — STK Push failed');
+            setError(e instanceof Error ? e.message : 'Network error — STK Push failed');
         }
     }, [stopPolling, startPolling]);
 
@@ -184,5 +234,5 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
         }
     }, [send, reset]);
 
-    return { status, error, send, retry, reset };
+    return { status, error, receipt, send, retry, reset };
 }

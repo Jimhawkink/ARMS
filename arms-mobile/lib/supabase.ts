@@ -138,3 +138,127 @@ export async function getTenantPayments(tenantId: number): Promise<Payment[]> {
 }
 
 export const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
+
+// ── Tenant License Check ──────────────────────────────────────
+// The deployed ARMS web app URL — license check goes through the API
+const API_BASE_URL = 'https://arms-opal.vercel.app';
+
+export interface LicenseCheckResult {
+  licensed: boolean;
+  reason?: string;
+  autoLicensed?: boolean;
+}
+
+/**
+ * checkTenantLicense
+ *
+ * Calls POST /api/license/tenant-check on the ARMS web app.
+ * Auto-creates a license on first login (no admin action needed).
+ *
+ * FAIL-OPEN: If the API is unreachable or returns an error,
+ * returns { licensed: true } so a backend outage never locks out tenants.
+ */
+export async function checkTenantLicense(
+  tenantId: number,
+  phone: string
+): Promise<LicenseCheckResult> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
+    const res = await fetch(`${API_BASE_URL}/api/license/tenant-check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId, phone }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`[License] HTTP ${res.status} — fail-open`);
+      return { licensed: true };
+    }
+
+    const data = await res.json();
+    return {
+      licensed: data.licensed ?? true,
+      reason: data.reason,
+      autoLicensed: data.autoLicensed,
+    };
+  } catch (e) {
+    // Network error, timeout, or any other failure — fail-open
+    console.warn('[License] Check failed (fail-open):', e);
+    return { licensed: true };
+  }
+}
+
+// ── Tenant login (phone + PIN via arms_portal_users) ──────────
+export interface LoginResult {
+  success: boolean;
+  tenant?: Tenant;
+  error?: string;
+}
+
+/**
+ * loginTenant
+ *
+ * Authenticates a tenant by phone number and PIN.
+ * Looks up arms_portal_users by username (phone) and password_hash (PIN).
+ */
+export async function loginTenant(phone: string, pin: string): Promise<LoginResult> {
+  try {
+    // Normalize phone: strip leading 0, add 254 prefix if needed
+    const normalizedPhone = normalizePhone(phone);
+
+    // Try exact phone match first, then normalized
+    const phonesToTry = [phone.trim(), normalizedPhone, `0${normalizedPhone.replace(/^254/, '')}`]
+      .filter((p, i, arr) => arr.indexOf(p) === i); // deduplicate
+
+    for (const phoneAttempt of phonesToTry) {
+      const { data, error } = await supabase
+        .from('arms_portal_users')
+        .select('*, arms_tenants(*, arms_units(*), arms_locations(*))')
+        .eq('username', phoneAttempt)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (error || !data) continue;
+
+      if (data.password_hash === pin) {
+        // Update last login
+        await supabase
+          .from('arms_portal_users')
+          .update({
+            last_login: new Date().toISOString(),
+            login_count: (data.login_count || 0) + 1,
+          })
+          .eq('portal_user_id', data.portal_user_id);
+
+        const tenant = data.arms_tenants as Tenant;
+        return { success: true, tenant };
+      }
+    }
+
+    return { success: false, error: 'Invalid phone number or PIN' };
+  } catch (e: unknown) {
+    console.error('loginTenant error:', e);
+    return { success: false, error: 'Connection error. Please try again.' };
+  }
+}
+
+export function normalizePhone(phone: string): string {
+  const clean = phone.replace(/\s+/g, '').replace(/^\+/, '');
+  if (clean.startsWith('254')) return clean;
+  if (clean.startsWith('0')) return '254' + clean.slice(1);
+  if (clean.length === 9) return '254' + clean;
+  return clean;
+}
+
+export function formatPhoneDisplay(phone: string): string {
+  const n = normalizePhone(phone);
+  if (n.startsWith('254') && n.length === 12) {
+    return `+254 ${n.slice(3, 6)} ${n.slice(6, 9)} ${n.slice(9)}`;
+  }
+  return phone;
+}
