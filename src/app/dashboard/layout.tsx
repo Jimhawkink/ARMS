@@ -136,34 +136,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         // ── If non-super-admin has no permissions stored, reload from DB ──
         // This handles legacy sessions created before the permissions fix
+        // Must use a nested async IIFE since useEffect callback cannot be async
         if (!parsedUser.isSuperAdmin && !parsedUser.permissions) {
-            try {
-                const { getRolePermissions, getUserCustomPermissions } = await import('@/lib/supabase');
-                const rolePerms = await getRolePermissions();
-                const roleRow = rolePerms?.find((r: any) => r.role_name === parsedUser.userRole);
-                if (roleRow) {
-                    const permKeys = [
-                        'can_manage_tenants','can_manage_units','can_record_payments',
-                        'can_view_reports','can_send_sms','can_manage_utilities',
-                        'can_manage_caretakers','can_issue_demand_letters','can_manage_settings',
-                        'can_manage_users','can_view_dashboard','can_manage_expenses',
-                        'can_manage_billing','can_manage_checklists','is_super_admin',
-                    ];
-                    const permissions: Record<string, boolean> = {};
-                    for (const k of permKeys) permissions[k] = roleRow[k] === true;
-                    // Apply per-user custom overrides if any
-                    try {
-                        const custom = await getUserCustomPermissions(parsedUser.userId);
-                        if (custom) Object.assign(permissions, custom);
-                    } catch { /* ignore */ }
-                    parsedUser.permissions = permissions as any;
-                    // Persist updated user with permissions
-                    const stored = JSON.parse(raw);
-                    localStorage.setItem('arms_user', JSON.stringify({ ...stored, permissions }));
+            const refreshPerms = async () => {
+                try {
+                    const { getRolePermissions, getUserCustomPermissions } = await import('@/lib/supabase');
+                    const rolePerms = await getRolePermissions();
+                    const roleRow = rolePerms?.find((r: any) => r.role_name === parsedUser.userRole);
+                    if (roleRow) {
+                        const permKeys = [
+                            'can_manage_tenants','can_manage_units','can_record_payments',
+                            'can_view_reports','can_send_sms','can_manage_utilities',
+                            'can_manage_caretakers','can_issue_demand_letters','can_manage_settings',
+                            'can_manage_users','can_view_dashboard','can_manage_expenses',
+                            'can_manage_billing','can_manage_checklists','is_super_admin',
+                        ];
+                        const permissions: Record<string, boolean> = {};
+                        for (const k of permKeys) permissions[k] = roleRow[k] === true;
+                        // Apply per-user custom overrides if any
+                        try {
+                            const custom = await getUserCustomPermissions(parsedUser.userId);
+                            if (custom) Object.assign(permissions, custom);
+                        } catch { /* ignore */ }
+                        parsedUser.permissions = permissions as any;
+                        // Persist updated user with permissions
+                        const stored = JSON.parse(raw);
+                        localStorage.setItem('arms_user', JSON.stringify({ ...stored, permissions }));
+                    }
+                } catch (e) {
+                    console.warn('Could not refresh permissions:', e);
                 }
-            } catch (e) {
-                console.warn('Could not refresh permissions:', e);
-            }
+                setUser({ ...parsedUser });
+            };
+            refreshPerms();
+            return; // setUser will be called inside refreshPerms
         }
         setUser(parsedUser);
 
