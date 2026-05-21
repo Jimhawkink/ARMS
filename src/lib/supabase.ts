@@ -1947,6 +1947,40 @@ export async function deactivateARMSUser(userId: number) {
     if (error) throw error;
 }
 
+// ── Per-user custom permission overrides ─────────────────────
+// Fetches a user's custom_permissions (if any) merged with their role defaults
+export async function getUserCustomPermissions(userId: number): Promise<Record<string, boolean> | null> {
+    const { data, error } = await supabase
+        .from('arms_users')
+        .select('user_role, custom_permissions')
+        .eq('user_id', userId)
+        .single();
+    if (error || !data) return null;
+    return data.custom_permissions || null;
+}
+
+// Saves per-user custom permission overrides (null = revert to role defaults)
+export async function updateUserCustomPermissions(userId: number, permissions: Record<string, boolean> | null) {
+    const { data, error } = await supabase
+        .from('arms_users')
+        .update({ custom_permissions: permissions, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .select('user_id, custom_permissions')
+        .single();
+    if (error) throw error;
+    return data;
+}
+
+// Fetch all users with their custom_permissions for the admin UI
+export async function getARMSUsersWithPermissions() {
+    const { data, error } = await supabase
+        .from('arms_users')
+        .select('user_id, user_name, name, email, phone, user_type, user_role, active, is_super_admin, custom_permissions, created_at, updated_at')
+        .order('name');
+    if (error) throw error;
+    return data || [];
+}
+
 // ==================== PORTAL USERS ====================
 export async function createPortalUser(portalUser: { tenant_id: number; username: string; password_hash: string }) {
     // Hash the password before storing

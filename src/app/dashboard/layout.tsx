@@ -133,6 +133,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         const parsedUser = parseStoredUser(raw);
         if (!parsedUser) { router.push('/'); return; }
+
+        // ── If non-super-admin has no permissions stored, reload from DB ──
+        // This handles legacy sessions created before the permissions fix
+        if (!parsedUser.isSuperAdmin && !parsedUser.permissions) {
+            try {
+                const { getRolePermissions, getUserCustomPermissions } = await import('@/lib/supabase');
+                const rolePerms = await getRolePermissions();
+                const roleRow = rolePerms?.find((r: any) => r.role_name === parsedUser.userRole);
+                if (roleRow) {
+                    const permKeys = [
+                        'can_manage_tenants','can_manage_units','can_record_payments',
+                        'can_view_reports','can_send_sms','can_manage_utilities',
+                        'can_manage_caretakers','can_issue_demand_letters','can_manage_settings',
+                        'can_manage_users','can_view_dashboard','can_manage_expenses',
+                        'can_manage_billing','can_manage_checklists','is_super_admin',
+                    ];
+                    const permissions: Record<string, boolean> = {};
+                    for (const k of permKeys) permissions[k] = roleRow[k] === true;
+                    // Apply per-user custom overrides if any
+                    try {
+                        const custom = await getUserCustomPermissions(parsedUser.userId);
+                        if (custom) Object.assign(permissions, custom);
+                    } catch { /* ignore */ }
+                    parsedUser.permissions = permissions as any;
+                    // Persist updated user with permissions
+                    const stored = JSON.parse(raw);
+                    localStorage.setItem('arms_user', JSON.stringify({ ...stored, permissions }));
+                }
+            } catch (e) {
+                console.warn('Could not refresh permissions:', e);
+            }
+        }
         setUser(parsedUser);
 
         // Check route access
@@ -237,8 +269,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const isItemVisible = (requiredPerm: string | null): boolean => {
         if (!user) return false;
         if (user.isSuperAdmin) return true;
-        if (requiredPerm === null) return true;
+        if (requiredPerm === null) return true;          // Always visible (e.g. Dashboard)
         if (requiredPerm === 'super_admin_only') return false;
+        // If permissions not loaded yet (legacy session), show Dashboard only
+        // by returning false for all permission-gated items
         if (!user.permissions) return false;
         return user.permissions[requiredPerm as keyof typeof user.permissions] === true;
     };

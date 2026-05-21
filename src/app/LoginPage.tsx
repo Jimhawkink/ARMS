@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { loginUser, getSettings } from '@/lib/supabase';
+import { loginUser, getSettings, getRolePermissions } from '@/lib/supabase';
 
 // Floating building animation elements
 function FloatingBuildings() {
@@ -61,6 +61,35 @@ export default function LoginPage() {
         try {
             const user = await loginUser(username, password);
             if (user) {
+                // Fetch role permissions for this user's role so sidebar shows correctly
+                let permissions: Record<string, boolean> | undefined;
+                try {
+                    if (!user.is_super_admin) {
+                        const rolePerms = await getRolePermissions();
+                        const roleRow = rolePerms?.find((r: any) => r.role_name === (user.user_role || user.user_type || 'admin'));
+                        if (roleRow) {
+                            // Extract boolean permission fields
+                            const permKeys = [
+                                'can_manage_tenants','can_manage_units','can_record_payments',
+                                'can_view_reports','can_send_sms','can_manage_utilities',
+                                'can_manage_caretakers','can_issue_demand_letters','can_manage_settings',
+                                'can_manage_users','can_view_dashboard','can_manage_expenses',
+                                'can_manage_billing','can_manage_checklists','is_super_admin',
+                            ];
+                            permissions = {} as Record<string, boolean>;
+                            for (const k of permKeys) {
+                                permissions[k] = roleRow[k] === true;
+                            }
+                        }
+                        // Apply per-user custom permission overrides if any
+                        if (user.custom_permissions && typeof user.custom_permissions === 'object') {
+                            permissions = { ...(permissions || {}), ...user.custom_permissions };
+                        }
+                    }
+                } catch (permErr) {
+                    console.warn('Could not load role permissions:', permErr);
+                }
+
                 localStorage.setItem('arms_user', JSON.stringify({
                     userId: user.user_id,
                     userName: user.user_name,
@@ -68,6 +97,7 @@ export default function LoginPage() {
                     userType: user.user_type,
                     userRole: user.user_role || user.user_type || 'admin',
                     isSuperAdmin: user.is_super_admin === true,
+                    permissions,
                 }));
                 router.push('/dashboard');
             } else { setError('Invalid username or password'); }
