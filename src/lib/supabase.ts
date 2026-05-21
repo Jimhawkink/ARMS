@@ -9,8 +9,9 @@ const SUPABASE_URL = 'https://enlqpifpxuecxxozyiak.supabase.co';
 const SUPABASE_ANON_KEY =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubHFwaWZweHVlY3h4b3p5aWFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwMjUzNjgsImV4cCI6MjA4MTYwMTM2OH0.-z3-2Mf3SkkZR3ZryOGyG-60jWERX9YLKIee048OziE';
 
-// ARMS Web App API — Real M-Pesa STK Push (same credentials as web dashboard)
-const ARMS_API_BASE = 'https://arms-opal.vercel.app';
+// M-Pesa STK Push — uses the ARMS web app API (Vercel-hosted Next.js)
+// Credentials are resolved per-unit from arms_unit_mpesa_config on the server
+const ARMS_API_URL = 'https://arms-opal.vercel.app/api';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -32,7 +33,6 @@ export interface TenantSession {
     move_in_date: string;
     balance: number;
     email: string;
-    is_on_vacation: boolean;
     loggedInAt: number; // timestamp ms
 }
 
@@ -84,7 +84,7 @@ export async function loginTenantByPin(pin: string): Promise<TenantSession | nul
             .select(`
                 tenant_id, tenant_name, phone, id_number, email,
                 unit_id, location_id, monthly_rent, deposit_paid,
-                move_in_date, balance, mobile_pin, is_on_vacation,
+                move_in_date, balance, mobile_pin,
                 arms_units(unit_name),
                 arms_locations(location_name)
             `)
@@ -119,7 +119,6 @@ export async function loginTenantByPin(pin: string): Promise<TenantSession | nul
             deposit_paid: matched.deposit_paid || 0,
             move_in_date: matched.move_in_date || '',
             balance: matched.balance || 0,
-            is_on_vacation: matched.is_on_vacation || false,
             loggedInAt: Date.now(),
         };
     } catch (err: any) {
@@ -226,16 +225,19 @@ export async function initiateSTKPush(params: {
     tenantId: number;
     tenantPhone: string;
     description: string;
-}): Promise<{ checkoutRequestId: string | null; error: string | null }> {
+}): Promise<{ checkoutRequestId: string | null; error: string | null; tillNotConfigured?: boolean }> {
     try {
-        // Normalize phone to 254XXXXXXXXX
+        // Normalize phone to 254XXXXXXXXX format
         const normalized = normalizePhone(params.payerPhone);
         if (!normalized) {
             return { checkoutRequestId: null, error: 'Invalid phone number format' };
         }
 
+        // Convert to 07xx format for the API (it normalizes internally)
+        const phoneFor07 = '0' + normalized.slice(3);
+
         const payload = {
-            phone: normalized,
+            phone: phoneFor07,
             amount: Math.round(params.amount),
             accountReference: `ARMS-${params.tenantId}`,
             transactionDesc: params.description || 'Rent Payment',
@@ -244,7 +246,7 @@ export async function initiateSTKPush(params: {
 
         console.log('🚀 Initiating STK Push via ARMS API:', payload);
 
-        const response = await fetch(`${ARMS_API_BASE}/api/mpesa/stk-push`, {
+        const response = await fetch(`${ARMS_API_URL}/mpesa/stk-push`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -255,13 +257,23 @@ export async function initiateSTKPush(params: {
         const result = await response.json();
         console.log('STK Push response:', result);
 
-        // Check for errors from the ARMS API
-        if (result.error || result.missingConfig) {
-            return { checkoutRequestId: null, error: result.error || 'M-Pesa not configured. Contact admin.' };
+        if (!response.ok) {
+            // ── CRITICAL: Detect "till not configured" for this unit's location ──
+            // This means the location has no M-Pesa till linked. We must BLOCK
+            // and NEVER fall back to another location's till (different bank account!)
+            if (result.tillNotConfigured) {
+                return {
+                    checkoutRequestId: null,
+                    tillNotConfigured: true,
+                    error: '⚠️ M-Pesa Till Not Configured\n\nYour unit\'s location does not have a payment till set up yet. Please contact your landlord to configure the till in Settings → Unit Tills.',
+                };
+            }
+            return { checkoutRequestId: null, error: result.error || result.message || 'STK Push failed' };
         }
 
-        if (!response.ok) {
-            return { checkoutRequestId: null, error: result.error || result.message || 'STK Push failed' };
+        // Safaricom returns ResponseCode "0" on success
+        if (result.ResponseCode && result.ResponseCode !== '0') {
+            return { checkoutRequestId: null, error: result.ResponseDescription || result.errorMessage || 'STK Push rejected' };
         }
 
         const checkoutRequestId =
@@ -269,10 +281,6 @@ export async function initiateSTKPush(params: {
             result.checkoutRequestId ||
             result.checkout_request_id ||
             null;
-
-        if (!checkoutRequestId) {
-            return { checkoutRequestId: null, error: result.errorMessage || result.CustomerMessage || 'STK Push failed — no checkout ID' };
-        }
 
         return { checkoutRequestId, error: null };
     } catch (err: any) {
@@ -282,8 +290,9 @@ export async function initiateSTKPush(params: {
 }
 
 // ============================================================
-// POLL STK RESULT — Subscribe to arms_mpesa_transactions
-// Returns true if payment confirmed within timeout
+// POLL STK RESULT — Poll arms_stk_requests table directly
+// The STK callback updates this table with receipt & status
+// Much faster than querying Safaricom API + has the receipt code
 // ============================================================
 
 export function pollSTKResult(params: {
@@ -295,107 +304,100 @@ export function pollSTKResult(params: {
 }): () => void {
     let done = false;
 
+    const markDone = () => {
+        if (done) return false;
+        done = true;
+        return true;
+    };
+
     // Timeout handler
     const timer = setTimeout(() => {
-        if (!done) {
-            done = true;
+        if (markDone()) {
+            clearInterval(pollInterval);
+            channel.unsubscribe();
             params.onTimeout();
         }
     }, params.timeoutMs);
 
-    // Supabase Realtime subscription on arms_stk_requests (callback updates this table)
+    // Supabase Realtime subscription on arms_mpesa_transactions (backup)
     const channel = supabase
         .channel(`stk-result-${params.checkoutRequestId}`)
         .on(
             'postgres_changes',
             {
-                event: 'UPDATE',
+                event: 'INSERT',
                 schema: 'public',
-                table: 'arms_stk_requests',
+                table: 'arms_mpesa_transactions',
             },
             (payload: any) => {
-                const row = payload.new;
-                // Match by checkout_request_id
-                if (row.checkout_request_id === params.checkoutRequestId && !done) {
-                    if (row.status === 'Completed') {
-                        done = true;
+                const txn = payload.new;
+                // Only match by checkout request ID — no broad fallback
+                const txnCheckout =
+                    txn.invoice_number ||
+                    txn.third_party_trans_id ||
+                    txn.bill_ref_number ||
+                    '';
+
+                if (txnCheckout === params.checkoutRequestId) {
+                    if (markDone()) {
                         clearTimeout(timer);
+                        clearInterval(pollInterval);
                         channel.unsubscribe();
-                        params.onConfirmed(row.mpesa_receipt || 'MPesa', row.amount_paid || 0);
-                    } else if (row.status === 'Failed' || row.status === 'Cancelled') {
-                        done = true;
-                        clearTimeout(timer);
-                        channel.unsubscribe();
-                        params.onFailed(row.result_desc || 'Payment was cancelled');
+                        if (txn.result_code === 0 || !txn.result_code) {
+                            params.onConfirmed(txn.trans_id || 'MPesa', txn.trans_amount || 0);
+                        } else {
+                            params.onFailed(txn.result_desc || 'Payment cancelled');
+                        }
                     }
                 }
             }
         )
         .subscribe();
 
-    // Also poll: check arms_stk_requests table directly + ARMS API STK query
+    // Poll arms_stk_requests table every 3 seconds (updated by STK callback)
     let pollCount = 0;
     const pollInterval = setInterval(async () => {
         if (done) { clearInterval(pollInterval); return; }
         pollCount++;
 
         try {
-            // Method 1: Check arms_stk_requests table via Supabase
-            const { data: stkRow } = await supabase
+            const { data, error } = await supabase
                 .from('arms_stk_requests')
-                .select('*')
+                .select('status, mpesa_receipt, amount_paid, result_code, result_desc')
                 .eq('checkout_request_id', params.checkoutRequestId)
-                .single();
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
 
-            if (stkRow && !done) {
-                if (stkRow.status === 'Completed') {
-                    done = true;
+            if (error || !data) {
+                // Record not found yet or error, keep polling
+                return;
+            }
+
+            if (data.status === 'Completed' && !done) {
+                if (markDone()) {
                     clearInterval(pollInterval);
                     clearTimeout(timer);
                     channel.unsubscribe();
-                    params.onConfirmed(stkRow.mpesa_receipt || 'MPesa', stkRow.amount_paid || 0);
-                    return;
-                } else if (stkRow.status === 'Failed' || stkRow.status === 'Cancelled') {
-                    done = true;
+                    params.onConfirmed(
+                        data.mpesa_receipt || 'MPesa',
+                        data.amount_paid || 0
+                    );
+                }
+            } else if ((data.status === 'Failed' || data.status === 'Cancelled') && !done) {
+                if (markDone()) {
                     clearInterval(pollInterval);
                     clearTimeout(timer);
                     channel.unsubscribe();
-                    params.onFailed(stkRow.result_desc || 'Payment was cancelled');
-                    return;
+                    params.onFailed(data.result_desc || 'Payment was cancelled');
                 }
             }
-        } catch (_) { /* ignore Supabase polling errors */ }
+        } catch (_) { /* ignore polling errors */ }
 
-        try {
-            // Method 2: Query ARMS API STK status (Daraja STK query)
-            const response = await fetch(
-                `${ARMS_API_BASE}/api/mpesa/stk-push?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`,
-                { method: 'GET' }
-            );
-
-            if (response.ok) {
-                const data = await response.json();
-                if (!done && data.ResultCode === '0') {
-                    done = true;
-                    clearInterval(pollInterval);
-                    clearTimeout(timer);
-                    channel.unsubscribe();
-                    params.onConfirmed(data.MpesaReceiptNumber || 'MPesa', data.Amount || 0);
-                } else if (!done && data.ResultCode && data.ResultCode !== '0' && data.ResultCode !== 'pending' && data.ResultCode !== '1') {
-                    // ResultCode 1 = still processing, don't fail yet
-                    done = true;
-                    clearInterval(pollInterval);
-                    clearTimeout(timer);
-                    channel.unsubscribe();
-                    params.onFailed(data.ResultDesc || 'Payment was cancelled');
-                }
-            }
-        } catch (_) { /* ignore API polling errors */ }
-
-        if (pollCount >= 15) { // 75s max polling
+        if (pollCount >= 20) { // 60s max polling (3s × 20)
             clearInterval(pollInterval);
         }
-    }, 5000);
+    }, 3000);
 
     // Return cleanup function
     return () => {
@@ -417,30 +419,12 @@ export async function recordTenantPayment(params: {
     amount: number;
     mpesaReceipt: string;
     payerPhone: string;       // may differ from tenant phone
-    payerName: string;        // tenant name who the payment is for
     checkoutRequestId: string;
     billingMonth: string;
 }): Promise<{ success: boolean; error?: string }> {
     try {
-        const currentMonth = getCurrentMonth();
+        const currentMonth = new Date().toISOString().slice(0, 7);
         const paymentAmount = Math.round(params.amount * 100) / 100;
-
-        // 0. Duplicate guard — check if callback already recorded this payment
-        const { data: existingPayment } = await supabase
-            .from('arms_payments')
-            .select('payment_id')
-            .eq('reference_no', params.checkoutRequestId)
-            .limit(1);
-        if (existingPayment && existingPayment.length > 0) {
-            console.log('✅ Payment already recorded by callback, skipping duplicate:', params.checkoutRequestId);
-            // Still update tenant balance in case callback didn't
-            const { data: freshTenant } = await supabase
-                .from('arms_tenants')
-                .select('balance')
-                .eq('tenant_id', params.tenantId)
-                .single();
-            return { success: true };
-        }
 
         // 1. Ensure all missing billing records exist (auto-generate)
         await ensureBillingRecords(params.tenantId);
@@ -486,7 +470,6 @@ export async function recordTenantPayment(params: {
                 payment_method: 'M-Pesa',
                 mpesa_receipt: params.mpesaReceipt,
                 mpesa_phone: params.payerPhone,          // who physically paid
-                mpesa_name: params.payerName,             // tenant name for payer identification
                 reference_no: params.checkoutRequestId,
                 recorded_by: 'Tenant Mobile App',
                 notes,
@@ -541,60 +524,6 @@ export async function recordTenantPayment(params: {
 }
 
 // ============================================================
-// VACATION MONTHS (Kenyan University: May-August)
-// ============================================================
-
-const VACATION_MONTHS = [5, 6, 7, 8]; // May, Jun, Jul, Aug (1-indexed)
-
-// Use local month — never toISOString() which shifts to UTC
-export function isVacationMonth(date?: Date): boolean {
-    const d = date || new Date();
-    const month = d.getMonth() + 1; // 1-indexed local month
-    return VACATION_MONTHS.includes(month);
-}
-
-export function isVacationMonthStr(yearMonth: string): boolean {
-    // yearMonth = "YYYY-MM"
-    const mm = parseInt(yearMonth.slice(5, 7), 10);
-    return VACATION_MONTHS.includes(mm);
-}
-
-export function getVacationRent(monthlyRent: number): number {
-    return Math.round(monthlyRent * 0.5);
-}
-
-export function getEffectiveRent(session: TenantSession, date?: Date): number {
-    if (session.is_on_vacation && isVacationMonth(date)) {
-        return getVacationRent(session.monthly_rent);
-    }
-    return session.monthly_rent;
-}
-
-export function getEffectiveRentForMonth(monthlyRent: number, yearMonth: string, isOnVacation: boolean): number {
-    if (isOnVacation && isVacationMonthStr(yearMonth)) {
-        return Math.round(monthlyRent * 0.5);
-    }
-    return monthlyRent;
-}
-
-// Safe local current month — avoids UTC timezone shift
-export function getCurrentMonth(): string {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
-// Safe month label from "YYYY-MM" — use day 2 to avoid UTC midnight shift
-export function formatMonth(yearMonth: string): string {
-    if (!yearMonth) return '';
-    try {
-        const d = new Date(yearMonth + '-02'); // day 2 avoids UTC midnight → prev month
-        return d.toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
-    } catch {
-        return yearMonth;
-    }
-}
-
-// ============================================================
 // AUTO-GENERATE MISSING BILLING RECORDS
 // ============================================================
 
@@ -602,12 +531,12 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
     try {
         const { data: tenant } = await supabase
             .from('arms_tenants')
-            .select('monthly_rent, move_in_date, location_id, unit_id, is_on_vacation')
+            .select('monthly_rent, move_in_date, location_id, unit_id')
             .eq('tenant_id', tenantId)
             .single();
         if (!tenant || !tenant.monthly_rent) return;
 
-        const currentMonth = getCurrentMonth();
+        const currentMonth = new Date().toISOString().slice(0, 7);
         const moveIn = tenant.move_in_date;
         if (!moveIn) return;
 
@@ -619,16 +548,11 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
         const existingSet = new Set((existing || []).map((b: any) => b.billing_month));
 
         const toInsert: any[] = [];
-
-        // Integer month arithmetic — avoids UTC timezone shift from new Date('YYYY-MM-DD')
-        let [sy, sm] = earliestMonth.split('-').map(Number);
-        const [ey, em] = currentMonth.split('-').map(Number);
-
-        while (sy < ey || (sy === ey && sm <= em)) {
-            const m = `${sy}-${String(sm).padStart(2, '0')}`;
+        let cursor = new Date(earliestMonth + '-01');
+        const end = new Date(currentMonth + '-01');
+        while (cursor <= end) {
+            const m = cursor.toISOString().slice(0, 7);
             if (!existingSet.has(m)) {
-                const rentForMonth = getEffectiveRentForMonth(tenant.monthly_rent, m, tenant.is_on_vacation || false);
-                const isVac = (tenant.is_on_vacation || false) && isVacationMonthStr(m);
                 toInsert.push({
                     tenant_id: tenantId,
                     location_id: tenant.location_id,
@@ -636,17 +560,14 @@ async function ensureBillingRecords(tenantId: number): Promise<void> {
                     billing_month: m,
                     billing_date: `${m}-01`,
                     due_date: `${m}-05`,
-                    rent_amount: rentForMonth,
+                    rent_amount: tenant.monthly_rent,
                     amount_paid: 0,
-                    balance: rentForMonth,
+                    balance: tenant.monthly_rent,
                     status: 'Unpaid',
-                    notes: isVac ? 'Vacation half-rent (50%)' : null,
                 });
             }
-            sm++;
-            if (sm > 12) { sm = 1; sy++; }
+            cursor.setMonth(cursor.getMonth() + 1);
         }
-
         if (toInsert.length > 0) {
             await supabase.from('arms_billing').insert(toInsert);
         }
@@ -696,6 +617,16 @@ export function formatKES(amount: number): string {
     return `KES ${(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
+export function formatMonth(yearMonth: string): string {
+    if (!yearMonth) return '';
+    try {
+        const d = new Date(yearMonth + '-01');
+        return d.toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
+    } catch {
+        return yearMonth;
+    }
+}
+
 export function formatDateTime(iso: string): string {
     if (!iso) return '';
     try {
@@ -705,5 +636,51 @@ export function formatDateTime(iso: string): string {
         });
     } catch {
         return iso;
+    }
+}
+
+// ============================================================
+// TENANT LICENSE CHECK
+// Called after successful PIN login to verify access is not revoked
+// FAIL-OPEN: if API unreachable, allow login to proceed
+// ============================================================
+
+export interface LicenseCheckResult {
+    licensed: boolean;
+    reason?: string;
+    autoLicensed?: boolean;
+}
+
+export async function checkTenantLicense(
+    tenantId: number,
+    phone: string
+): Promise<LicenseCheckResult> {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        const res = await fetch(`${ARMS_API_URL}/license/tenant-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tenantId, phone }),
+            signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+
+        if (!res.ok) {
+            console.warn(`[License] HTTP ${res.status} — fail-open`);
+            return { licensed: true };
+        }
+
+        const data = await res.json();
+        return {
+            licensed: data.licensed ?? true,
+            reason: data.reason,
+            autoLicensed: data.autoLicensed,
+        };
+    } catch (e) {
+        console.warn('[License] Check failed (fail-open):', e);
+        return { licensed: true };
     }
 }

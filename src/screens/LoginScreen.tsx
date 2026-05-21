@@ -5,7 +5,7 @@ import {
     StatusBar, SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loginTenantByPin, TenantSession } from '../lib/supabase';
+import { loginTenantByPin, checkTenantLicense, TenantSession } from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
     clearRateLimit, saveSession,
@@ -35,6 +35,9 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     const [lockoutSeconds, setLockoutSeconds] = useState(0);
+    const [checkingLicense, setCheckingLicense] = useState(false);
+    const [licenseRevoked, setLicenseRevoked] = useState(false);
+    const [revokeReason, setRevokeReason] = useState<string | undefined>(undefined);
 
     const shakeAnim = useRef(new Animated.Value(0)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -138,7 +141,28 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
             if (tenant) {
                 await clearRateLimit();
                 await saveSession(tenant);
-                onLoginSuccess(tenant);
+
+                // ── License check after successful PIN auth ──
+                setIsLoading(false);
+                setCheckingLicense(true);
+                try {
+                    const licenseResult = await checkTenantLicense(
+                        tenant.tenant_id,
+                        tenant.phone || ''
+                    );
+                    if (!licenseResult.licensed) {
+                        setLicenseRevoked(true);
+                        setRevokeReason(licenseResult.reason);
+                    } else {
+                        onLoginSuccess(tenant);
+                    }
+                } catch {
+                    // Fail-open: license check error → allow login
+                    onLoginSuccess(tenant);
+                } finally {
+                    setCheckingLicense(false);
+                }
+                return; // prevent finally from setting isLoading again
             } else {
                 triggerShake();
                 const { locked, attemptsLeft, lockoutMs } = await recordFailedAttempt();
@@ -177,6 +201,47 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 colors={[COLORS.bg1, COLORS.bg2, COLORS.bg3]}
                 style={StyleSheet.absoluteFillObject}
             />
+
+            {/* License Gate — shown when access is revoked */}
+            {licenseRevoked && (
+                <View style={styles.gateContainer}>
+                    <LinearGradient colors={['#1e1b4b', '#312e81', '#1e1b4b']} style={StyleSheet.absoluteFillObject} />
+                    <View style={styles.gateContent}>
+                        <View style={styles.gateIconWrap}>
+                            <Text style={{ fontSize: 40 }}>🔒</Text>
+                        </View>
+                        <Text style={styles.gateTitle}>Access Revoked</Text>
+                        <Text style={styles.gateMessage}>
+                            Your access has been revoked.{'\n'}Please contact your landlord.
+                        </Text>
+                        {revokeReason ? (
+                            <View style={styles.gateReasonBox}>
+                                <Text style={styles.gateReasonLabel}>Reason:</Text>
+                                <Text style={styles.gateReasonText}>{revokeReason}</Text>
+                            </View>
+                        ) : null}
+                        <TouchableOpacity
+                            style={styles.gateBackBtn}
+                            onPress={() => { setLicenseRevoked(false); setRevokeReason(undefined); setPin(''); }}
+                        >
+                            <Text style={styles.gateBackText}>← Back to Login</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+
+            {/* License checking overlay */}
+            {checkingLicense && !licenseRevoked && (
+                <View style={styles.gateContainer}>
+                    <LinearGradient colors={['#0f172a', '#1e1b4b', '#0f172a']} style={StyleSheet.absoluteFillObject} />
+                    <View style={{ alignItems: 'center', gap: 16 }}>
+                        <ActivityIndicator color="#6366f1" size="large" />
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' }}>
+                            Verifying access...
+                        </Text>
+                    </View>
+                </View>
+            )}
 
             {/* Decorative glows */}
             <View style={styles.glow1} />
@@ -315,6 +380,28 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg1 },
     safe: { flex: 1, alignItems: 'center', paddingHorizontal: 24 },
+    // License Gate styles
+    gateContainer: {
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+        zIndex: 100, justifyContent: 'center', alignItems: 'center',
+    },
+    gateContent: { alignItems: 'center', paddingHorizontal: 32 },
+    gateIconWrap: {
+        width: 80, height: 80, borderRadius: 24,
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        borderWidth: 2, borderColor: 'rgba(239,68,68,0.3)',
+        justifyContent: 'center', alignItems: 'center', marginBottom: 20,
+    },
+    gateTitle: { color: '#fff', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 12 },
+    gateMessage: { color: 'rgba(255,255,255,0.7)', fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 20 },
+    gateReasonBox: {
+        backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 14, marginBottom: 24,
+        borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', width: '100%',
+    },
+    gateReasonLabel: { color: 'rgba(239,68,68,0.8)', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
+    gateReasonText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, lineHeight: 18 },
+    gateBackBtn: { paddingVertical: 12, paddingHorizontal: 24 },
+    gateBackText: { color: 'rgba(255,255,255,0.5)', fontSize: 14 },
     glow1: {
         position: 'absolute', top: -80, left: -80,
         width: 250, height: 250, borderRadius: 125,
