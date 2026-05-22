@@ -84,7 +84,7 @@ export default function HistoryScreen({ session }: Props) {
                                 key={p.payment_id}
                                 style={[s.row, idx % 2 === 0 ? s.rowEven : s.rowOdd]}
                             >
-                                <View style={[s.cell, { flex: 2 }]}>
+                                <View style={{ flex: 2 }}>
                                     <Text style={s.dateText}>{formatDateTime(p.payment_date)}</Text>
                                     <Text style={s.methodText}>{p.payment_method}</Text>
                                 </View>
@@ -94,7 +94,7 @@ export default function HistoryScreen({ session }: Props) {
                                 <Text style={[s.cell, s.amountCell, { flex: 1.3 }]}>
                                     {formatKES(p.amount)}
                                 </Text>
-                                <View style={[s.cell, { flex: 1.8 }]}>
+                                <View style={{ flex: 1.8 }}>
                                     <Text style={s.receiptText} numberOfLines={1}>
                                         {p.mpesa_receipt || p.reference_no || '—'}
                                     </Text>
@@ -108,9 +108,9 @@ export default function HistoryScreen({ session }: Props) {
                         {/* Totals */}
                         <View style={s.totalsRow}>
                             <Text style={[s.cell, s.totalLabel, { flex: 2 }]}>Total Paid</Text>
-                            <View style={[s.cell, { flex: 1.3 }]} />
+                            <View style={{ flex: 1.3 }} />
                             <Text style={[s.cell, s.totalValue, { flex: 1.3 }]}>{formatKES(totalPaid)}</Text>
-                            <View style={[s.cell, { flex: 1.8 }]} />
+                            <View style={{ flex: 1.8 }} />
                         </View>
                     </>
                 )}

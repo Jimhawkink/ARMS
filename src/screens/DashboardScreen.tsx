@@ -250,7 +250,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                                             isCurrentMonth && styles.rowCurrent,
                                         ]}
                                     >
-                                        <View style={[styles.tableCell, { flex: 1.6 }]}>
+                                        <View style={{ flex: 1.6 }}>
                                             <Text style={styles.monthText}>{formatMonth(bill.billing_month)}</Text>
                                             {isCurrentMonth && (
                                                 <Text style={styles.currentTag}>Current</Text>
@@ -268,7 +268,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                                         ]}>
                                             {formatKES(bill.balance)}
                                         </Text>
-                                        <View style={[styles.tableCell, { flex: 1.4 }]}>
+                                        <View style={{ flex: 1.4 }}>
                                             <StatusBadge status={bill.status} />
                                         </View>
                                     </View>
@@ -286,7 +286,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                                 <Text style={[styles.tableCell, styles.totalValueRed, { flex: 1.2 }]}>
                                     {formatKES(displayBills.reduce((s, b) => s + b.balance, 0))}
                                 </Text>
-                                <View style={[styles.tableCell, { flex: 1.4 }]} />
+                                <View style={{ flex: 1.4 }} />
                             </View>
                         </View>
                     )}

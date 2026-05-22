@@ -6,7 +6,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, formatKES, maskPhone, normalizePhone,
-    initiateSTKPush, pollSTKResult, recordTenantPayment,
+    initiateSTKPush, pollSTKResult,
     refreshTenantBalance, getUnpaidBilling,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
@@ -101,30 +101,22 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 checkoutRequestId,
                 timeoutMs: 65000,
                 onConfirmed: async (mpesaReceipt, confirmedAmount) => {
-                    setStatusMsg('Payment received! Recording…');
+                    setStatusMsg('Payment confirmed! ✅');
                     const finalAmt = confirmedAmount || amtVal;
 
-                    const result = await recordTenantPayment({
-                        tenantId: session.tenant_id,
-                        locationId: session.location_id,
-                        amount: finalAmt,
-                        mpesaReceipt,
-                        payerPhone: phone,
-                        checkoutRequestId,
-                        billingMonth: new Date().toISOString().slice(0, 7),
-                    });
+                    // DO NOT call recordTenantPayment here!
+                    // The STK callback on the server already recorded the payment,
+                    // updated billing, and adjusted the tenant balance.
+                    // Recording again would create a DUPLICATE payment.
 
-                    if (result.success) {
-                        setReceipt(mpesaReceipt);
-                        setPaidAmount(finalAmt);
-                        const newBal = await refreshTenantBalance(session.tenant_id);
-                        setBalance(newBal);
-                        await updateSessionBalance(newBal);
-                        setStep('success');
-                    } else {
-                        setError(result.error || 'Failed to record');
-                        setStep('failed');
-                    }
+                    setReceipt(mpesaReceipt);
+                    setPaidAmount(finalAmt);
+
+                    // Just refresh the balance from DB (already updated by callback)
+                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    setBalance(newBal);
+                    await updateSessionBalance(newBal);
+                    setStep('success');
                     setProcessing(false);
                 },
                 onFailed: (reason) => {

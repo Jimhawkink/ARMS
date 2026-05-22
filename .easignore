@@ -1,0 +1,9 @@
+android/
+ios/
+.git/
+.expo/
+node_modules/.cache/
+*.log
+*.md
+__tests__/
+coverage/

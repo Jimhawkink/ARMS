@@ -290,9 +290,10 @@ export async function initiateSTKPush(params: {
 }
 
 // ============================================================
-// POLL STK RESULT — Poll arms_stk_requests table directly
-// The STK callback updates this table with receipt & status
-// Much faster than querying Safaricom API + has the receipt code
+// POLL STK RESULT — Poll backend API + Realtime on arms_stk_requests
+// The STK callback updates arms_stk_requests with receipt & status.
+// We poll the backend API (which uses service role key) to bypass RLS.
+// Also listen via Supabase Realtime on arms_stk_requests UPDATE events.
 // ============================================================
 
 export function pollSTKResult(params: {
@@ -319,58 +320,60 @@ export function pollSTKResult(params: {
         }
     }, params.timeoutMs);
 
-    // Supabase Realtime subscription on arms_mpesa_transactions (backup)
+    // ── Supabase Realtime: listen for UPDATE on arms_stk_requests ──
+    // When the STK callback updates the record status to 'Completed',
+    // we detect it instantly via Realtime (faster than polling).
     const channel = supabase
         .channel(`stk-result-${params.checkoutRequestId}`)
         .on(
             'postgres_changes',
             {
-                event: 'INSERT',
+                event: 'UPDATE',
                 schema: 'public',
-                table: 'arms_mpesa_transactions',
+                table: 'arms_stk_requests',
+                filter: `checkout_request_id=eq.${params.checkoutRequestId}`,
             },
             (payload: any) => {
-                const txn = payload.new;
-                // Only match by checkout request ID — no broad fallback
-                const txnCheckout =
-                    txn.invoice_number ||
-                    txn.third_party_trans_id ||
-                    txn.bill_ref_number ||
-                    '';
+                const row = payload.new;
+                if (!row) return;
 
-                if (txnCheckout === params.checkoutRequestId) {
-                    if (markDone()) {
-                        clearTimeout(timer);
-                        clearInterval(pollInterval);
-                        channel.unsubscribe();
-                        if (txn.result_code === 0 || !txn.result_code) {
-                            params.onConfirmed(txn.trans_id || 'MPesa', txn.trans_amount || 0);
-                        } else {
-                            params.onFailed(txn.result_desc || 'Payment cancelled');
-                        }
-                    }
+                if (row.status === 'Completed' && markDone()) {
+                    clearTimeout(timer);
+                    clearInterval(pollInterval);
+                    channel.unsubscribe();
+                    params.onConfirmed(
+                        row.mpesa_receipt || 'MPesa',
+                        row.amount_paid || 0
+                    );
+                } else if ((row.status === 'Failed' || row.status === 'Cancelled') && markDone()) {
+                    clearTimeout(timer);
+                    clearInterval(pollInterval);
+                    channel.unsubscribe();
+                    params.onFailed(row.result_desc || 'Payment was cancelled');
                 }
             }
         )
         .subscribe();
 
-    // Poll arms_stk_requests table every 3 seconds (updated by STK callback)
+    // ── Poll backend API every 2 seconds ──
+    // Uses /api/mpesa/stk-status which reads DB with service role key
     let pollCount = 0;
     const pollInterval = setInterval(async () => {
         if (done) { clearInterval(pollInterval); return; }
         pollCount++;
 
         try {
-            const { data, error } = await supabase
-                .from('arms_stk_requests')
-                .select('status, mpesa_receipt, amount_paid, result_code, result_desc')
-                .eq('checkout_request_id', params.checkoutRequestId)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+            const res = await fetch(
+                `${ARMS_API_URL}/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`,
+                { method: 'GET', headers: { 'Accept': 'application/json' } }
+            );
 
-            if (error || !data) {
-                // Record not found yet or error, keep polling
+            if (!res.ok) return; // Server error, keep polling
+
+            const data = await res.json();
+
+            if (!data || data.status === 'Pending') {
+                // Callback hasn't arrived yet, keep polling
                 return;
             }
 
@@ -380,8 +383,8 @@ export function pollSTKResult(params: {
                     clearTimeout(timer);
                     channel.unsubscribe();
                     params.onConfirmed(
-                        data.mpesa_receipt || 'MPesa',
-                        data.amount_paid || 0
+                        data.mpesaReceipt || 'MPesa',
+                        data.amountPaid || 0
                     );
                 }
             } else if ((data.status === 'Failed' || data.status === 'Cancelled') && !done) {
@@ -389,15 +392,15 @@ export function pollSTKResult(params: {
                     clearInterval(pollInterval);
                     clearTimeout(timer);
                     channel.unsubscribe();
-                    params.onFailed(data.result_desc || 'Payment was cancelled');
+                    params.onFailed(data.resultDesc || 'Payment was cancelled');
                 }
             }
-        } catch (_) { /* ignore polling errors */ }
+        } catch (_) { /* ignore polling errors, keep trying */ }
 
-        if (pollCount >= 20) { // 60s max polling (3s × 20)
+        if (pollCount >= 35) { // 70s max polling (2s × 35)
             clearInterval(pollInterval);
         }
-    }, 3000);
+    }, 2000);
 
     // Return cleanup function
     return () => {

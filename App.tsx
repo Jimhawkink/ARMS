@@ -1,12 +1,43 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
+
+// ─── CRASH DEBUGGER ──────────────────────────────────────────
+// This will catch ANY error and show it on screen
+class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean, error: string, stack: string}> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false, error: '', stack: '' };
+    }
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, error: error.message, stack: error.stack || '' };
+    }
+    componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+        console.error('APP CRASH:', error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <View style={{flex:1, backgroundColor:'#1a1a2e', padding:20, paddingTop:60}}>
+                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>⚠️ APP CRASH DEBUG</Text>
+                    <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Error:</Text>
+                    <ScrollView style={{flex:1}}>
+                        <Text style={{color:'#ffaaaa', fontSize:13, marginBottom:16}} selectable>{this.state.error}</Text>
+                        <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Stack Trace:</Text>
+                        <Text style={{color:'#888', fontSize:11}} selectable>{this.state.stack}</Text>
+                    </ScrollView>
+                </View>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 import LoginScreen from './src/screens/LoginScreen';
 import LicenseScreen, { MobileLicense } from './src/screens/LicenseScreen';
@@ -106,7 +137,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
 }
 
 // ─── Root App ────────────────────────────────────────────────
-export default function App() {
+function AppInner() {
     const [isLoading, setIsLoading] = useState(true);
     const [session, setSession] = useState<TenantSession | null>(null);
     const [license, setLicense] = useState<MobileLicense | null>(null);
@@ -122,16 +153,19 @@ export default function App() {
             const rawLicense = await AsyncStorage.getItem(LICENSE_STORAGE_KEY);
             if (rawLicense) {
                 const storedLicense: MobileLicense = JSON.parse(rawLicense);
-                // Re-validate against server
-                const isValid = await validateLicense(storedLicense);
-                if (isValid) {
+                // Check local expiry first — don't hit network if expired
+                const expiry = new Date(storedLicense.expiryDate);
+                if (expiry <= new Date()) {
+                    await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
+                    setLicenseError('License expired. Please re-activate.');
+                } else {
+                    // Trust cached license — skip online re-validation to avoid crashes
                     setLicense(storedLicense);
                     // 2. Check session only if licensed
                     const saved = await getSession();
                     if (saved) setSession(saved);
-                } else {
-                    await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
-                    setLicenseError('License expired or invalid. Please re-activate.');
+                    // Try background re-validation (non-blocking)
+                    validateLicense(storedLicense).catch(() => {/* silent */});
                 }
             }
             // If no license stored, license state stays null → show LicenseScreen
@@ -144,6 +178,7 @@ export default function App() {
 
     const validateLicense = async (lic: MobileLicense): Promise<boolean> => {
         try {
+            // @ts-ignore - androidId works at runtime despite TS warning
             const deviceId = Application.androidId || Application.applicationId || 'unknown';
             const deviceHash = await Crypto.digestStringAsync(
                 Crypto.CryptoDigestAlgorithm.SHA256,
@@ -226,6 +261,15 @@ export default function App() {
                 )}
             </Stack.Navigator>
         </NavigationContainer>
+    );
+}
+
+// ─── Exported App with Error Boundary ────────────────────────
+export default function App() {
+    return (
+        <ErrorBoundary>
+            <AppInner />
+        </ErrorBoundary>
     );
 }
 

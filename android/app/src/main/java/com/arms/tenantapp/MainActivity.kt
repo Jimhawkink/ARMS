@@ -1,4 +1,4 @@
-package com.alphaplus.armstenant
+package com.arms.tenantapp
 
 import android.os.Build
 import android.os.Bundle

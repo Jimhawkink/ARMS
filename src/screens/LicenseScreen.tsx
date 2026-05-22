@@ -52,6 +52,7 @@ export default function LicenseScreen({ onActivated, errorMessage }: Props) {
         // Get device ID on mount
         const getDeviceId = async () => {
             try {
+                // @ts-ignore - androidId works at runtime despite TS warning
                 const id = Application.androidId || Application.applicationId || 'unknown';
                 setDeviceId(id);
             } catch {
