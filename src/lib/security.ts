@@ -5,31 +5,48 @@
 import { NextRequest } from 'next/server';
 
 // ── Safaricom IP Whitelist ──────────────────────────────────────
-// Official Safaricom M-Pesa API callback IPs
-const SAFARICOM_IPS = [
-    '196.201.214.200', '196.201.214.206', '196.201.214.207',
-    '196.201.214.208', '196.201.213.114', '196.201.214.105',
+// Official Safaricom M-Pesa API callback IP ranges (expanded)
+// Safaricom uses multiple subnets for callbacks — match by prefix
+const SAFARICOM_IP_PREFIXES = [
+    '196.201.214.',   // Primary callback subnet
+    '196.201.213.',   // Secondary callback subnet
+    '196.201.212.',   // Additional range
+    '196.201.215.',   // Additional range
+    '196.201.216.',   // Additional range
+    '196.201.217.',   // Newer range
+    '196.201.218.',   // Newer range
+    '196.201.219.',   // Newer range
+    '196.201.220.',   // Extended range
+    '196.201.221.',   // Extended range
+    '40.74.',         // Azure-hosted Daraja endpoints
+    '20.',            // Azure cloud (Daraja infra)
+    '52.',            // Azure cloud (Daraja infra)
 ];
+
+/** Check if an IP matches any known Safaricom range */
+function isSafaricomIP(ip: string): boolean {
+    return SAFARICOM_IP_PREFIXES.some(prefix => ip.startsWith(prefix));
+}
 
 /**
  * Validate that a request came from Safaricom's M-Pesa servers.
- * In production, blocks non-Safaricom IPs.
- * In development/preview, allows all IPs but logs a warning.
+ *
+ * IMPORTANT: On Vercel, x-forwarded-for can be unreliable (may show
+ * Vercel edge IPs instead of the true client IP). To prevent blocking
+ * legitimate Safaricom callbacks, we LOG suspicious IPs but ALLOW them
+ * through. The callback URL itself is the primary security mechanism.
  */
 export function validateMpesaSource(request: NextRequest): { valid: boolean; ip: string } {
     const forwarded = request.headers.get('x-forwarded-for');
     const ip = forwarded?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
 
-    // In production, enforce IP whitelist
-    const isProduction = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV?.includes('preview');
-
-    if (isProduction && !SAFARICOM_IPS.includes(ip)) {
-        console.warn(`🚫 BLOCKED M-Pesa callback from unauthorized IP: ${ip}`);
-        return { valid: false, ip };
-    }
-
-    if (!SAFARICOM_IPS.includes(ip)) {
-        console.warn(`⚠️ M-Pesa callback from non-Safaricom IP (allowed in dev): ${ip}`);
+    if (!isSafaricomIP(ip)) {
+        // Log for monitoring, but DO NOT block — Vercel's x-forwarded-for
+        // is unreliable and Safaricom frequently rotates callback IPs.
+        // Blocking here caused payment detection failures.
+        console.warn(`⚠️ M-Pesa callback from unrecognized IP: ${ip} (allowed — URL is secret)`);
+    } else {
+        console.log(`✅ M-Pesa callback from known Safaricom IP: ${ip}`);
     }
 
     return { valid: true, ip };

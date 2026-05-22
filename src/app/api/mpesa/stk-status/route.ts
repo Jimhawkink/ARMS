@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +11,9 @@ export const dynamic = 'force-dynamic';
  * The STK callback already writes the result to the DB, so this is
  * both faster and cheaper than querying Safaricom directly.
  *
- * Returns: { status, resultCode, resultDesc, mpesaReceipt }
+ * Uses supabaseAdmin (service role) to bypass RLS.
+ *
+ * Returns: { status, resultCode, resultDesc, mpesaReceipt, amountPaid }
  */
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
@@ -24,7 +26,7 @@ export async function GET(request: NextRequest) {
     try {
         const { data, error } = await supabase
             .from('arms_stk_requests')
-            .select('status, result_code, result_desc, mpesa_receipt')
+            .select('status, result_code, result_desc, mpesa_receipt, amount_paid')
             .eq('checkout_request_id', checkoutRequestId.trim())
             .maybeSingle();
 
@@ -40,6 +42,7 @@ export async function GET(request: NextRequest) {
                 resultCode: null,
                 resultDesc: null,
                 mpesaReceipt: null,
+                amountPaid: null,
             });
         }
 
@@ -48,6 +51,7 @@ export async function GET(request: NextRequest) {
             resultCode: data.result_code ?? null,
             resultDesc: data.result_desc ?? null,
             mpesaReceipt: data.mpesa_receipt ?? null,
+            amountPaid: data.amount_paid ?? null,
         });
     } catch (err: unknown) {
         console.error('STK status error:', err);

@@ -18,6 +18,28 @@ export const supabase = new Proxy({} as SupabaseClient, {
     }
 });
 
+// ── Service Role Client (for server-side callbacks that bypass RLS) ──
+// Used by M-Pesa STK callbacks, auto-payment posting, etc.
+let _supabaseAdmin: SupabaseClient | null = null;
+export const supabaseAdmin = new Proxy({} as SupabaseClient, {
+    get(_, prop) {
+        if (!_supabaseAdmin) {
+            const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+            if (!serviceKey) {
+                // Fallback to anon key if service role not configured
+                console.warn('⚠️ SUPABASE_SERVICE_ROLE_KEY not set — falling back to anon key');
+                return Reflect.get(supabase, prop);
+            }
+            _supabaseAdmin = createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                serviceKey,
+                { auth: { persistSession: false, autoRefreshToken: false } }
+            );
+        }
+        return Reflect.get(_supabaseAdmin, prop);
+    }
+});
+
 // C2B M-Pesa Supabase Client (lazy)
 let _c2bSupabase: SupabaseClient | null = null;
 export const c2bSupabase = new Proxy({} as SupabaseClient, {

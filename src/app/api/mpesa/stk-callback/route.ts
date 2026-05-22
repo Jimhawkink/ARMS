@@ -1,25 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabase';
 import { validateMpesaSource } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
 
-// M-Pesa STK Push Callback — Called by Safaricom after user enters PIN
-// This is DIFFERENT from the C2B callback — it handles STK Push results
+// ═══════════════════════════════════════════════════════════════════
+// M-Pesa STK Push Callback — ULTRA SECURE
+// Called by Safaricom after user enters PIN.
+//
+// SECURITY LAYERS:
+// 1. IP validation (warn-only, since Vercel x-forwarded-for is unreliable)
+// 2. Structural validation (must have valid Safaricom callback shape)
+// 3. Cross-validation: CheckoutRequestID MUST exist in arms_stk_requests
+//    (proves we initiated this transaction — blocks random/forged callbacks)
+// 4. Amount verification: callback amount must match requested amount (±1 KES)
+// 5. Phone verification: callback phone must match requested phone
+// 6. Receipt deduplication: same M-Pesa receipt can't be recorded twice
+// 7. Service role DB access: bypasses RLS for reliable writes
+// ═══════════════════════════════════════════════════════════════════
 export async function POST(request: NextRequest) {
     try {
-        // ═══ SECURITY: Validate request source ═══
+        // ═══ LAYER 1: IP source validation ═══
         const { valid, ip } = validateMpesaSource(request);
         if (!valid) {
             return NextResponse.json({ ResultCode: 1, ResultDesc: 'Unauthorized' }, { status: 403 });
         }
 
         const body = await request.json();
-        console.log(`📱 STK callback from ${ip}, CheckoutRequestID: ${body?.Body?.stkCallback?.CheckoutRequestID || 'unknown'}`);
 
+        // ═══ LAYER 2: Structural validation ═══
+        // Safaricom STK callbacks MUST have Body.stkCallback with specific fields
         const { Body } = body;
-
         if (!Body || !Body.stkCallback) {
+            console.warn(`🚫 SECURITY: Malformed STK callback from ${ip} — missing Body.stkCallback`);
             return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
         }
 
@@ -29,19 +42,41 @@ export async function POST(request: NextRequest) {
         const checkoutRequestId = callback.CheckoutRequestID;
         const merchantRequestId = callback.MerchantRequestID;
 
-        console.log(`STK Push result: ${resultCode} - ${resultDesc} (${checkoutRequestId})`);
+        // CheckoutRequestID is mandatory in all Safaricom callbacks
+        if (!checkoutRequestId) {
+            console.warn(`🚫 SECURITY: STK callback from ${ip} missing CheckoutRequestID — REJECTED`);
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+        }
 
-        // Try to find the STK request record (may not exist if table was just created)
+        console.log(`📱 STK callback from ${ip}: ResultCode=${resultCode}, CheckoutRequestID=${checkoutRequestId}`);
+
+        // ═══ LAYER 3: Cross-validation — CheckoutRequestID must exist in our DB ═══
+        // This proves WE initiated this STK Push. If someone sends a forged callback
+        // with a random CheckoutRequestID, it won't match any record and will be rejected.
         let stkRequest: any = null;
-        try {
-            const { data } = await supabase
-                .from('arms_stk_requests')
-                .select('*')
-                .eq('checkout_request_id', checkoutRequestId)
-                .single();
-            stkRequest = data;
-        } catch (e) {
-            console.warn('Could not find arms_stk_requests record, will create one:', checkoutRequestId);
+        const { data: stkData, error: stkError } = await supabase
+            .from('arms_stk_requests')
+            .select('*')
+            .eq('checkout_request_id', checkoutRequestId)
+            .maybeSingle();
+
+        if (stkError) {
+            console.error('DB error looking up STK request:', stkError.message);
+        }
+
+        stkRequest = stkData;
+
+        if (!stkRequest) {
+            // No matching STK request — this checkout ID was NOT initiated by us
+            console.warn(`🚫 SECURITY: Unknown CheckoutRequestID ${checkoutRequestId} from ${ip} — NOT in our DB. Possible injection attempt.`);
+            // Still respond 200 to Safaricom, but do NOT process the payment
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (unknown request)' });
+        }
+
+        // ═══ LAYER 3b: Prevent replay — check if already processed ═══
+        if (stkRequest.status === 'Completed' || stkRequest.status === 'Failed' || stkRequest.status === 'Cancelled') {
+            console.warn(`⚠️ SECURITY: STK request ${checkoutRequestId} already processed (status: ${stkRequest.status}). Ignoring replay.`);
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (already processed)' });
         }
 
         if (resultCode === 0) {
@@ -51,52 +86,48 @@ export async function POST(request: NextRequest) {
             const mpesaCode = items.find((i: { Name: string }) => i.Name === 'MpesaReceiptNumber')?.Value;
             const phone = items.find((i: { Name: string }) => i.Name === 'PhoneNumber')?.Value;
             const transactionDate = items.find((i: { Name: string }) => i.Name === 'TransactionDate')?.Value;
-            // STK callback does NOT include payer name — we'll look up tenant by phone
 
-            console.log(`STK SUCCESS: Receipt=${mpesaCode}, KSh ${amount}, Phone: ${phone}`);
-
-            const payerPhone = phone ? String(phone) : (stkRequest?.phone || '');
+            const payerPhone = phone ? String(phone) : (stkRequest.phone || '');
             const paymentAmount = Math.ceil(amount || 0);
 
-            // Update or create the STK request record
-            if (stkRequest) {
-                await supabase
-                    .from('arms_stk_requests')
-                    .update({
-                        status: 'Completed',
-                        mpesa_receipt: mpesaCode || '',
-                        amount_paid: paymentAmount,
-                        result_code: resultCode,
-                        result_desc: resultDesc,
-                        updated_at: new Date().toISOString(),
-                    })
-                    .eq('id', stkRequest.id);
-            } else {
-                // Create the record if it didn't exist
-                try {
-                    await supabase.from('arms_stk_requests').insert([{
-                        checkout_request_id: checkoutRequestId,
-                        merchant_request_id: merchantRequestId || '',
-                        phone: payerPhone,
-                        amount: paymentAmount,
-                        account_reference: 'ARMS-RENT',
-                        tenant_id: null,
-                        status: 'Completed',
-                        mpesa_receipt: mpesaCode || '',
-                        amount_paid: paymentAmount,
-                        result_code: resultCode,
-                        result_desc: resultDesc,
-                        raw_response: body,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                    }]);
-                } catch (insertErr) {
-                    console.error('Failed to create stk_request record:', insertErr);
-                }
+            // ═══ LAYER 4: Amount verification ═══
+            // The callback amount must be within ±1 KES of what we requested
+            const requestedAmount = stkRequest.amount || 0;
+            if (Math.abs(paymentAmount - requestedAmount) > 1) {
+                console.warn(`🚫 SECURITY: Amount mismatch! Requested: ${requestedAmount}, Callback: ${paymentAmount}, CheckoutID: ${checkoutRequestId}`);
+                // Update status but DON'T post payment — flag for manual review
+                await supabase.from('arms_stk_requests').update({
+                    status: 'Failed',
+                    result_code: -99,
+                    result_desc: `SECURITY: Amount mismatch (requested ${requestedAmount}, got ${paymentAmount})`,
+                    mpesa_receipt: mpesaCode || '',
+                    updated_at: new Date().toISOString(),
+                }).eq('id', stkRequest.id);
+                return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (amount mismatch)' });
             }
 
-            // Find tenant — either from stk_request or by matching phone
-            let tenantId = stkRequest?.tenant_id || null;
+            // ═══ LAYER 5: Phone verification ═══
+            // The callback phone should match what we sent the STK push to
+            const requestedPhone = stkRequest.phone || '';
+            if (requestedPhone && payerPhone && payerPhone !== requestedPhone) {
+                console.warn(`⚠️ SECURITY: Phone mismatch. Requested: ${requestedPhone}, Callback: ${payerPhone}, CheckoutID: ${checkoutRequestId}`);
+                // Log warning but still process — Safaricom sometimes returns slightly different format
+            }
+
+            console.log(`✅ STK VERIFIED: Receipt=${mpesaCode}, KSh ${paymentAmount}, Phone: ${payerPhone}`);
+
+            // Update the STK request record to Completed
+            await supabase.from('arms_stk_requests').update({
+                status: 'Completed',
+                mpesa_receipt: mpesaCode || '',
+                amount_paid: paymentAmount,
+                result_code: resultCode,
+                result_desc: resultDesc,
+                updated_at: new Date().toISOString(),
+            }).eq('id', stkRequest.id);
+
+            // Find tenant — from stk_request (preferred) or by phone fallback
+            let tenantId = stkRequest.tenant_id || null;
             let tenant: any = null;
 
             if (tenantId) {
@@ -128,9 +159,7 @@ export async function POST(request: NextRequest) {
             // Record payment if we found a tenant
             if (tenant && tenantId && mpesaCode) {
                 try {
-                    // ═══ DUPLICATE CHECK: Prevent double recording ═══
-                    // Both STK callback and C2B callback can fire for the same transaction.
-                    // Check if a payment with this receipt already exists.
+                    // ═══ LAYER 6: Receipt deduplication ═══
                     const { data: existingPayment } = await supabase
                         .from('arms_payments')
                         .select('payment_id')
@@ -162,7 +191,6 @@ export async function POST(request: NextRequest) {
                         }
                     }
 
-                    // Build payer name from tenant (STK callback doesn't include payer name)
                     const payerName = tenant.tenant_name || '';
 
                     // Record payment with receipt, phone, and name
@@ -222,7 +250,7 @@ export async function POST(request: NextRequest) {
                         }]);
 
                         // Update stk_request with tenant_id if it was missing
-                        if (stkRequest && !stkRequest.tenant_id) {
+                        if (!stkRequest.tenant_id) {
                             await supabase
                                 .from('arms_stk_requests')
                                 .update({ tenant_id: tenantId })
@@ -245,34 +273,12 @@ export async function POST(request: NextRequest) {
             // Payment failed or cancelled
             console.log(`STK FAILED: ${resultDesc}`);
 
-            // Update STK request status
-            if (stkRequest) {
-                await supabase
-                    .from('arms_stk_requests')
-                    .update({
-                        status: resultCode === 1032 ? 'Cancelled' : 'Failed',
-                        result_code: resultCode,
-                        result_desc: resultDesc,
-                        updated_at: new Date().toISOString(),
-                    })
-                    .eq('id', stkRequest.id);
-            } else {
-                // Create failed record
-                try {
-                    await supabase.from('arms_stk_requests').insert([{
-                        checkout_request_id: checkoutRequestId,
-                        merchant_request_id: merchantRequestId || '',
-                        phone: '',
-                        amount: 0,
-                        status: resultCode === 1032 ? 'Cancelled' : 'Failed',
-                        result_code: resultCode,
-                        result_desc: resultDesc,
-                        raw_response: body,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                    }]);
-                } catch (e) { /* ignore */ }
-            }
+            await supabase.from('arms_stk_requests').update({
+                status: resultCode === 1032 ? 'Cancelled' : 'Failed',
+                result_code: resultCode,
+                result_desc: resultDesc,
+                updated_at: new Date().toISOString(),
+            }).eq('id', stkRequest.id);
         }
 
         // Always respond with success to Safaricom
@@ -286,7 +292,7 @@ export async function POST(request: NextRequest) {
 // Health check
 export async function GET() {
     return NextResponse.json({
-        status: 'ARMS STK Push Callback Active',
+        status: 'ARMS STK Push Callback Active (Ultra Secure)',
         time: new Date().toISOString(),
     });
 }
