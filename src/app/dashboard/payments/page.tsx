@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, recordPayment, deletePayment, updatePaymentNotes, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth } from '@/lib/supabase';
+import { getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap, FiSearch, FiFilter } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
 import PaymentModal from '@/components/PaymentModal';
@@ -47,9 +47,17 @@ export default function PaymentsPage() {
     const [locationId, setLocationId] = useState<number | null>(null);
     const [showReceipt, setShowReceipt] = useState<any>(null);
     const [editingPayment, setEditingPayment] = useState<any>(null);
-    const [editForm, setEditForm] = useState({ reference_no: '', notes_display: '' });
+    const [editForm, setEditForm] = useState({
+        amount: '', payment_method: 'Cash', payment_month: '',
+        mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes_display: '',
+    });
     const [deletingPayment, setDeletingPayment] = useState<any>(null);
     const [actionLoading, setActionLoading] = useState(false);
+
+    // ── Filters ───────────────────────────────────────────────────────────────
+    const [filterTenant, setFilterTenant] = useState('');
+    const [filterPhone, setFilterPhone] = useState('');
+    const [filterRoom, setFilterRoom] = useState('');
 
     // ── Callback linking inside pay modal ─────────────────────────────────────
     const [paymentSource, setPaymentSource] = useState<'manual' | 'mpesa' | 'jenga_stk' | 'jenga_callback'>('manual');
@@ -196,9 +204,27 @@ export default function PaymentsPage() {
     };
 
     const handleEditSave = async () => {
-        if (!editingPayment) return; setActionLoading(true);
+        if (!editingPayment) return;
+        if (!editForm.amount || parseFloat(editForm.amount) <= 0) { toast.error('Amount must be greater than zero'); return; }
+        if (!editForm.payment_month) { toast.error('Payment month is required'); return; }
+        setActionLoading(true);
         topProgress.start();
-        try { await updatePaymentNotes(editingPayment.payment_id, { reference_no: editForm.reference_no || undefined, notes: editForm.notes_display }); toast.success('Updated'); setEditingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Update failed'); } finally { topProgress.done(); }
+        try {
+            const user = JSON.parse(localStorage.getItem('arms_user') || '{}');
+            await updatePaymentFull(editingPayment.payment_id, {
+                amount: parseFloat(editForm.amount),
+                payment_method: editForm.payment_method,
+                payment_month: editForm.payment_month,
+                mpesa_receipt: editForm.mpesa_receipt || undefined,
+                mpesa_phone: editForm.mpesa_phone || undefined,
+                reference_no: editForm.reference_no || undefined,
+                notes: editForm.notes_display,
+                recorded_by: user.name || undefined,
+            });
+            toast.success('✅ Payment updated & balances recalculated!');
+            setEditingPayment(null);
+            loadData(locationId);
+        } catch (err: any) { toast.error(err.message || 'Update failed'); } finally { topProgress.done(); }
         setActionLoading(false);
     };
 
@@ -208,6 +234,17 @@ export default function PaymentsPage() {
         const currentRentPaid = parseNoteTag(p.notes, 'CurrentRentPaid');
         setShowReceipt({ payment_id: p.payment_id, tenant_name: p.arms_tenants?.tenant_name||'-', phone: p.arms_tenants?.phone||'', id_number: p.arms_tenants?.id_number||'', unit_name: p.arms_tenants?.arms_units?.unit_name||'-', location_name: p.arms_locations?.location_name||'-', monthly_rent: p.arms_tenants?.monthly_rent||0, amount: p.amount, payment_method: p.payment_method, mpesa_receipt: p.mpesa_receipt||'', payment_date: p.payment_date, payment_month: monthMatch?monthMatch[1]:'', balance_before: p.amount+(p.arms_tenants?.balance||0), balance_after: p.arms_tenants?.balance||0, recorded_by: p.recorded_by||'', arrears_paid: arrearsPaid, current_rent_paid: currentRentPaid||p.amount-arrearsPaid });
     };
+
+    // ── Derived filtered list ─────────────────────────────────────────────────
+    const filteredPayments = payments.filter(p => {
+        const tenantName = (p.arms_tenants?.tenant_name || '').toLowerCase();
+        const phone = (p.arms_tenants?.phone || '').toLowerCase();
+        const room = (p.arms_tenants?.arms_units?.unit_name || '').toLowerCase();
+        if (filterTenant && !tenantName.includes(filterTenant.toLowerCase())) return false;
+        if (filterPhone && !phone.includes(filterPhone.toLowerCase())) return false;
+        if (filterRoom && !room.includes(filterRoom.toLowerCase())) return false;
+        return true;
+    });
 
     const totalAll = payments.reduce((s,p) => s+(p.amount||0),0);
     const todayTotal = payments.filter(p => p.payment_date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s,p) => s+(p.amount||0),0);
@@ -317,13 +354,64 @@ export default function PaymentsPage() {
                 <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
                     <div>
                         <h2 className="text-sm font-bold text-gray-900">🗂️ Payment Records</h2>
-                        <p className="text-[11px] text-gray-400 mt-0.5">{payments.length} total · FIFO arrears-first</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">{filteredPayments.length} of {payments.length} · FIFO arrears-first</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                         {[{label:'Arrears Paid',color:COL.arrearsPaid.text},{label:'Current Rent',color:COL.currentRent.text},{label:'Rem. Arrears',color:COL.arrearsRem.text}].map(l => (
                             <span key={l.label} className="text-[10px] font-bold px-2 py-1 rounded-lg border" style={{color:l.color,borderColor:l.color+'40',background:l.color+'10'}}>{l.label}</span>
                         ))}
                     </div>
+                </div>
+
+                {/* ── Filter Bar ── */}
+                <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-indigo-50/40 border-b border-gray-100 flex flex-wrap gap-3 items-center">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                        <FiFilter size={12}/> Filters
+                    </div>
+                    {/* Tenant Name */}
+                    <div className="relative flex-1 min-w-[160px] max-w-[220px]">
+                        <FiSearch size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                        <input
+                            type="text" value={filterTenant}
+                            onChange={e => setFilterTenant(e.target.value)}
+                            placeholder="Tenant name…"
+                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+                        />
+                    </div>
+                    {/* Phone */}
+                    <div className="relative flex-1 min-w-[140px] max-w-[190px]">
+                        <FiSmartphone size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                        <input
+                            type="text" value={filterPhone}
+                            onChange={e => setFilterPhone(e.target.value)}
+                            placeholder="Phone number…"
+                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+                        />
+                    </div>
+                    {/* Room / Unit */}
+                    <div className="relative flex-1 min-w-[140px] max-w-[190px]">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]">🏠</span>
+                        <input
+                            type="text" value={filterRoom}
+                            onChange={e => setFilterRoom(e.target.value)}
+                            placeholder="Room / unit…"
+                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+                        />
+                    </div>
+                    {/* Clear */}
+                    {(filterTenant || filterPhone || filterRoom) && (
+                        <button
+                            onClick={() => { setFilterTenant(''); setFilterPhone(''); setFilterRoom(''); }}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:bg-red-50 border border-red-100 transition"
+                        >
+                            <FiX size={11}/> Clear
+                        </button>
+                    )}
+                    {(filterTenant || filterPhone || filterRoom) && (
+                        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100">
+                            {filteredPayments.length} result{filteredPayments.length !== 1 ? 's' : ''}
+                        </span>
+                    )}
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full border-collapse" style={{fontSize:12}}>
@@ -335,11 +423,11 @@ export default function PaymentsPage() {
                             </tr>
                         </thead>
                         <tbody>
-                            {payments.length === 0 ? (
+                            {filteredPayments.length === 0 ? (
                                 <tr><td colSpan={12} className="text-center py-12 text-gray-400">
-                                    <div className="flex flex-col items-center gap-2"><span className="text-4xl">📭</span><p className="text-sm font-medium">No payments yet</p></div>
+                                    <div className="flex flex-col items-center gap-2"><span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span><p className="text-sm font-medium">{payments.length === 0 ? 'No payments yet' : 'No results match your filters'}</p></div>
                                 </td></tr>
-                            ) : payments.map(p => {
+                            ) : filteredPayments.map(p => {
                                 const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
                                 const timeMatch = p.notes?.match(/\[Time: (.+?)\]/);
                                 const payMonth = monthMatch ? monthMatch[1] : '-';
@@ -415,7 +503,19 @@ export default function PaymentsPage() {
                                         <td className="px-3 py-3" style={{background:COL.actions.bg+'80'}}>
                                             <div className="flex items-center gap-1.5">
                                                 <button onClick={() => viewReceipt(p)} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:COL.month.head,color:COL.month.text}}><FiPrinter size={13}/></button>
-                                                <button onClick={() => { setEditingPayment(p); setEditForm({reference_no:p.reference_no||'',notes_display:cleanNoteDisplay(p.notes)}); }} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:COL.currentRent.head,color:COL.currentRent.text}}><FiEdit2 size={13}/></button>
+                                                <button onClick={() => {
+                                                    const mMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
+                                                    setEditingPayment(p);
+                                                    setEditForm({
+                                                        amount: String(p.amount || ''),
+                                                        payment_method: p.payment_method || 'Cash',
+                                                        payment_month: mMatch ? mMatch[1] : p.payment_date?.slice(0,7) || new Date().toISOString().slice(0,7),
+                                                        mpesa_receipt: p.mpesa_receipt || '',
+                                                        mpesa_phone: p.mpesa_phone || '',
+                                                        reference_no: p.reference_no || '',
+                                                        notes_display: cleanNoteDisplay(p.notes),
+                                                    });
+                                                }} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:COL.currentRent.head,color:COL.currentRent.text}}><FiEdit2 size={13}/></button>
                                                 <button onClick={() => setDeletingPayment(p)} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:'#fee2e2',color:'#b91c1c'}}><FiTrash2 size={13}/></button>
                                             </div>
                                         </td>
@@ -805,23 +905,202 @@ export default function PaymentsPage() {
                 </div>
             )}
 
-            {/* Edit Modal */}
-            {editingPayment && (
-                <div className="modal-overlay" onClick={() => setEditingPayment(null)}>
-                    <div className="modal-content" style={{maxWidth:480}} onClick={e => e.stopPropagation()}>
-                        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between"><h2 className="text-base font-bold text-gray-900 flex items-center gap-2"><FiEdit2 className="text-blue-500"/> Edit Payment</h2><button onClick={() => setEditingPayment(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><FiX size={16}/></button></div>
-                        <div className="p-6 space-y-4">
-                            <div className="bg-blue-50 rounded-xl p-3 text-sm border border-blue-100"><p className="font-bold text-blue-900">{editingPayment.arms_tenants?.tenant_name}</p><p className="text-blue-600 text-xs mt-0.5">{fmt(editingPayment.amount)} • {new Date(editingPayment.payment_date).toLocaleDateString()}</p></div>
-                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📝 Reference</label><input value={editForm.reference_no} onChange={e => setEditForm({...editForm,reference_no:e.target.value})} className="input-field"/></div>
-                            <div><label className="text-sm font-medium text-gray-700 mb-1 block">📋 Notes</label><textarea value={editForm.notes_display} onChange={e => setEditForm({...editForm,notes_display:e.target.value})} className="input-field" rows={3}/></div>
-                        </div>
-                        <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
-                            <button onClick={() => setEditingPayment(null)} className="btn-outline">Cancel</button>
-                            <button onClick={handleEditSave} disabled={actionLoading} className="btn-primary flex items-center gap-2">{actionLoading?<FiSave size={14} className="animate-pulse"/>:<FiSave size={14}/>} Save</button>
+            {/* ════════════════ SUPER EDIT PAYMENT MODAL ════════════════ */}
+            {editingPayment && (() => {
+                const editAmount = parseFloat(editForm.amount) || 0;
+                // Live FIFO preview using tenant's current balance (approximate before save)
+                const tenantBalanceSnapshot = editingPayment.arms_tenants?.balance ?? 0;
+                const currentRentSnapshot = editingPayment.arms_tenants?.monthly_rent ?? 0;
+                const isMpesa = editForm.payment_method === 'M-Pesa' || editForm.payment_method?.startsWith('Jenga');
+                return (
+                    <div className="modal-overlay" onClick={() => setEditingPayment(null)}>
+                        <div className="modal-content" style={{maxWidth:560}} onClick={e => e.stopPropagation()}>
+                            {/* Header */}
+                            <div className="relative overflow-hidden" style={{background:'linear-gradient(135deg,#1e40af,#4f46e5,#7c3aed)'}}>
+                                <div className="absolute inset-0 opacity-10" style={{backgroundImage:'radial-gradient(circle,white 1px,transparent 1px)',backgroundSize:'20px 20px'}}/>
+                                <div className="relative px-6 py-5 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+                                            <FiEdit2 size={18} className="text-white"/>
+                                        </div>
+                                        <div>
+                                            <h2 className="text-base font-extrabold text-white">Edit Payment</h2>
+                                            <p className="text-blue-200 text-xs mt-0.5">Changes recalculate all billing balances via FIFO</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setEditingPayment(null)} className="p-2 rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition"><FiX size={16}/></button>
+                                </div>
+                            </div>
+
+                            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                                {/* Tenant info banner */}
+                                <div className="rounded-2xl overflow-hidden border border-indigo-100" style={{background:'linear-gradient(135deg,#eef2ff,#f5f3ff)'}}>
+                                    <div className="px-4 py-3 flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-0.5">Tenant</p>
+                                            <p className="text-base font-extrabold text-indigo-900">{editingPayment.arms_tenants?.tenant_name || '—'}</p>
+                                            <p className="text-xs text-indigo-500 mt-0.5">
+                                                🏠 {editingPayment.arms_tenants?.arms_units?.unit_name || '—'} &nbsp;·&nbsp;
+                                                📞 {editingPayment.arms_tenants?.phone || '—'}
+                                            </p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0">
+                                            <p className="text-[10px] font-bold text-indigo-400 uppercase mb-0.5">Original</p>
+                                            <p className="text-lg font-extrabold text-indigo-700">{fmt(editingPayment.amount)}</p>
+                                            <p className="text-[10px] text-indigo-400">{new Date(editingPayment.payment_date).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    <div className="px-4 py-2 border-t border-indigo-100 bg-white/50 flex items-center gap-2">
+                                        <span className="text-[10px] text-amber-600 font-bold">⚠️ Saving will reverse old billing allocations and re-apply FIFO with the new amount.</span>
+                                    </div>
+                                </div>
+
+                                {/* ── Row 1: Amount + Month ── */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">💰 Amount (KES) *</label>
+                                        <input
+                                            type="number" min="1" step="any"
+                                            value={editForm.amount}
+                                            onChange={e => setEditForm({...editForm, amount: e.target.value})}
+                                            className="input-field text-lg font-extrabold"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">📅 For Month *</label>
+                                        <input
+                                            type="month"
+                                            value={editForm.payment_month}
+                                            onChange={e => setEditForm({...editForm, payment_month: e.target.value})}
+                                            className="input-field"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* ── Row 2: Payment Method ── */}
+                                <div>
+                                    <label className="text-xs font-bold text-gray-700 mb-1.5 block">💳 Payment Method</label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[
+                                            {id:'Cash', icon:'💵', color:'#3b82f6'},
+                                            {id:'M-Pesa', icon:'📱', color:'#10b981'},
+                                            {id:'Bank Transfer', icon:'🏦', color:'#6366f1'},
+                                            {id:'Jenga-M-Pesa', icon:'⚡', color:'#f59e0b'},
+                                            {id:'Jenga-Equitel', icon:'💳', color:'#8b5cf6'},
+                                        ].map(m => (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                onClick={() => setEditForm({...editForm, payment_method: m.id})}
+                                                className="px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all"
+                                                style={editForm.payment_method === m.id
+                                                    ? {background:m.color,color:'white',borderColor:m.color,boxShadow:`0 4px 12px ${m.color}40`}
+                                                    : {background:'white',color:m.color,borderColor:`${m.color}40`}}
+                                            >
+                                                {m.icon} {m.id}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* ── M-Pesa / Jenga fields ── */}
+                                {isMpesa && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-700 mb-1.5 block">📝 Transaction Code</label>
+                                            <input
+                                                value={editForm.mpesa_receipt}
+                                                onChange={e => setEditForm({...editForm, mpesa_receipt: e.target.value})}
+                                                className="input-field font-mono"
+                                                placeholder="e.g. SJ12ABC456"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-700 mb-1.5 block">📞 M-Pesa Phone</label>
+                                            <input
+                                                value={editForm.mpesa_phone}
+                                                onChange={e => setEditForm({...editForm, mpesa_phone: e.target.value})}
+                                                className="input-field"
+                                                placeholder="07XXXXXXXX"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ── Reference + Notes ── */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">🔖 Reference No.</label>
+                                        <input
+                                            value={editForm.reference_no}
+                                            onChange={e => setEditForm({...editForm, reference_no: e.target.value})}
+                                            className="input-field"
+                                            placeholder="Optional"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">📋 Notes</label>
+                                        <input
+                                            value={editForm.notes_display}
+                                            onChange={e => setEditForm({...editForm, notes_display: e.target.value})}
+                                            className="input-field"
+                                            placeholder="Optional"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* ── Live Preview of Impact ── */}
+                                {editAmount > 0 && (
+                                    <div className="rounded-2xl overflow-hidden border-2" style={{borderColor:'#a5b4fc'}}>
+                                        <div className="px-4 py-2.5 flex items-center gap-2" style={{background:'linear-gradient(90deg,#4f46e5,#7c3aed)'}}>
+                                            <span className="text-sm">💡</span>
+                                            <span className="text-xs font-extrabold text-white">Impact Preview</span>
+                                            <span className="text-indigo-200 text-[10px] ml-auto">Approximate — exact FIFO on save</span>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-0">
+                                            <div className="p-3 border-r border-indigo-100" style={{background:'#eef2ff'}}>
+                                                <p className="text-[9px] font-bold uppercase text-indigo-400 mb-1">Old Amount</p>
+                                                <p className="text-base font-extrabold text-indigo-700">{fmt(editingPayment.amount)}</p>
+                                            </div>
+                                            <div className="p-3 border-r border-indigo-100" style={{background:'#f0fdf4'}}>
+                                                <p className="text-[9px] font-bold uppercase text-green-500 mb-1">New Amount</p>
+                                                <p className="text-base font-extrabold text-green-700">{fmt(editAmount)}</p>
+                                            </div>
+                                            <div className="p-3" style={{background: editAmount > editingPayment.amount ? '#f0fdf4' : editAmount < editingPayment.amount ? '#fef2f2' : '#f8fafc'}}>
+                                                <p className="text-[9px] font-bold uppercase mb-1" style={{color: editAmount > editingPayment.amount ? '#15803d' : editAmount < editingPayment.amount ? '#b91c1c' : '#6b7280'}}>Difference</p>
+                                                <p className="text-base font-extrabold" style={{color: editAmount > editingPayment.amount ? '#15803d' : editAmount < editingPayment.amount ? '#b91c1c' : '#6b7280'}}>
+                                                    {editAmount > editingPayment.amount ? '+' : editAmount < editingPayment.amount ? '-' : ''}{fmt(Math.abs(editAmount - editingPayment.amount))}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="px-4 py-2.5 border-t border-indigo-100 bg-indigo-50/50">
+                                            <p className="text-[10px] text-indigo-600 font-semibold">
+                                                🔄 All billing records for this tenant will be reset and replayed in FIFO order with the corrected amount.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end" style={{background:'#fafafa'}}>
+                                <button onClick={() => setEditingPayment(null)} className="btn-outline">Cancel</button>
+                                <button
+                                    onClick={handleEditSave}
+                                    disabled={actionLoading || !editForm.amount || parseFloat(editForm.amount) <= 0}
+                                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-extrabold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{background:'linear-gradient(135deg,#4f46e5,#7c3aed)',boxShadow:'0 4px 14px rgba(79,70,229,0.4)'}}
+                                >
+                                    {actionLoading
+                                        ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/><span>Saving…</span></>
+                                        : <><FiSave size={15}/><span>Save & Recalculate</span></>}
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Delete Confirm */}
             {deletingPayment && (

@@ -1029,11 +1029,168 @@ export async function deletePayment(paymentId: number) {
     if (delErr) throw delErr;
 }
 
-// ==================== UPDATE PAYMENT ====================
+// ==================== UPDATE PAYMENT (notes only — legacy) ====================
 export async function updatePaymentNotes(paymentId: number, updates: { reference_no?: string; notes?: string }) {
     const { data, error } = await supabase.from('arms_payments').update(updates).eq('payment_id', paymentId).select().single();
     if (error) throw error;
     return data;
+}
+
+// ==================== UPDATE PAYMENT (FULL — reverses & re-applies FIFO) ====================
+export async function updatePaymentFull(
+    paymentId: number,
+    updates: {
+        amount: number;
+        payment_method: string;
+        payment_month: string; // YYYY-MM — used as the new notes [Month:] tag
+        mpesa_receipt?: string;
+        mpesa_phone?: string;
+        reference_no?: string;
+        notes?: string;
+        recorded_by?: string;
+    }
+): Promise<any> {
+    const newAmount = Math.round(updates.amount * 100) / 100;
+    if (newAmount <= 0) throw new Error('Amount must be greater than zero');
+
+    // ── 1. Load the existing payment record ──────────────────────────────────
+    const { data: oldPayment, error: loadErr } = await supabase
+        .from('arms_payments').select('*').eq('payment_id', paymentId).single();
+    if (loadErr || !oldPayment) throw new Error('Payment not found');
+
+    const tenantId: number = oldPayment.tenant_id;
+
+    // ── 2. Load tenant ────────────────────────────────────────────────────────
+    const { data: tenant, error: tenantErr } = await supabase
+        .from('arms_tenants').select('*').eq('tenant_id', tenantId).single();
+    if (tenantErr || !tenant) throw new Error('Tenant not found');
+
+    // ── 3. Replay ALL payments for this tenant from scratch ───────────────────
+    //    Strategy: reset all bills → replay every payment in date order (with new
+    //    amount substituted for this paymentId).
+
+    // 3a. Fetch all billing records for this tenant
+    const { data: allBills, error: billsErr } = await supabase
+        .from('arms_billing').select('*')
+        .eq('tenant_id', tenantId)
+        .order('billing_date', { ascending: true });
+    if (billsErr) throw billsErr;
+
+    // 3b. Reset all bills to unpaid state
+    await Promise.all((allBills || []).map(b =>
+        supabase.from('arms_billing').update({
+            amount_paid: 0,
+            balance: b.rent_amount,
+            status: 'Unpaid',
+            updated_at: new Date().toISOString(),
+        }).eq('billing_id', b.billing_id)
+    ));
+
+    // 3c. Fetch all payments for this tenant in date order
+    const { data: allPayments, error: pmtsErr } = await supabase
+        .from('arms_payments').select('payment_id, amount, payment_date, notes')
+        .eq('tenant_id', tenantId)
+        .order('payment_date', { ascending: true });
+    if (pmtsErr) throw pmtsErr;
+
+    const nowLocal = new Date();
+    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+
+    // Track what the edited payment allocates (for meta-tags)
+    let editedArrearsPaid = 0;
+    let editedCurrentRentPaid = 0;
+    let editedCreditAmount = 0;
+
+    // 3d. Replay each payment in order
+    for (const pmt of (allPayments || [])) {
+        const isEdited = pmt.payment_id === paymentId;
+        const replayAmount = Math.round((isEdited ? newAmount : (pmt.amount || 0)) * 100) / 100;
+        if (replayAmount <= 0) continue;
+
+        // Fetch bills that still have balance > 0
+        const { data: unpaidBills } = await supabase
+            .from('arms_billing').select('*')
+            .eq('tenant_id', tenantId).gt('balance', 0)
+            .order('billing_date', { ascending: true });
+
+        let remaining = replayAmount;
+        let arrP = 0, currP = 0;
+
+        for (const bill of (unpaidBills || [])) {
+            if (remaining <= 0) break;
+            const billBal = Math.round((bill.balance || 0) * 100) / 100;
+            const allocAmount = Math.min(remaining, billBal);
+            const newAmountPaid = Math.round(((bill.amount_paid || 0) + allocAmount) * 100) / 100;
+            const newBalance = Math.max(0, Math.round((bill.rent_amount - newAmountPaid) * 100) / 100);
+            const newStatus = newBalance <= 0 ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+            const isArrear = bill.billing_month < currentMonth;
+
+            await supabase.from('arms_billing').update({
+                amount_paid: newAmountPaid,
+                balance: newBalance,
+                status: newStatus,
+                updated_at: new Date().toISOString(),
+            }).eq('billing_id', bill.billing_id);
+
+            if (isEdited) {
+                if (isArrear) arrP = Math.round((arrP + allocAmount) * 100) / 100;
+                else currP = Math.round((currP + allocAmount) * 100) / 100;
+            }
+            remaining = Math.round((remaining - allocAmount) * 100) / 100;
+        }
+
+        if (isEdited) {
+            editedArrearsPaid = arrP;
+            editedCurrentRentPaid = currP;
+            editedCreditAmount = Math.round(remaining * 100) / 100;
+        }
+    }
+
+    // ── 4. Rebuild tenant balance from all unpaid bill balances ───────────────
+    const { data: remainingBills } = await supabase
+        .from('arms_billing').select('balance')
+        .eq('tenant_id', tenantId).gt('balance', 0);
+    const newTenantBalance = Math.round(
+        (remainingBills || []).reduce((s, b) => s + (b.balance || 0), 0) * 100
+    ) / 100;
+    await supabase.from('arms_tenants').update({
+        balance: newTenantBalance,
+        updated_at: new Date().toISOString(),
+    }).eq('tenant_id', tenantId);
+
+    // ── 5. Build updated notes with meta-tags ─────────────────────────────────
+    const cleanNotes = (updates.notes || '').replace(/\[Month:[^\]]+\]/g, '').replace(/\[Time:[^\]]+\]/g, '').replace(/\[ArrearsPaid:[^\]]+\]/g, '').replace(/\[CurrentRentPaid:[^\]]+\]/g, '').replace(/\[BillsCleared:[^\]]+\]/g, '').replace(/\[ArrearMonths:[^\]]+\]/g, '').replace(/\[Credit:[^\]]+\]/g, '').trim();
+    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const metaTags = [
+        `[Month: ${updates.payment_month}]`,
+        `[Time: ${timeStr}]`,
+        `[ArrearsPaid:${editedArrearsPaid}]`,
+        `[CurrentRentPaid:${editedCurrentRentPaid}]`,
+        editedCreditAmount > 0 ? `[Credit:${editedCreditAmount}]` : '',
+    ].filter(Boolean).join('');
+    const finalNotes = cleanNotes ? `${metaTags} ${cleanNotes}` : metaTags;
+
+    // ── 6. Persist the updated payment record ─────────────────────────────────
+    const { data: updated, error: updateErr } = await supabase
+        .from('arms_payments').update({
+            amount: newAmount,
+            payment_method: updates.payment_method,
+            mpesa_receipt: updates.mpesa_receipt || null,
+            mpesa_phone: updates.mpesa_phone || null,
+            reference_no: updates.reference_no || null,
+            notes: finalNotes,
+            recorded_by: updates.recorded_by || oldPayment.recorded_by,
+            updated_at: new Date().toISOString(),
+        }).eq('payment_id', paymentId).select().single();
+    if (updateErr) throw updateErr;
+
+    return {
+        ...updated,
+        arrearsPaid: editedArrearsPaid,
+        currentRentPaid: editedCurrentRentPaid,
+        creditAmount: editedCreditAmount,
+        newTenantBalance,
+    };
 }
 
 // ==================== ARREARS PAYMENTS DETAIL ====================
