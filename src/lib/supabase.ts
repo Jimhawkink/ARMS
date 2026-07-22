@@ -46,7 +46,7 @@ export const c2bSupabase = new Proxy({} as SupabaseClient, {
     get(_, prop) {
         if (!_c2bSupabase) {
             _c2bSupabase = createClient(
-                process.env.NEXT_PUBLIC_C2B_SUPABASE_URL || 'https://pxcdaivlvltmdifxietb.supabase.co',
+                process.env.NEXT_PUBLIC_C2B_SUPABASE_URL || 'https://zkamuhvrmazozhudbtuw.supabase.co',
                 process.env.NEXT_PUBLIC_C2B_SUPABASE_ANON_KEY!
             );
         }
