@@ -5,9 +5,9 @@ import { createClient } from '@supabase/supabase-js';
 // Same Supabase instance as the ARMS web app
 // ============================================================
 
-const SUPABASE_URL = 'https://enlqpifpxuecxxozyiak.supabase.co';
+const SUPABASE_URL = 'https://zkamuhvrmazozhudbtuw.supabase.co';
 const SUPABASE_ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubHFwaWZweHVlY3h4b3p5aWFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwMjUzNjgsImV4cCI6MjA4MTYwMTM2OH0.-z3-2Mf3SkkZR3ZryOGyG-60jWERX9YLKIee048OziE';
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprYW11aHZybWF6b3podWRidHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyNDE3OTYsImV4cCI6MjA5OTgxNzc5Nn0.Y6gkKQDWuLxcmhlYTZvKase7MzDO_Ehymitef6OE5JU';
 
 // M-Pesa STK Push — uses the ARMS web app API (Vercel-hosted Next.js)
 // Credentials are resolved per-unit from arms_unit_mpesa_config on the server
@@ -685,5 +685,253 @@ export async function checkTenantLicense(
     } catch (e) {
         console.warn('[License] Check failed (fail-open):', e);
         return { licensed: true };
+    }
+}
+
+// ============================================================
+// ─── NEW: STAFF TYPES & FUNCTIONS (Caretaker / Landlord) ────
+// All existing tenant code above is 100% untouched
+// ============================================================
+
+export interface StaffSession {
+    staff_id: number;
+    staff_name: string;
+    phone: string;
+    role: 'caretaker' | 'landlord';
+    location_id?: number | null;
+    location_name?: string;
+    loggedInAt: number;
+}
+
+export interface TenantSearchResult {
+    tenant_id: number;
+    tenant_name: string;
+    phone: string;
+    id_number: string;
+    unit_name: string;
+    location_name: string;
+    location_id: number;
+    monthly_rent: number;
+    balance: number;
+    deposit_paid: number;
+    move_in_date: string;
+}
+
+export interface StatementEntry {
+    type: 'billing' | 'payment';
+    date: string;
+    description: string;
+    debit: number;
+    credit: number;
+    balance: number;
+    status?: string;
+    receipt?: string;
+    month?: string;
+    method?: string;
+}
+
+// ── UNIFIED STAFF LOGIN — queries arms_users.mobile_pin ────────
+// Caretakers AND Landlords are BOTH in arms_users table
+// user_role = 'caretaker' → caretaker session
+// user_role = 'admin' | 'manager' | 'owner' | 'agent' → landlord session
+// SQL to run ONCE in Supabase SQL Editor:
+//   ALTER TABLE arms_users ADD COLUMN IF NOT EXISTS mobile_pin VARCHAR(10);
+
+export async function loginStaffByPin(pin: string): Promise<StaffSession | null> {
+    try {
+        const { data, error } = await supabase
+            .from('arms_users')
+            .select('user_id, name, phone, user_role, active, mobile_pin, is_super_admin')
+            .eq('active', true);
+
+        if (error) { console.error('loginStaffByPin error:', error.message); return null; }
+        if (!data || data.length === 0) return null;
+
+        const pinStr = String(pin).trim();
+        const matched = data.find((u: any) =>
+            u.mobile_pin && String(u.mobile_pin).trim() === pinStr
+        );
+        if (!matched) return null;
+
+        const isCaretaker = (matched.user_role || '').toLowerCase() === 'caretaker';
+
+        return {
+            staff_id: matched.user_id,
+            staff_name: matched.name,
+            phone: matched.phone || '',
+            role: isCaretaker ? 'caretaker' : 'landlord',
+            location_id: null,
+            loggedInAt: Date.now(),
+        };
+    } catch (err: any) {
+        console.error('loginStaffByPin exception:', err.message);
+        return null;
+    }
+}
+
+// Keep old names as aliases so existing imports don’t break
+export const loginCaretakerByPin = loginStaffByPin;
+export const loginLandlordByPin  = loginStaffByPin;
+
+// ── Get All Locations (for search filter) ─────────────────────
+
+export async function getAllLocations(): Promise<{ location_id: number; location_name: string }[]> {
+    try {
+        const { data, error } = await supabase
+            .from('arms_locations')
+            .select('location_id, location_name')
+            .eq('active', true)
+            .order('location_name');
+        if (error || !data) return [];
+        return data;
+    } catch {
+        return [];
+    }
+}
+
+// ── Search Tenants (by name, phone, unit, location) ───────────
+
+export async function searchTenants(
+    query: string,
+    locationId?: number | null
+): Promise<TenantSearchResult[]> {
+    try {
+        let baseQuery = supabase
+            .from('arms_tenants')
+            .select(`
+                tenant_id, tenant_name, phone, id_number, location_id,
+                monthly_rent, balance, deposit_paid, move_in_date,
+                arms_units(unit_name),
+                arms_locations(location_name)
+            `)
+            .eq('status', 'Active')
+            .order('tenant_name');
+
+        const { data, error } = locationId
+            ? await (baseQuery as any).eq('location_id', locationId)
+            : await baseQuery;
+
+        if (error || !data) return [];
+
+        const searchLower = query.toLowerCase().trim();
+        return (data as any[])
+            .filter((t: any) => {
+                if (!searchLower) return true;
+                return (
+                    (t.tenant_name || '').toLowerCase().includes(searchLower) ||
+                    (t.phone || '').includes(searchLower) ||
+                    (t.arms_units?.unit_name || '').toLowerCase().includes(searchLower) ||
+                    (t.arms_locations?.location_name || '').toLowerCase().includes(searchLower) ||
+                    (t.id_number || '').toLowerCase().includes(searchLower)
+                );
+            })
+            .map((t: any) => ({
+                tenant_id: t.tenant_id,
+                tenant_name: t.tenant_name,
+                phone: t.phone || '',
+                id_number: t.id_number || '',
+                unit_name: t.arms_units?.unit_name || 'N/A',
+                location_name: t.arms_locations?.location_name || 'N/A',
+                location_id: t.location_id,
+                monthly_rent: t.monthly_rent || 0,
+                balance: t.balance || 0,
+                deposit_paid: t.deposit_paid || 0,
+                move_in_date: t.move_in_date || '',
+            }));
+    } catch (err: any) {
+        console.error('searchTenants error:', err.message);
+        return [];
+    }
+}
+
+// ── Full Tenant Statement (billing + payments timeline) ───────
+
+export async function getTenantStatement(tenantId: number): Promise<{
+    tenant: TenantSearchResult | null;
+    entries: StatementEntry[];
+}> {
+    try {
+        const [billingRes, paymentsRes, tenantRes] = await Promise.all([
+            supabase
+                .from('arms_billing')
+                .select('*')
+                .eq('tenant_id', tenantId)
+                .order('billing_date', { ascending: true }),
+            supabase
+                .from('arms_payments')
+                .select('*, arms_billing(billing_month)')
+                .eq('tenant_id', tenantId)
+                .order('payment_date', { ascending: true }),
+            supabase
+                .from('arms_tenants')
+                .select(`
+                    tenant_id, tenant_name, phone, id_number, location_id,
+                    monthly_rent, balance, deposit_paid, move_in_date,
+                    arms_units(unit_name),
+                    arms_locations(location_name)
+                `)
+                .eq('tenant_id', tenantId)
+                .single(),
+        ]);
+
+        const entries: StatementEntry[] = [];
+
+        for (const b of (billingRes.data || [])) {
+            entries.push({
+                type: 'billing',
+                date: b.billing_date,
+                description: `Rent — ${formatMonth(b.billing_month)}`,
+                debit: b.rent_amount || 0,
+                credit: 0,
+                balance: 0,
+                status: b.status,
+                month: b.billing_month,
+            });
+        }
+
+        for (const p of (paymentsRes.data || [])) {
+            const bMonth = (p as any).arms_billing?.billing_month || extractBillingMonth(p.notes);
+            entries.push({
+                type: 'payment',
+                date: p.payment_date,
+                description: `Payment via ${p.payment_method}`,
+                debit: 0,
+                credit: p.amount || 0,
+                balance: 0,
+                receipt: p.mpesa_receipt || p.reference_no || '',
+                month: bMonth,
+                method: p.payment_method,
+            });
+        }
+
+        // Sort chronologically
+        entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // Compute running balance
+        let running = 0;
+        for (const e of entries) {
+            running = running + e.debit - e.credit;
+            e.balance = running;
+        }
+
+        const t = tenantRes.data as any;
+        const tenant: TenantSearchResult | null = t ? {
+            tenant_id: t.tenant_id,
+            tenant_name: t.tenant_name,
+            phone: t.phone || '',
+            id_number: t.id_number || '',
+            unit_name: t.arms_units?.unit_name || 'N/A',
+            location_name: t.arms_locations?.location_name || 'N/A',
+            location_id: t.location_id,
+            monthly_rent: t.monthly_rent || 0,
+            balance: t.balance || 0,
+            deposit_paid: t.deposit_paid || 0,
+            move_in_date: t.move_in_date || '',
+        } : null;
+
+        return { tenant, entries };
+    } catch (err: any) {
+        console.error('getTenantStatement error:', err.message);
+        return { tenant: null, entries: [] };
     }
 }
