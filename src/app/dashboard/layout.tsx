@@ -509,16 +509,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                     <div className="px-3 py-2 border-b border-gray-100">
                                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Select Location</p>
                                     </div>
-                                    <button onClick={() => handleLocationChange(null)}
-                                        className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
-                                        📍 All Locations
-                                    </button>
-                                    {locations.map(l => (
-                                        <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)}
-                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
-                                            🏢 {l.location_name}
+                                    <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
+                                        <button onClick={() => handleLocationChange(null)}
+                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                            📍 All Locations
                                         </button>
-                                    ))}
+                                        {locations.map(l => (
+                                            <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)}
+                                                className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                                🏢 {l.location_name}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </div>
