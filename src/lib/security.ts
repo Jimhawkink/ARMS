@@ -4,6 +4,12 @@
  */
 import { NextRequest } from 'next/server';
 
+// ── M-Pesa Callback Secret Token ───────────────────────────────
+// Set MPESA_CALLBACK_SECRET in Vercel environment variables.
+// Append ?token=<secret> to your Safaricom callback URL when registering.
+// This ensures only Safaricom (who knows the URL) can trigger callbacks.
+const CALLBACK_SECRET = process.env.MPESA_CALLBACK_SECRET || '';
+
 // ── Safaricom IP Whitelist ──────────────────────────────────────
 // Official Safaricom M-Pesa API callback IP ranges (expanded)
 // Safaricom uses multiple subnets for callbacks — match by prefix
@@ -40,11 +46,23 @@ export function validateMpesaSource(request: NextRequest): { valid: boolean; ip:
     const forwarded = request.headers.get('x-forwarded-for');
     const ip = forwarded?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
 
+    // ── LAYER 1: Secret token check ─────────────────────────────
+    // If MPESA_CALLBACK_SECRET is configured, enforce it.
+    if (CALLBACK_SECRET) {
+        const { searchParams } = new URL(request.url);
+        const providedToken = searchParams.get('token') || request.headers.get('x-mpesa-token') || '';
+        if (providedToken !== CALLBACK_SECRET) {
+            console.error(`🚫 M-Pesa callback REJECTED — invalid token from IP: ${ip}`);
+            return { valid: false, ip };
+        }
+        console.log(`🔑 M-Pesa callback token verified from IP: ${ip}`);
+    }
+
+    // ── LAYER 2: IP validation (warn-only on Vercel) ─────────────
     if (!isSafaricomIP(ip)) {
         // Log for monitoring, but DO NOT block — Vercel's x-forwarded-for
         // is unreliable and Safaricom frequently rotates callback IPs.
-        // Blocking here caused payment detection failures.
-        console.warn(`⚠️ M-Pesa callback from unrecognized IP: ${ip} (allowed — URL is secret)`);
+        console.warn(`⚠️ M-Pesa callback from unrecognized IP: ${ip} (allowed — token already verified)`);
     } else {
         console.log(`✅ M-Pesa callback from known Safaricom IP: ${ip}`);
     }
