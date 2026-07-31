@@ -1,9 +1,9 @@
 'use client';
 import { useEffect } from 'react';
 
-// HIGH PRECISION QR — ecc=H (30% damage tolerance), 1000px, black on white
+// QR points to hidden server-side redirect — APK URL never exposed
 const QR = (size: number) =>
-    `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=https%3A%2F%2Farms-opal.vercel.app%2Fdownload&color=000000&bgcolor=ffffff&margin=2&qzone=1&format=png&ecc=H`;
+    `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=https%3A%2F%2Farms-opal.vercel.app%2Fapi%2Fdl&color=000000&bgcolor=ffffff&margin=2&qzone=1&format=png&ecc=H`;
 
 export default function QRPrintPage() {
     useEffect(() => {
@@ -195,20 +195,7 @@ export default function QRPrintPage() {
                 .a5-card .step-num { width:22px; height:22px; font-size:11px; }
                 .a5-card .step-txt { font-size:11px; }
 
-                /* ── URL strip ── */
-                .url-strip {
-                    width:100%; z-index:1;
-                    background:rgba(59,130,246,0.1);
-                    border:1px solid rgba(59,130,246,0.25);
-                    border-radius:7px; padding:6px 10px;
-                    display:flex; align-items:center; gap:8px;
-                }
-                .url-icon { font-size:11px; flex-shrink:0; }
-                .url-val {
-                    font-family:monospace; font-size:9px;
-                    color:#60a5fa; font-weight:700; letter-spacing:0.3px;
-                }
-                .a5-card .url-val { font-size:11px; }
+                /* URL strip removed — link hidden for security */
 
                 /* ── Footer seal ── */
                 .footer {
@@ -271,16 +258,16 @@ export default function QRPrintPage() {
                                 <div className="logo-row">
                                     <div className="logo-hex"><span>ARMS</span></div>
                                     <div className="brand-col">
-                                        <div className="brand-name">ARMS+</div>
-                                        <div className="brand-sub">Alpha Solutions · Official</div>
+                                        <div className="brand-name">ARMS</div>
+                                        <div className="brand-sub">Alpha Rental Management System</div>
                                     </div>
                                     <div className="badge">
                                         <div className="badge-dot" />
                                         VERIFIED
                                     </div>
                                 </div>
-                                <div className="main-title">📱 Download Tenant App</div>
-                                <div className="sub-title">Point your camera at the QR code below</div>
+                                <div className="main-title">📱 Tenant Mobile App</div>
+                                <div className="sub-title">Scan QR code to download &amp; install</div>
                             </div>
 
                             {/* QR Code */}
@@ -308,12 +295,6 @@ export default function QRPrintPage() {
                                         <div className="step-txt">{t}</div>
                                     </div>
                                 ))}
-                            </div>
-
-                            {/* URL strip */}
-                            <div className="url-strip">
-                                <span className="url-icon">🔗</span>
-                                <span className="url-val">arms-opal.vercel.app/download</span>
                             </div>
 
                             {/* Footer */}
