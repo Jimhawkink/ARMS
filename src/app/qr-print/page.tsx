@@ -197,6 +197,48 @@ export default function QRPrintPage() {
 
                 /* URL strip removed — link hidden for security */
 
+                /* —— Payment Mode Notice —— */
+                .pay-mode {
+                    width:100%; z-index:1;
+                    background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(59,130,246,0.1));
+                    border: 1px solid rgba(16,185,129,0.4);
+                    border-radius: 8px;
+                    padding: 6px 10px;
+                    font-size: 8px;
+                    color: rgba(255,255,255,0.75);
+                    text-align: center;
+                    letter-spacing: 0.3px;
+                }
+                .pay-mode strong {
+                    color: #10b981;
+                    font-weight: 800;
+                    font-size: 8.5px;
+                    letter-spacing: 0.5px;
+                }
+                .a5-card .pay-mode { font-size:10px; padding:8px 14px; border-radius:10px; }
+                .a5-card .pay-mode strong { font-size:11px; }
+
+                /* —— Notice Banner —— */
+                .notice-banner {
+                    width:100%; z-index:1;
+                    background: linear-gradient(135deg, rgba(245,158,11,0.18), rgba(251,191,36,0.08));
+                    border: 1px solid rgba(245,158,11,0.5);
+                    border-left: 3px solid #f59e0b;
+                    border-radius: 8px;
+                    padding: 6px 10px;
+                    font-size: 7.5px;
+                    color: rgba(255,255,255,0.8);
+                    line-height: 1.4;
+                }
+                .notice-banner .notice-title {
+                    font-size: 8px; font-weight: 800;
+                    color: #fbbf24; letter-spacing: 0.5px;
+                    margin-bottom: 2px;
+                    display: flex; align-items: center; gap: 4px;
+                }
+                .a5-card .notice-banner { font-size:9.5px; padding:8px 12px; }
+                .a5-card .notice-banner .notice-title { font-size:10.5px; }
+
                 /* ── Footer seal ── */
                 .footer {
                     width:100%; z-index:1; border-top:1px solid rgba(255,255,255,0.07);
@@ -268,7 +310,11 @@ export default function QRPrintPage() {
                                 </div>
                                 <div className="main-title">📱 ARMS Mobile App</div>
                                 <div className="sub-title">Scan to download — Pay rent instantly</div>
-                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS Mobile APK</strong></div>
+                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.1.9.3</strong></div>
+                                <div className="notice-banner">
+                                    <div className="notice-title">⚠️ IMPORTANT NOTICE</div>
+                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK Ver.1.9.3</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
+                                </div>
                             </div>
 
                             {/* QR Code */}
