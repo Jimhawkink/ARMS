@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
 
-const APK_URL = 'https://drive.google.com/uc?export=download&confirm=t&id=1a08Ir5HC4N6YkeAiuS36Kx7xCRNfYSrE';
-const APK_VERSION = '1.9';
+const APK_URL = 'https://drive.google.com/uc?export=download&confirm=t&id=15nMgjE8XZH3PPRp3jykI9hwwDMqRrNQe';
+const APK_VERSION = '1.9.1';
 const APK_SIZE = '63 MB';
 const COMPANY = 'Alpha Solutions';
 const APP_NAME = 'ARMS Tenant App';
