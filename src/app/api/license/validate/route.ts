@@ -75,19 +75,16 @@ export async function POST(req: NextRequest) {
         }
 
         // Check machine binding
-        // If machine_id is null on the license, it is a universal license (any device allowed)
-        if (license.machine_id !== null) {
-            const machineHash = crypto
-                .createHash('sha256')
-                .update(machineId + (process.env.LICENSE_HMAC_SECRET || ''))
-                .digest('hex');
+        const machineHash = crypto
+            .createHash('sha256')
+            .update(machineId + (process.env.LICENSE_HMAC_SECRET || ''))
+            .digest('hex');
 
-            if (license.machine_id !== machineHash) {
-                return NextResponse.json(
-                    { valid: false, error: 'License is bound to a different machine. Unauthorized access attempt logged.' },
-                    { status: 403 }
-                );
-            }
+        if (license.machine_id !== machineHash) {
+            return NextResponse.json(
+                { valid: false, error: 'License is bound to a different machine. Unauthorized access attempt logged.' },
+                { status: 403 }
+            );
         }
 
         // Calculate days until expiry
