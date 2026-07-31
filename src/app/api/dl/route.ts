@@ -1,9 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-// Server-side only — APK URL never exposed to client or QR code
-const APK_DIRECT = 'https://drive.usercontent.google.com/download?id=1LzpAwXTh5gOWb8-SBhyeV1XCJPnaeX5n&export=download&confirm=t&authuser=0';
+// APK served directly from Vercel — no Google account required, URL always hidden
+const APK_VERSION = 'v1.9.3';
+const APK_FILENAME = `ARMSTenantApp-${APK_VERSION}.apk`;
 
-export async function GET() {
-    // 302 redirect — phone browser immediately starts downloading the APK
-    return NextResponse.redirect(APK_DIRECT, { status: 302 });
+export async function GET(req: NextRequest) {
+    const base = req.nextUrl.origin;
+    // Redirect to static file in /public — direct download, no login
+    const response = NextResponse.redirect(`${base}/${APK_FILENAME}`, { status: 302 });
+    response.headers.set('Content-Disposition', `attachment; filename="${APK_FILENAME}"`);
+    return response;
 }

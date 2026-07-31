@@ -266,8 +266,9 @@ export default function QRPrintPage() {
                                         VERIFIED
                                     </div>
                                 </div>
-                                <div className="main-title">📱 Tenant Mobile App</div>
-                                <div className="sub-title">Scan QR code to download &amp; install</div>
+                                <div className="main-title">📱 ARMS Mobile App</div>
+                                <div className="sub-title">Scan to download — Pay rent instantly</div>
+                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS Mobile APK</strong></div>
                             </div>
 
                             {/* QR Code */}
@@ -287,8 +288,8 @@ export default function QRPrintPage() {
                             <div className="steps">
                                 {[
                                     ['1','Open your camera app and point at the QR code'],
-                                    ['2','Download & install ARMSTenantApp-v1.9.1.apk'],
-                                    ['3','Enter your 6-digit PIN to login'],
+                                    ['2','Download & install ARMS Mobile APK v1.9.3'],
+                                    ['3','Enter your phone number & 6-digit PIN to login'],
                                 ].map(([n, t]) => (
                                     <div className="step" key={n}>
                                         <div className="step-num">{n}</div>
@@ -301,7 +302,7 @@ export default function QRPrintPage() {
                             <div className="footer">
                                 <div className="seal">
                                     <div className="seal-circle">AS</div>
-                                    🔒 Only download from the official link
+                                    🔒 Official download — No Google account required
                                 </div>
                                 <div className="size-tag">{isPhoto ? '4×6in/10×15cm' : 'A5/148×210mm'}</div>
                             </div>
