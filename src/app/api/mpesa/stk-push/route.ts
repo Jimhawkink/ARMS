@@ -247,7 +247,7 @@ export async function POST(request: NextRequest) {
 
         // Log the STK push in DB for tracking
         if (stkData.CheckoutRequestID) {
-            await supabase
+            const { data: inserted, error: insertErr } = await supabase
                 .from('arms_stk_requests')
                 .insert([{
                     checkout_request_id: stkData.CheckoutRequestID,
@@ -263,6 +263,21 @@ export async function POST(request: NextRequest) {
                 }])
                 .select()
                 .single();
+
+            if (insertErr) {
+                // CRITICAL: If insert fails, callback won't find the record
+                // Most common cause: broken ID sequence (run setval fix in Supabase SQL editor)
+                console.error('❌ CRITICAL: Failed to save STK request to DB!', {
+                    error: insertErr.message,
+                    code: insertErr.code,
+                    hint: insertErr.hint,
+                    checkoutRequestId: stkData.CheckoutRequestID
+                });
+                // Return success to mobile anyway — STK push went through
+                // But log the error clearly so we can diagnose
+            } else {
+                console.log(`✅ STK request saved to DB: id=${inserted?.id}, checkoutId=${stkData.CheckoutRequestID}`);
+            }
         }
 
         return NextResponse.json(stkData);
