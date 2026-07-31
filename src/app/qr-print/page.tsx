@@ -64,15 +64,33 @@ export default function QRPrintPage() {
                 /* ── Header ── */
                 .header { width:100%; z-index:1; }
                 .logo-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+
+                /* ── ULTRA PREMIUM ARMS LOGO ── */
                 .logo-hex {
-                    height:38px; border-radius:10px; padding:0 10px;
-                    background:linear-gradient(135deg,#3b82f6 0%,#6366f1 100%);
+                    height:38px; border-radius:10px; padding:0 12px;
+                    background: linear-gradient(135deg,#0a0f1e 0%,#1a1a2e 100%);
+                    border: 1px solid rgba(251,191,36,0.4);
                     display:flex; align-items:center; justify-content:center;
-                    font-family:'Orbitron',sans-serif; font-weight:900;
-                    font-size:13px; color:white; flex-shrink:0; white-space:nowrap;
-                    box-shadow:0 4px 16px rgba(59,130,246,0.5);
+                    flex-shrink:0; white-space:nowrap; position:relative; overflow:hidden;
+                    box-shadow: 0 0 0 1px rgba(251,191,36,0.15),
+                                0 4px 20px rgba(251,191,36,0.2),
+                                inset 0 1px 0 rgba(255,255,255,0.05);
                 }
-                .a5-card .logo-hex { height:46px; font-size:15px; border-radius:12px; padding:0 14px; }
+                .logo-hex::before {
+                    content:''; position:absolute; inset:0;
+                    background:linear-gradient(90deg,transparent 0%,rgba(251,191,36,0.07) 50%,transparent 100%);
+                }
+                .logo-hex span {
+                    font-family:'Orbitron',sans-serif; font-weight:900;
+                    font-size:13px; letter-spacing:3px;
+                    background: linear-gradient(180deg,#fde68a 0%,#f59e0b 30%,#fbbf24 60%,#92400e 100%);
+                    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+                    background-clip:text;
+                    filter: drop-shadow(0 0 6px rgba(251,191,36,0.8));
+                    position:relative; z-index:1;
+                }
+                .a5-card .logo-hex { height:46px; border-radius:12px; padding:0 16px; }
+                .a5-card .logo-hex span { font-size:16px; letter-spacing:4px; }
 
                 .brand-col { flex:1; }
                 .brand-name {
@@ -132,8 +150,21 @@ export default function QRPrintPage() {
                     font-family:'Orbitron',sans-serif; font-weight:900;
                     color:white; line-height:1;
                 }
-                .photo-card .qr-logo { width:36px; height:16px; font-size:7px; border-radius:3px; }
-                .a5-card   .qr-logo { width:44px; height:20px; font-size:8px; border-radius:4px; }
+                .photo-card .qr-logo { width:40px; height:17px; font-size:6.5px; border-radius:3px; letter-spacing:2px; }
+                .a5-card   .qr-logo { width:50px; height:21px; font-size:8px; border-radius:4px; letter-spacing:2.5px; }
+                .qr-logo {
+                    background: linear-gradient(135deg,#0a0f1e,#1a1a2e) !important;
+                    border: 1.5px solid rgba(251,191,36,0.6) !important;
+                    box-shadow: 0 0 8px rgba(251,191,36,0.5), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+                }
+                .qr-logo-text {
+                    font-family:'Orbitron',sans-serif; font-weight:900;
+                    background: linear-gradient(180deg,#fde68a 0%,#f59e0b 40%,#fbbf24 70%,#92400e 100%);
+                    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+                    background-clip:text;
+                    filter: drop-shadow(0 0 4px rgba(251,191,36,0.9));
+                    letter-spacing:inherit;
+                }
 
                 /* Corner scan marks */
                 .scan-mark {
@@ -238,7 +269,7 @@ export default function QRPrintPage() {
                             {/* Header */}
                             <div className="header">
                                 <div className="logo-row">
-                                    <div className="logo-hex">ARMS</div>
+                                    <div className="logo-hex"><span>ARMS</span></div>
                                     <div className="brand-col">
                                         <div className="brand-name">ARMS+</div>
                                         <div className="brand-sub">Alpha Solutions · Official</div>
@@ -257,7 +288,7 @@ export default function QRPrintPage() {
                                 <div className="qr-white">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={QR(qrPx)} alt="ARMS Download QR Code" className="qr-img" />
-                                    <div className="qr-logo">ARMS</div>
+                                    <div className="qr-logo"><span className="qr-logo-text">ARMS</span></div>
                                     <div className="scan-mark sm-tl" />
                                     <div className="scan-mark sm-tr" />
                                     <div className="scan-mark sm-bl" />
