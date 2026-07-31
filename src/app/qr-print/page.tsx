@@ -18,6 +18,35 @@ export default function QRPrintPage() {
                 * { margin:0; padding:0; box-sizing:border-box; }
                 body { font-family:'Inter',sans-serif; background:#1a1a2e; display:flex; flex-direction:column; align-items:center; gap:48px; padding:40px 20px; }
 
+                /* ════ PRINT STYLES — forces design to print on white paper ════ */
+                @media print {
+                    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+                    body { background: white !important; padding: 0 !important; gap: 20px !important; }
+                    .print-btn, .size-label { display: none !important; }
+                    .card {
+                        background: linear-gradient(160deg,#0a0f1e 0%,#0d1f3c 30%,#0f2552 60%,#0a0f1e 100%) !important;
+                        border: 2px solid #1e3a5f !important;
+                        box-shadow: none !important;
+                        break-inside: avoid;
+                        page-break-inside: avoid;
+                    }
+                    .glow-line { background: linear-gradient(90deg, #1e40af, #4f46e5, #1e40af) !important; box-shadow: none !important; }
+                    .logo-hex { background: linear-gradient(135deg,#0a0f1e,#1a1a2e) !important; border: 1.5px solid #d97706 !important; box-shadow: none !important; }
+                    .logo-hex span { filter: none !important; }
+                    .badge { background: linear-gradient(135deg,#064e3b,#065f46) !important; }
+                    .qr-outer { background: linear-gradient(135deg,#1e3a5f,#1e1b4b) !important; box-shadow: none !important; }
+                    .qr-white { background: white !important; }
+                    .qr-logo { background: linear-gradient(135deg,#0a0f1e,#1a1a2e) !important; border: 1.5px solid #d97706 !important; box-shadow: none !important; }
+                    .step { background: rgba(30,58,95,0.6) !important; border: 1px solid #1e3a5f !important; }
+                    .step-num { background: linear-gradient(135deg,#1d4ed8,#4f46e5) !important; }
+                    .step-txt { color: rgba(255,255,255,0.9) !important; }
+                    .pay-mode { background: linear-gradient(135deg,rgba(6,78,59,0.5),rgba(30,58,95,0.4)) !important; border: 1.5px solid #059669 !important; }
+                    .notice-banner { background: linear-gradient(135deg,rgba(120,53,15,0.5),rgba(92,33,23,0.3)) !important; border: 1.5px solid #d97706 !important; border-left: 3px solid #f59e0b !important; }
+                    .footer { border-top: 1px solid #1e3a5f !important; }
+                    .wm-svg { opacity: 0.03 !important; }
+                    .scan-mark { border-color: #2563eb !important; }
+                }
+
                 .print-btn {
                     position:fixed; top:20px; right:20px; z-index:999;
                     background:linear-gradient(135deg,#3b82f6,#6366f1);
