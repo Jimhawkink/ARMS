@@ -1,126 +1,342 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
-import { colors } from './src/theme';
+import * as Application from 'expo-application';
+import * as Crypto from 'expo-crypto';
 
-// Screens
+// ─── CRASH DEBUGGER ──────────────────────────────────────────
+// This will catch ANY error and show it on screen
+class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean, error: string, stack: string}> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false, error: '', stack: '' };
+    }
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, error: error.message, stack: error.stack || '' };
+    }
+    componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+        console.error('APP CRASH:', error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <View style={{flex:1, backgroundColor:'#1a1a2e', padding:20, paddingTop:60}}>
+                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>⚠️ APP CRASH DEBUG</Text>
+                    <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Error:</Text>
+                    <ScrollView style={{flex:1}}>
+                        <Text style={{color:'#ffaaaa', fontSize:13, marginBottom:16}} selectable>{this.state.error}</Text>
+                        <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Stack Trace:</Text>
+                        <Text style={{color:'#888', fontSize:11}} selectable>{this.state.stack}</Text>
+                    </ScrollView>
+                </View>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 import LoginScreen from './src/screens/LoginScreen';
+import LicenseScreen, { MobileLicense } from './src/screens/LicenseScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import PayRentScreen from './src/screens/PayRentScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
+import TenantSearchScreen from './src/screens/TenantSearchScreen';
+import LandlordPayScreen from './src/screens/LandlordPayScreen';
+import StaffProfileScreen from './src/screens/StaffProfileScreen';
+import { TenantSession, StaffSession, TenantSearchResult } from './src/lib/supabase';
+import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
-// Types
-import type { Tenant } from './src/lib/supabase';
-import { getStoredSession, getTenantFullData } from './src/lib/supabase';
+const ARMS_API_BASE = 'https://arms-opal.vercel.app';
+const LICENSE_STORAGE_KEY = 'arms_mobile_license';
 
-export type RootStackParamList = {
+type RootStackParamList = {
     Login: undefined;
-    Dashboard: undefined;
-    PayRent: undefined;
+    Main: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-function AppShell({ tenant, onLogout, onTenantUpdate }: {
-    tenant: Tenant;
-    onLogout: () => void;
-    onTenantUpdate: (t: Tenant) => void;
-}) {
-    const [activeScreen, setActiveScreen] = useState<'dashboard' | 'payrent'>('dashboard');
+// ── Staff Shell — Caretaker or Landlord ──────────────────────────────
+// Caretaker: Search (read-only) + Profile
+// Landlord:  Search + Collect Rent (STK) + Profile
+function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
+    type StaffTab = 'search' | 'profile';
+    const [activeTab, setActiveTab] = useState<StaffTab>('search');
+    const [collectTenant, setCollectTenant] = useState<TenantSearchResult | null>(null);
 
-    if (activeScreen === 'payrent') {
+    useEffect(() => { updateStaffSessionActivity(); }, [activeTab]);
+
+    const isLandlord = staff.role === 'landlord';
+
+    // Landlord: STK collect flow (slides in over search)
+    if (collectTenant) {
         return (
-            <PayRentScreen
-                tenant={tenant}
-                onBack={() => setActiveScreen('dashboard')}
-                onPaymentComplete={() => {
-                    // Refresh tenant data when payment is done
-                    getTenantFullData(tenant.tenant_id).then(t => {
-                        if (t) onTenantUpdate(t);
-                    });
-                }}
+            <LandlordPayScreen
+                staff={staff}
+                tenant={collectTenant}
+                onBack={() => setCollectTenant(null)}
+                onPaymentComplete={() => setCollectTenant(null)}
             />
         );
     }
 
     return (
-        <DashboardScreen
-            tenant={tenant}
-            onLogout={onLogout}
-            onPayRent={() => setActiveScreen('payrent')}
-            onTenantUpdate={onTenantUpdate}
-        />
+        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+            {activeTab === 'search' ? (
+                <TenantSearchScreen
+                    staff={staff}
+                    onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
+                />
+            ) : (
+                <StaffProfileScreen staff={staff} onLogout={onLogout} />
+            )}
+
+            {/* Bottom tab bar */}
+            <View style={styles.bottomBar}>
+                {[
+                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
+                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
+                ].map(tab => {
+                    const isActive = activeTab === tab.key;
+                    return (
+                        <View key={tab.key} style={styles.tabWrap}>
+                            <View
+                                style={[styles.tab, isActive && styles.tabActive]}
+                                onTouchEnd={() => setActiveTab(tab.key)}
+                            >
+                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                    {tab.emoji}
+                                </Text>
+                                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+                                    {tab.label}
+                                </Text>
+                                {isActive && <View style={styles.tabDot} />}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
     );
 }
 
-export default function App() {
+// ─── Main App Shell with bottom tabs ─────────────────────────
+function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
+    const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'profile'>('home');
+    const [currentSession, setCurrentSession] = useState(session);
+
+    // Update activity timestamp on tab switches
+    useEffect(() => { updateSessionActivity(); }, [activeTab]);
+
+    const handlePayComplete = () => {
+        setActiveTab('home');
+    };
+
+    const handleSessionUpdate = (updated: TenantSession) => {
+        setCurrentSession(updated);
+    };
+
+    const renderScreen = () => {
+        switch (activeTab) {
+            case 'pay':
+                return (
+                    <PayRentScreen
+                        session={currentSession}
+                        onBack={() => setActiveTab('home')}
+                        onPaymentComplete={handlePayComplete}
+                    />
+                );
+            case 'history':
+                return <HistoryScreen session={currentSession} />;
+            case 'profile':
+                return <ProfileScreen session={currentSession} onLogout={onLogout} />;
+            default:
+                return (
+                    <DashboardScreen
+                        session={currentSession}
+                        onPayRent={() => setActiveTab('pay')}
+                        onSessionUpdate={handleSessionUpdate}
+                    />
+                );
+        }
+    };
+
+    const tabs = [
+        { key: 'home' as const, emoji: '🏠', label: 'Home' },
+        { key: 'pay' as const, emoji: '💳', label: 'Pay Rent' },
+        { key: 'history' as const, emoji: '📜', label: 'History' },
+        { key: 'profile' as const, emoji: '👤', label: 'Profile' },
+    ];
+
+    return (
+        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+            {renderScreen()}
+
+            {/* Bottom Tab Bar */}
+            <View style={styles.bottomBar}>
+                {tabs.map(tab => {
+                    const isActive = activeTab === tab.key;
+                    return (
+                        <View key={tab.key} style={styles.tabWrap}>
+                            <View
+                                style={[styles.tab, isActive && styles.tabActive]}
+                                onTouchEnd={() => setActiveTab(tab.key)}
+                            >
+                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                    {tab.emoji}
+                                </Text>
+                                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+                                    {tab.label}
+                                </Text>
+                                {isActive && <View style={styles.tabDot} />}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
+    );
+}
+
+// ─── Root App ────────────────────────────────────────────────
+function AppInner() {
     const [isLoading, setIsLoading] = useState(true);
-    const [tenant, setTenant] = useState<Tenant | null>(null);
+    const [session, setSession] = useState<TenantSession | null>(null);
+    const [staffSession, setStaffSession] = useState<StaffSession | null>(null);
+    const [license, setLicense] = useState<MobileLicense | null>(null);
+    const [licenseError, setLicenseError] = useState('');
 
     useEffect(() => {
-        checkLoginStatus();
+        initApp();
     }, []);
 
-    const checkLoginStatus = async () => {
+    const initApp = async () => {
         try {
-            const session = await getStoredSession();
-            if (session) {
-                const freshTenant = await getTenantFullData(session.tenant_id);
-                if (freshTenant && freshTenant.status === 'Active') {
-                    setTenant(freshTenant);
-                } else {
-                    // Session invalid or tenant inactive
-                    await AsyncStorage.removeItem('arms_tenant_session');
-                }
+            // 1. Load cached license if any (for landlords/staff who need it)
+            const rawLicense = await AsyncStorage.getItem(LICENSE_STORAGE_KEY);
+            if (rawLicense) {
+                try {
+                    const storedLicense: MobileLicense = JSON.parse(rawLicense);
+                    const expiry = new Date(storedLicense.expiryDate);
+                    if (expiry > new Date()) {
+                        setLicense(storedLicense);
+                        validateLicense(storedLicense).catch(() => {/* silent */});
+                    } else {
+                        await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
+                    }
+                } catch { /* ignore bad cache */ }
             }
-        } catch (error) {
-            console.error('Error checking login status:', error);
+            // NOTE: No license → still show LoginScreen (PIN first).
+            // License is only needed if the PIN is not found in the DB.
+
+            // 2. Restore tenant session if saved
+            const saved = await getSession();
+            if (saved) setSession(saved);
+
+            // 3. Restore staff session if saved
+            const savedStaff = await getStaffSession();
+            if (savedStaff) setStaffSession(savedStaff);
+        } catch (err) {
+            console.error('App init error:', err);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleLoginSuccess = (loggedInTenant: Tenant) => {
-        setTenant(loggedInTenant);
+    const validateLicense = async (lic: MobileLicense): Promise<boolean> => {
+        try {
+            // @ts-ignore - androidId works at runtime despite TS warning
+            const deviceId = Application.androidId || Application.applicationId || 'unknown';
+            const deviceHash = await Crypto.digestStringAsync(
+                Crypto.CryptoDigestAlgorithm.SHA256,
+                deviceId + lic.licenseKey.slice(0, 8)
+            );
+            const res = await fetch(`${ARMS_API_BASE}/api/license/validate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
+            });
+            const result = await res.json();
+            if (result.valid) {
+                // Update stored license with fresh data
+                const updated = { ...lic, clientName: result.clientName, daysUntilExpiry: result.daysUntilExpiry, isValid: true };
+                await AsyncStorage.setItem(LICENSE_STORAGE_KEY, JSON.stringify(updated));
+                setLicense(updated);
+                return true;
+            }
+            return false;
+        } catch {
+            // Network error — allow cached license if not expired
+            const expiry = new Date(lic.expiryDate);
+            return expiry > new Date();
+        }
+    };
+
+    const handleLicenseActivated = (lic: MobileLicense) => {
+        setLicense(lic);
+        setLicenseError('');
+    };
+
+    const handleLoginSuccess = (incoming: TenantSession | StaffSession) => {
+        // Distinguish by presence of 'role' field (StaffSession) vs 'tenant_id' (TenantSession)
+        if ('role' in incoming) {
+            setStaffSession(incoming as StaffSession);
+        } else {
+            setSession(incoming as TenantSession);
+        }
     };
 
     const handleLogout = async () => {
-        await AsyncStorage.removeItem('arms_tenant_session');
-        setTenant(null);
-    };
-
-    const handleTenantUpdate = (updatedTenant: Tenant) => {
-        setTenant(updatedTenant);
+        await clearSession();
+        await clearStaffSession();
+        setSession(null);
+        setStaffSession(null);
     };
 
     if (isLoading) {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.accentIndigo} />
-                <Text style={styles.loadingText}>ARMS</Text>
+            <View style={styles.splash}>
+                <LinearGradient
+                    colors={['#0f172a', '#1e1b4b', '#0c1a2e']}
+                    style={StyleSheet.absoluteFillObject}
+                />
+                <View style={styles.splashLogo}>
+                    <Text style={styles.splashEmoji}>🏢</Text>
+                </View>
+                <Text style={styles.splashTitle}>ARMS</Text>
+                <Text style={styles.splashSub}>Tenant Portal</Text>
+                <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 24 }} />
             </View>
         );
     }
+
+    // ── RENDER DECISION ──────────────────────────────────────────
+    // Flow: PIN screen → DB check → if PIN found → dashboard (no license needed)
+    //                             → if PIN NOT found → show license activation
+    // Tenants NEVER see the license screen — only unknown users do.
+
+    // No session → show Login (PIN entry) — license NOT required for tenants
+    // The LoginScreen itself calls checkTenantLicense after PIN match (fail-open)
 
     return (
         <NavigationContainer>
             <StatusBar style="light" />
             <Stack.Navigator screenOptions={{ headerShown: false }}>
-                {!tenant ? (
+                {!session && !staffSession ? (
                     <Stack.Screen name="Login">
-                        {() => <LoginScreen onLoginSuccess={handleLoginSuccess} />}
+                        {() => <LoginScreen onLoginSuccess={handleLoginSuccess} license={license} />}
                     </Stack.Screen>
                 ) : (
-                    <Stack.Screen name="Dashboard">
-                        {() => (
-                            <AppShell
-                                tenant={tenant}
-                                onLogout={handleLogout}
-                                onTenantUpdate={handleTenantUpdate}
-                            />
-                        )}
+                    <Stack.Screen name="Main">
+                        {() => staffSession
+                            ? <StaffShell staff={staffSession} onLogout={handleLogout} />
+                            : <AppShell session={session!} onLogout={handleLogout} />
+                        }
                     </Stack.Screen>
                 )}
             </Stack.Navigator>
@@ -128,13 +344,52 @@ export default function App() {
     );
 }
 
+// ─── Exported App with Error Boundary ────────────────────────
+export default function App() {
+    return (
+        <ErrorBoundary>
+            <AppInner />
+        </ErrorBoundary>
+    );
+}
+
 const styles = StyleSheet.create({
-    loadingContainer: {
+    splash: {
         flex: 1, justifyContent: 'center', alignItems: 'center',
-        backgroundColor: colors.bgPrimary,
+        backgroundColor: '#0f172a',
     },
-    loadingText: {
-        color: colors.accentIndigo, fontSize: 20,
-        fontWeight: '900', marginTop: 12, letterSpacing: 3,
+    splashLogo: {
+        width: 80, height: 80, borderRadius: 24,
+        backgroundColor: 'rgba(99,102,241,0.2)',
+        borderWidth: 2, borderColor: 'rgba(99,102,241,0.3)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+    },
+    splashEmoji: { fontSize: 40 },
+    splashTitle: { fontSize: 32, fontWeight: '900', color: '#f8fafc', letterSpacing: 3 },
+    splashSub: { fontSize: 14, color: '#94a3b8', fontWeight: '500', marginTop: 4 },
+
+    // Bottom Tab Bar
+    bottomBar: {
+        flexDirection: 'row',
+        backgroundColor: '#1e293b',
+        borderTopWidth: 1,
+        borderTopColor: '#334155',
+        paddingBottom: 8,
+        paddingTop: 6,
+        paddingHorizontal: 4,
+    },
+    tabWrap: { flex: 1 },
+    tab: {
+        alignItems: 'center', paddingVertical: 6, borderRadius: 12,
+        marginHorizontal: 2,
+    },
+    tabActive: { backgroundColor: 'rgba(99,102,241,0.15)' },
+    tabEmoji: { fontSize: 18, opacity: 0.5 },
+    tabEmojiActive: { opacity: 1 },
+    tabLabel: { fontSize: 9, color: '#64748b', fontWeight: '600', marginTop: 3 },
+    tabLabelActive: { color: '#a5b4fc', fontWeight: '800' },
+    tabDot: {
+        width: 4, height: 4, borderRadius: 2,
+        backgroundColor: '#6366f1', marginTop: 3,
     },
 });

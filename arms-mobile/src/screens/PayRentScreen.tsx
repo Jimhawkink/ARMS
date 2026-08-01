@@ -1,620 +1,558 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-    View, Text, TextInput, TouchableOpacity, StyleSheet,
-    ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView,
-    Platform,
+    View, Text, StyleSheet, ScrollView, TouchableOpacity,
+    TextInput, ActivityIndicator, Alert, StatusBar, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, spacing, borderRadius, fontSize, fontWeight, shadows } from '../theme';
 import {
-    type Tenant, type Billing, fmt, getTenantBilling,
-    normalizePhone, formatPhoneDisplay,
+    TenantSession, formatKES, maskPhone, normalizePhone,
+    initiateSTKPush, pollSTKResult,
+    refreshTenantBalance, getUnpaidBilling, getLatestPayment,
 } from '../lib/supabase';
-import {
-    initiateStkPush, checkStkStatus, formatMpesaPhone, isValidKenyanPhone,
-    type StkPushResponse,
-} from '../lib/mpesa';
+import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
 
-type PayStep = 'input' | 'processing' | 'success' | 'failed';
-type PayMode = 'self' | 'payforme';
-
-interface PayRentScreenProps {
-    tenant: Tenant;
+interface Props {
+    session: TenantSession;
     onBack: () => void;
     onPaymentComplete: () => void;
 }
 
-export default function PayRentScreen({ tenant, onBack, onPaymentComplete }: PayRentScreenProps) {
+type PayMode = 'self' | 'payForMe';
+type PayStep = 'choose' | 'amount' | 'confirm' | 'processing' | 'success' | 'failed';
+
+const C = {
+    bg: '#0f172a', card: '#1e293b', border: '#334155',
+    primary: '#6366f1', accent: '#10b981', danger: '#ef4444',
+    gold: '#f59e0b', text: '#f8fafc', sub: '#94a3b8', dim: '#64748b',
+};
+
+export default function PayRentScreen({ session, onBack, onPaymentComplete }: Props) {
+    const [mode, setMode] = useState<PayMode>('self');
+    const [step, setStep] = useState<PayStep>('choose');
     const [amount, setAmount] = useState('');
-    const [payMode, setPayMode] = useState<PayMode>('self');
-    const [selfPhone, setSelfPhone] = useState('');
-    const [otherPhone, setOtherPhone] = useState('');
-    const [step, setStep] = useState<PayStep>('input');
-    const [loading, setLoading] = useState(false);
-    const [stkResponse, setStkResponse] = useState<StkPushResponse | null>(null);
-    const [pollCount, setPollCount] = useState(0);
-    const [unpaidBills, setUnpaidBills] = useState<Billing[]>([]);
-    const [selectedBill, setSelectedBill] = useState<Billing | null>(null);
+    const [payerPhone, setPayerPhone] = useState('');
+    const [balance, setBalance] = useState(session.balance);
+    const [processing, setProcessing] = useState(false);
+    const [statusMsg, setStatusMsg] = useState('');
+    const [error, setError] = useState('');
+    const [receipt, setReceipt] = useState('');
+    const [paidAmount, setPaidAmount] = useState(0);
+    const [checkingSeconds, setCheckingSeconds] = useState(0);
+    const [manualChecking, setManualChecking] = useState(false);
+    const cleanupRef = useRef<(() => void) | null>(null);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
-        (async () => {
-            // Set default phone to tenant's registered phone
-            const displayPhone = tenant.phone ? formatPhoneDisplay(tenant.phone) : '';
-            setSelfPhone(displayPhone.replace(/^0/, ''));
+        loadBalance();
+        return () => { if (cleanupRef.current) cleanupRef.current(); };
+    }, []);
 
-            const bills = await getTenantBilling(tenant.tenant_id);
-            const unpaid = bills.filter(b => b.status === 'Unpaid' || b.status === 'Partial');
-            setUnpaidBills(unpaid);
-            if (unpaid.length > 0) {
-                setSelectedBill(unpaid[0]);
-                setAmount(String(unpaid[0].rent_amount - unpaid[0].amount_paid));
-            } else if (tenant.monthly_rent) {
-                setAmount(String(tenant.monthly_rent));
+    const loadBalance = async () => {
+        const b = await refreshTenantBalance(session.tenant_id);
+        setBalance(b);
+    };
+
+    const handleSelectMode = (m: PayMode) => {
+        setMode(m);
+        setStep('amount');
+        setError('');
+        if (m === 'self') setPayerPhone(session.phone);
+        else setPayerPhone('');
+    };
+
+    const handleProceedToConfirm = () => {
+        const { valid: amtValid, value: amtVal, error: amtErr } = validateAmount(amount);
+        if (!amtValid) { setError(amtErr || 'Invalid amount'); return; }
+
+        const phone = mode === 'self' ? session.phone : payerPhone;
+        const { valid: phValid, error: phErr } = validateKenyanPhone(phone);
+        if (!phValid) { setError(phErr || 'Invalid phone'); return; }
+
+        setError('');
+        setStep('confirm');
+    };
+
+    const handlePayNow = async () => {
+        setStep('processing');
+        setProcessing(true);
+        setStatusMsg('Sending M-Pesa prompt…');
+        setError('');
+        setCheckingSeconds(0);
+
+        // Start seconds counter so we can show "Check Status" button after 30s
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = setInterval(() => {
+            setCheckingSeconds(prev => prev + 1);
+        }, 1000);
+
+        const phone = mode === 'self' ? session.phone : payerPhone;
+        const amtVal = Math.round(parseFloat(amount));
+        const desc = `Rent - ${session.tenant_name} - ${session.unit_name}`;
+
+        try {
+            const { checkoutRequestId, error: stkErr } = await initiateSTKPush({
+                payerPhone: phone,
+                amount: amtVal,
+                tenantId: session.tenant_id,
+                tenantPhone: session.phone,
+                description: desc,
+            });
+
+            if (stkErr || !checkoutRequestId) {
+                if (timerRef.current) clearInterval(timerRef.current);
+                setStep('failed');
+                setError(stkErr || 'STK Push failed');
+                setProcessing(false);
+                return;
             }
-        })();
-    }, [tenant]);
 
-    // Poll for STK status
-    useEffect(() => {
-        if (step !== 'processing' || !stkResponse?.CheckoutRequestID) return;
-        const interval = setInterval(async () => {
-            try {
-                const status = await checkStkStatus(stkResponse.CheckoutRequestID!);
-                if (status.ResultCode === '0') {
+            setStatusMsg('Waiting for M-Pesa confirmation…\nEnter your PIN on the M-Pesa prompt');
+
+            cleanupRef.current = pollSTKResult({
+                checkoutRequestId,
+                // 120 seconds — Safaricom callbacks can take up to 90s
+                timeoutMs: 120000,
+                onConfirmed: async (mpesaReceipt, confirmedAmount) => {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setStatusMsg('Payment confirmed! ✅');
+                    const finalAmt = confirmedAmount || amtVal;
+
+                    // DO NOT call recordTenantPayment here!
+                    // The STK callback on the server already recorded the payment,
+                    // updated billing, and adjusted the tenant balance.
+                    // Recording again would create a DUPLICATE payment.
+
+                    setReceipt(mpesaReceipt);
+                    setPaidAmount(finalAmt);
+
+                    // Just refresh the balance from DB (already updated by callback)
+                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    setBalance(newBal);
+                    await updateSessionBalance(newBal);
                     setStep('success');
-                    clearInterval(interval);
-                } else if (status.ResultCode && status.ResultCode !== '0') {
-                    setStep('failed');
-                    clearInterval(interval);
-                }
-                setPollCount(c => c + 1);
-                if (pollCount > 30) {
-                    setStep('failed');
-                    clearInterval(interval);
-                }
-            } catch {
-                // keep polling
-            }
-        }, 5000);
-        return () => clearInterval(interval);
-    }, [step, stkResponse, pollCount]);
-
-    // Get the phone that will receive STK push
-    const getStkPhone = (): string => {
-        if (payMode === 'self') {
-            return formatMpesaPhone(selfPhone);
-        }
-        return formatMpesaPhone(otherPhone);
-    };
-
-    // Get the tenant's primary phone for account matching
-    const getTenantPrimaryPhone = (): string => {
-        return tenant.phone ? formatMpesaPhone(tenant.phone) : '';
-    };
-
-    const handlePay = async () => {
-        if (!tenant) return;
-        const payAmount = parseFloat(amount);
-        if (!payAmount || payAmount <= 0) {
-            Alert.alert('Invalid Amount', 'Please enter a valid amount to pay');
-            return;
-        }
-
-        const stkPhone = getStkPhone();
-        if (!isValidKenyanPhone(stkPhone)) {
-            Alert.alert('Invalid Phone', 'Please enter a valid M-Pesa phone number (e.g., 0712345678)');
-            return;
-        }
-
-        // For Pay-for-Me, validate the other phone
-        if (payMode === 'payforme' && !isValidKenyanPhone(otherPhone)) {
-            Alert.alert('Invalid Phone', 'Please enter a valid phone number for the person paying');
-            return;
-        }
-
-        const displayPhone = payMode === 'self'
-            ? formatPhoneDisplay(stkPhone)
-            : formatPhoneDisplay(stkPhone);
-
-        const confirmMsg = payMode === 'self'
-            ? `Pay ${fmt(payAmount)} via M-Pesa?\n\nAn STK push will be sent to YOUR phone (${displayPhone}).`
-            : `Pay ${fmt(payAmount)} via M-Pesa?\n\nAn STK push will be sent to ${displayPhone}.\n\n⚠️ The payment will be credited to YOUR account (${tenant.tenant_name}).`;
-
-        Alert.alert('Confirm Payment', confirmMsg, [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Pay Now',
-                style: 'default',
-                onPress: async () => {
-                    setLoading(true);
-                    setStep('processing');
-                    try {
-                        const res = await initiateStkPush({
-                            phone: stkPhone,
-                            amount: payAmount,
-                            accountReference: `RENT-${tenant.tenant_name}-${tenant.id_number || tenant.tenant_id}`,
-                            transactionDesc: `Rent payment by ${tenant.tenant_name}${payMode === 'payforme' ? ' (Pay-for-Me)' : ''}`,
-                            tenantId: tenant.tenant_id,
-                            tenantPrimaryPhone: getTenantPrimaryPhone(),
-                            isPayForMe: payMode === 'payforme',
-                        });
-
-                        if (res.error || res.errorCode) {
-                            setStep('failed');
-                            Alert.alert('Payment Failed', res.error || res.errorMessage || 'STK push failed. Please try again.');
-                        } else if (res.missingConfig) {
-                            setStep('failed');
-                            Alert.alert('Not Configured', 'M-Pesa STK Push is not configured. Contact your landlord.');
-                        } else if (res.CheckoutRequestID) {
-                            setStkResponse(res);
-                            setStep('processing');
-                        } else {
-                            setStep('failed');
-                            Alert.alert('Payment Failed', 'Unexpected response. Please try again.');
-                        }
-                    } catch (e: any) {
-                        setStep('failed');
-                        Alert.alert('Error', e.message || 'Something went wrong');
-                    } finally {
-                        setLoading(false);
-                    }
+                    setProcessing(false);
                 },
-            },
-        ]);
+                onFailed: (reason) => {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setError(reason || 'Payment was cancelled or rejected on M-Pesa');
+                    setStep('failed');
+                    setProcessing(false);
+                },
+                onTimeout: async () => {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    // Safaricom callback arrived late but DB is already updated.
+                    // Fetch the latest payment record and show the SUCCESS screen
+                    // with the real M-Pesa receipt + new balance.
+                    try {
+                        const [latestPay, newBal] = await Promise.all([
+                            getLatestPayment(session.tenant_id),
+                            refreshTenantBalance(session.tenant_id),
+                        ]);
+                        if (latestPay && latestPay.amount > 0) {
+                            // ✅ Payment found in DB — show success
+                            setBalance(newBal);
+                            await updateSessionBalance(newBal);
+                            setReceipt(latestPay.mpesa_receipt);
+                            setPaidAmount(latestPay.amount);
+                            setStep('success');
+                            setProcessing(false);
+                            return;
+                        }
+                    } catch (_) { /* ignore, fall through to friendly message */ }
+                    // Payment not yet in DB — show a helpful non-alarming message
+                    setError(
+                        'Your M-Pesa payment went through but confirmation is delayed.\n\n' +
+                        'Check your M-Pesa SMS for the receipt code.\nYour History tab will show the transaction.'
+                    );
+                    setStep('failed');
+                    setProcessing(false);
+                },
+            });
+        } catch (err: any) {
+            if (timerRef.current) clearInterval(timerRef.current);
+            setError(err.message || 'Network error');
+            setStep('failed');
+            setProcessing(false);
+        }
     };
 
-    const handleReset = () => {
-        setStep('input');
-        setStkResponse(null);
-        setPollCount(0);
+    // Manual "Check Status" — for when tenant already paid but app is still waiting
+    const handleManualCheck = async () => {
+        if (manualChecking) return;
+        setManualChecking(true);
+        try {
+            const newBal = await refreshTenantBalance(session.tenant_id);
+            if (newBal !== balance) {
+                // Balance changed — payment went through!
+                if (timerRef.current) clearInterval(timerRef.current);
+                setBalance(newBal);
+                await updateSessionBalance(newBal);
+                setReceipt('MPesa');
+                setPaidAmount(Math.round(parseFloat(amount)));
+                setStep('success');
+                setProcessing(false);
+            } else {
+                Alert.alert(
+                    'Still Processing',
+                    'Payment not yet confirmed. If you entered your M-Pesa PIN, please wait a few more seconds.'
+                );
+            }
+        } catch (_) {
+            Alert.alert('Error', 'Could not check payment status. Please check History tab.');
+        }
+        setManualChecking(false);
     };
 
-    return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.container}
-        >
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-                    <Text style={styles.backText}>← Back</Text>
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Pay Rent</Text>
-                <View style={{ width: 60 }} />
+    const resetFlow = () => {
+        setStep('choose');
+        setAmount('');
+        setPayerPhone('');
+        setError('');
+        setReceipt('');
+        setPaidAmount(0);
+        setCheckingSeconds(0);
+        setManualChecking(false);
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+    };
+
+    // ── RENDER ──
+
+    // Step: Choose mode
+    if (step === 'choose') {
+        return (
+            <View style={s.container}>
+                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+                <Header title="💳 Pay Rent" sub="Choose payment method" onBack={onBack} />
+                <ScrollView contentContainerStyle={s.content}>
+                    <View style={s.balanceCard}>
+                        <Text style={s.balLabel}>Outstanding Balance</Text>
+                        <Text style={[s.balValue, { color: balance > 0 ? C.danger : C.accent }]}>
+                            {formatKES(balance)}
+                        </Text>
+                    </View>
+
+                    <TouchableOpacity onPress={() => handleSelectMode('self')} activeOpacity={0.85}>
+                        <LinearGradient colors={['#10b981', '#059669']} style={s.modeCard}>
+                            <Text style={s.modeEmoji}>📱</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={s.modeTitle}>Pay with My Number</Text>
+                                <Text style={s.modeSub}>STK push to {maskPhone(session.phone)}</Text>
+                            </View>
+                            <Text style={s.modeArrow}>→</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity onPress={() => handleSelectMode('payForMe')} activeOpacity={0.85}>
+                        <LinearGradient colors={['#6366f1', '#4f46e5']} style={s.modeCard}>
+                            <Text style={s.modeEmoji}>🤝</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={s.modeTitle}>Someone Else Pays</Text>
+                                <Text style={s.modeSub}>Enter payer's phone — credited to YOU</Text>
+                            </View>
+                            <Text style={s.modeArrow}>→</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+
+                    <View style={s.infoBox}>
+                        <Text style={s.infoIcon}>🔒</Text>
+                        <Text style={s.infoText}>
+                            Payments are processed securely via M-Pesa.{'\n'}
+                            All payments are credited to your account regardless of who pays.
+                        </Text>
+                    </View>
+                </ScrollView>
             </View>
+        );
+    }
 
-            <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-                {step === 'input' && (
-                    <>
-                        {/* Tenant Info Card */}
-                        <View style={styles.tenantCard}>
-                            <LinearGradient colors={colors.gradientPrimary} style={styles.tenantAvatar}>
-                                <Text style={styles.tenantAvatarText}>{(tenant.tenant_name || '?').charAt(0)}</Text>
-                            </LinearGradient>
-                            <View style={styles.tenantInfo}>
-                                <Text style={styles.tenantName}>{tenant.tenant_name}</Text>
-                                <Text style={styles.tenantDetail}>ID: {tenant.id_number || '—'} • {tenant.phone ? formatPhoneDisplay(tenant.phone) : '—'}</Text>
-                                <Text style={styles.tenantUnit}>{tenant.arms_units?.unit_name || '—'} • {tenant.arms_locations?.location_name || ''}</Text>
-                            </View>
+    // Step: Enter amount (+ payer phone if pay-for-me)
+    if (step === 'amount') {
+        return (
+            <View style={s.container}>
+                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+                <Header
+                    title={mode === 'self' ? '📱 Self Pay' : '🤝 Pay For Me'}
+                    sub="Enter payment details"
+                    onBack={() => setStep('choose')}
+                />
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+                    <ScrollView contentContainerStyle={s.content}>
+                        <View style={s.balanceCard}>
+                            <Text style={s.balLabel}>Balance Due</Text>
+                            <Text style={[s.balValue, { color: C.danger }]}>{formatKES(balance)}</Text>
                         </View>
 
-                        {/* Balance Info */}
-                        <View style={styles.balanceStrip}>
-                            <View style={styles.balanceStripItem}>
-                                <Text style={styles.balanceStripLabel}>Outstanding</Text>
-                                <Text style={styles.balanceStripValue}>{fmt(tenant.balance || 0)}</Text>
-                            </View>
-                            <View style={styles.balanceStripDivider} />
-                            <View style={styles.balanceStripItem}>
-                                <Text style={styles.balanceStripLabel}>Monthly Rent</Text>
-                                <Text style={styles.balanceStripValue}>{fmt(tenant.monthly_rent)}</Text>
-                            </View>
-                        </View>
-
-                        {/* Unpaid Bills Selection */}
-                        {unpaidBills.length > 0 && (
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>📋 Select Bill to Pay</Text>
-                                {unpaidBills.map(bill => (
-                                    <TouchableOpacity
-                                        key={bill.billing_id}
-                                        style={[
-                                            styles.billSelectCard,
-                                            selectedBill?.billing_id === bill.billing_id && styles.billSelectActive,
-                                        ]}
-                                        onPress={() => {
-                                            setSelectedBill(bill);
-                                            setAmount(String(bill.rent_amount - bill.amount_paid));
-                                        }}
-                                        activeOpacity={0.7}
-                                    >
-                                        <View style={styles.billSelectLeft}>
-                                            <View style={[
-                                                styles.billRadio,
-                                                selectedBill?.billing_id === bill.billing_id && styles.billRadioActive,
-                                            ]}>
-                                                {selectedBill?.billing_id === bill.billing_id && <Text style={styles.billRadioDot}>✓</Text>}
-                                            </View>
-                                            <View>
-                                                <Text style={styles.billSelectMonth}>{bill.billing_month}</Text>
-                                                <Text style={styles.billSelectDue}>Due: {bill.due_date}</Text>
-                                            </View>
-                                        </View>
-                                        <View style={styles.billSelectRight}>
-                                            <Text style={styles.billSelectAmount}>{fmt(bill.rent_amount - bill.amount_paid)}</Text>
-                                            <Text style={styles.billSelectStatus}>{bill.status}</Text>
-                                        </View>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        )}
-
-                        {/* Amount Input */}
-                        <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>💰 Payment Amount</Text>
-                            <View style={styles.amountInputWrapper}>
-                                <Text style={styles.amountCurrency}>KES</Text>
+                        {mode === 'payForMe' && (
+                            <View style={s.inputGroup}>
+                                <Text style={s.inputLabel}>📞 Payer's Phone Number</Text>
                                 <TextInput
-                                    style={styles.amountInput}
-                                    placeholder="0"
-                                    placeholderTextColor={colors.textPlaceholder}
-                                    value={amount}
-                                    onChangeText={setAmount}
-                                    keyboardType="numeric"
+                                    style={s.input}
+                                    value={payerPhone}
+                                    onChangeText={setPayerPhone}
+                                    placeholder="e.g. 0712345678"
+                                    placeholderTextColor={C.dim}
+                                    keyboardType="phone-pad"
+                                    maxLength={13}
                                 />
-                            </View>
-                            <View style={styles.quickRow}>
-                                {[tenant.monthly_rent, 5000, 10000, 20000].filter(Boolean).map((val, i) => (
-                                    <TouchableOpacity
-                                        key={i}
-                                        style={styles.quickBtn}
-                                        onPress={() => setAmount(String(val))}
-                                    >
-                                        <Text style={styles.quickBtnText}>{fmt(val!)}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        </View>
-
-                        {/* Payment Mode Selector */}
-                        <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>📱 Payment Method</Text>
-                            <View style={styles.modeRow}>
-                                <TouchableOpacity
-                                    style={[styles.modeCard, payMode === 'self' && styles.modeCardActive]}
-                                    onPress={() => setPayMode('self')}
-                                    activeOpacity={0.7}
-                                >
-                                    <Text style={styles.modeEmoji}>📱</Text>
-                                    <Text style={[styles.modeTitle, payMode === 'self' && styles.modeTitleActive]}>My Phone</Text>
-                                    <Text style={styles.modeDesc}>STK push to your registered number</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.modeCard, payMode === 'payforme' && styles.modeCardActive]}
-                                    onPress={() => setPayMode('payforme')}
-                                    activeOpacity={0.7}
-                                >
-                                    <Text style={styles.modeEmoji}>🤝</Text>
-                                    <Text style={[styles.modeTitle, payMode === 'payforme' && styles.modeTitleActive]}>Pay for Me</Text>
-                                    <Text style={styles.modeDesc}>Someone else pays for you</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-
-                        {/* Phone Input - Self */}
-                        {payMode === 'self' && (
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>📱 Your M-Pesa Phone</Text>
-                                <View style={styles.phoneInputWrapper}>
-                                    <Text style={styles.phonePrefix}>🇰🇪 +254</Text>
-                                    <TextInput
-                                        style={styles.phoneInput}
-                                        placeholder="7XX XXX XXX"
-                                        placeholderTextColor={colors.textPlaceholder}
-                                        value={selfPhone}
-                                        onChangeText={t => setSelfPhone(t.replace(/\D/g, ''))}
-                                        keyboardType="phone-pad"
-                                        maxLength={9}
-                                    />
-                                </View>
-                                <Text style={styles.phoneHint}>
-                                    This is your registered phone number. STK push will be sent here.
+                                <Text style={s.inputHint}>
+                                    This person will receive the M-Pesa prompt
                                 </Text>
                             </View>
                         )}
 
-                        {/* Phone Input - Pay for Me */}
-                        {payMode === 'payforme' && (
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>🤝 Payer's Phone Number</Text>
-                                <View style={styles.payForMeInfo}>
-                                    <Text style={styles.payForMeInfoText}>
-                                        ⚠️ The STK push will be sent to THIS phone number.{'\n'}
-                                        The payment will be credited to YOUR account ({tenant.tenant_name}).
-                                    </Text>
-                                </View>
-                                <View style={styles.phoneInputWrapper}>
-                                    <Text style={styles.phonePrefix}>🇰🇪 +254</Text>
-                                    <TextInput
-                                        style={styles.phoneInput}
-                                        placeholder="Enter payer's phone number"
-                                        placeholderTextColor={colors.textPlaceholder}
-                                        value={otherPhone}
-                                        onChangeText={t => setOtherPhone(t.replace(/\D/g, ''))}
-                                        keyboardType="phone-pad"
-                                        maxLength={9}
-                                    />
-                                </View>
-                                <Text style={styles.phoneHint}>
-                                    The person paying will receive the STK push on this number.
-                                    Your account will be credited automatically.
+                        <View style={s.inputGroup}>
+                            <Text style={s.inputLabel}>💰 Payment Amount (KES)</Text>
+                            <TextInput
+                                style={[s.input, s.amountInput]}
+                                value={amount}
+                                onChangeText={(t) => setAmount(t.replace(/[^0-9]/g, ''))}
+                                placeholder="Enter amount"
+                                placeholderTextColor={C.dim}
+                                keyboardType="numeric"
+                                maxLength={7}
+                            />
+                            <TouchableOpacity onPress={() => setAmount(String(Math.round(balance)))} style={s.quickBtn}>
+                                <Text style={s.quickBtnText}>💡 Pay full balance: {formatKES(balance)}</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {error ? (
+                            <View style={s.errorBox}><Text style={s.errorText}>⚠️ {error}</Text></View>
+                        ) : null}
+
+                        <TouchableOpacity onPress={handleProceedToConfirm} activeOpacity={0.85}>
+                            <LinearGradient colors={[C.accent, '#059669']} style={s.proceedBtn}>
+                                <Text style={s.proceedBtnText}>Continue →</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </ScrollView>
+                </KeyboardAvoidingView>
+            </View>
+        );
+    }
+
+    // Step: Confirm
+    if (step === 'confirm') {
+        const phone = mode === 'self' ? session.phone : payerPhone;
+        return (
+            <View style={s.container}>
+                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+                <Header title="✅ Confirm Payment" sub="Review details" onBack={() => setStep('amount')} />
+                <ScrollView contentContainerStyle={s.content}>
+                    <View style={s.confirmCard}>
+                        <ConfirmRow label="Tenant" value={session.tenant_name} emoji="👤" />
+                        <ConfirmRow label="Room" value={`${session.unit_name} • ${session.location_name}`} emoji="🏠" />
+                        <ConfirmRow label="Amount" value={formatKES(parseFloat(amount))} emoji="💰" highlight />
+                        <ConfirmRow label="STK Push To" value={maskPhone(phone)} emoji="📱" />
+                        {mode === 'payForMe' && (
+                            <View style={s.creditNote}>
+                                <Text style={s.creditNoteText}>
+                                    ✅ Payment will be <Text style={{ fontWeight: '900' }}>credited to {session.tenant_name}'s account</Text>, not the payer's
                                 </Text>
                             </View>
                         )}
+                        <ConfirmRow label="Method" value="M-Pesa STK Push" emoji="📲" />
+                    </View>
 
-                        {/* Pay Button */}
+                    <TouchableOpacity onPress={handlePayNow} activeOpacity={0.85}>
+                        <LinearGradient colors={['#10b981', '#059669', '#047857']} style={s.payNowBtn}>
+                            <Text style={s.payNowEmoji}>🚀</Text>
+                            <Text style={s.payNowText}>Pay {formatKES(parseFloat(amount))} Now</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity onPress={() => setStep('amount')} style={s.cancelLink}>
+                        <Text style={s.cancelText}>← Go Back</Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </View>
+        );
+    }
+
+    // Step: Processing
+    if (step === 'processing') {
+        return (
+            <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+                <View style={s.processingCard}>
+                    <ActivityIndicator size="large" color={C.accent} />
+                    <Text style={s.processingTitle}>Processing Payment</Text>
+                    <Text style={s.processingMsg}>{statusMsg}</Text>
+                    {checkingSeconds > 0 && (
+                        <Text style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                            ⏱ {checkingSeconds}s elapsed
+                        </Text>
+                    )}
+                    <Text style={s.processingHint}>Do NOT close this screen</Text>
+                    {/* Show manual check button after 30s in case callback is slow */}
+                    {checkingSeconds >= 30 && (
                         <TouchableOpacity
-                            style={styles.payButton}
-                            onPress={handlePay}
-                            activeOpacity={0.85}
+                            onPress={handleManualCheck}
+                            disabled={manualChecking}
+                            activeOpacity={0.8}
+                            style={{
+                                marginTop: 16, paddingVertical: 10, paddingHorizontal: 20,
+                                borderRadius: 12, borderWidth: 1,
+                                borderColor: C.accent,
+                                backgroundColor: 'rgba(16,185,129,0.1)',
+                            }}
                         >
-                            <LinearGradient colors={colors.gradientButton} style={styles.payButtonGradient}>
-                                <Text style={styles.payButtonText}>
-                                    💳 Pay {fmt(parseFloat(amount) || 0)} via M-Pesa
-                                    {payMode === 'payforme' ? ' (Pay for Me)' : ''}
-                                </Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-
-                        <Text style={styles.disclaimer}>
-                            By proceeding, an M-Pesa STK push will be sent to the specified phone number.
-                            Enter your M-Pesa PIN to complete the payment.
-                        </Text>
-                    </>
-                )}
-
-                {step === 'processing' && (
-                    <View style={styles.processingContainer}>
-                        <View style={styles.processingCircle}>
-                            <ActivityIndicator size="large" color={colors.accentIndigo} />
-                        </View>
-                        <Text style={styles.processingTitle}>Processing Payment...</Text>
-                        <Text style={styles.processingSub}>
-                            {payMode === 'self'
-                                ? `An STK push has been sent to your phone (${selfPhone}).\nPlease enter your M-Pesa PIN.`
-                                : `An STK push has been sent to ${otherPhone}.\nAsk them to enter their M-Pesa PIN.`
+                            {manualChecking
+                                ? <ActivityIndicator color={C.accent} size="small" />
+                                : <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
+                                    ✅ I've paid — Check Status
+                                  </Text>
                             }
-                        </Text>
-                        <View style={styles.processingDetails}>
-                            <Text style={styles.processingDetailText}>Amount: {fmt(parseFloat(amount) || 0)}</Text>
-                            <Text style={styles.processingDetailText}>Tenant: {tenant.tenant_name}</Text>
-                            <Text style={styles.processingDetailText}>ID: {tenant.id_number || '—'}</Text>
-                            <Text style={styles.processingDetailText}>
-                                {payMode === 'self' ? 'Paying from: Your phone' : `Paying from: ${otherPhone}`}
-                            </Text>
-                            {payMode === 'payforme' && (
-                                <Text style={styles.processingDetailText}>
-                                    Crediting to: {tenant.phone ? formatPhoneDisplay(tenant.phone) : 'Your account'}
-                                </Text>
-                            )}
-                        </View>
-                        <Text style={styles.processingWait}>Waiting for M-Pesa confirmation...</Text>
-                        {pollCount > 0 && (
-                            <Text style={styles.pollText}>Checking status... (attempt {pollCount})</Text>
-                        )}
-                    </View>
-                )}
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
+        );
+    }
 
-                {step === 'success' && (
-                    <View style={styles.resultContainer}>
-                        <View style={styles.successCircle}>
-                            <Text style={styles.successEmoji}>✅</Text>
-                        </View>
-                        <Text style={styles.resultTitle}>Payment Successful!</Text>
-                        <Text style={styles.resultSub}>
-                            Your rent payment of {fmt(parseFloat(amount) || 0)} has been processed.
-                        </Text>
-                        <View style={styles.resultDetails}>
-                            <Text style={styles.resultDetailText}>Tenant: {tenant.tenant_name}</Text>
-                            <Text style={styles.resultDetailText}>ID: {tenant.id_number || '—'}</Text>
-                            <Text style={styles.resultDetailText}>Amount: {fmt(parseFloat(amount) || 0)}</Text>
-                            {payMode === 'payforme' && (
-                                <Text style={styles.resultDetailText}>Paid by: {otherPhone}</Text>
-                            )}
-                        </View>
-                        <TouchableOpacity style={styles.resultBtn} onPress={() => { onPaymentComplete(); onBack(); }}>
-                            <LinearGradient colors={colors.gradientButton} style={styles.resultBtnGradient}>
-                                <Text style={styles.resultBtnText}>Back to Dashboard</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.resultBtnSecondary} onPress={handleReset}>
-                            <Text style={styles.resultBtnSecondaryText}>Make Another Payment</Text>
-                        </TouchableOpacity>
+    // Step: Success
+    if (step === 'success') {
+        return (
+            <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+                <View style={s.resultCard}>
+                    <Text style={s.resultEmoji}>🎉</Text>
+                    <Text style={s.resultTitle}>Payment Confirmed!</Text>
+                    <View style={[s.resultRow, { backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: 10, marginBottom: 4 }]}>
+                        <Text style={s.resultLabel}>💰 Amount Paid</Text>
+                        <Text style={[s.resultValue, { color: C.accent, fontSize: 18, fontWeight: '900' }]}>{formatKES(paidAmount)}</Text>
                     </View>
-                )}
-
-                {step === 'failed' && (
-                    <View style={styles.resultContainer}>
-                        <View style={styles.failCircle}>
-                            <Text style={styles.failEmoji}>❌</Text>
-                        </View>
-                        <Text style={styles.resultTitle}>Payment Failed</Text>
-                        <Text style={styles.resultSub}>
-                            The M-Pesa transaction could not be completed. Please try again.
-                        </Text>
-                        <TouchableOpacity style={styles.resultBtn} onPress={handleReset}>
-                            <LinearGradient colors={colors.gradientButton} style={styles.resultBtnGradient}>
-                                <Text style={styles.resultBtnText}>Try Again</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.resultBtnSecondary} onPress={onBack}>
-                            <Text style={styles.resultBtnSecondaryText}>Back to Dashboard</Text>
-                        </TouchableOpacity>
+                    <View style={s.resultRow}>
+                        <Text style={s.resultLabel}>📋 M-Pesa Receipt</Text>
+                        <Text style={[s.resultValue, { color: C.gold, letterSpacing: 1 }]}>{receipt}</Text>
                     </View>
-                )}
+                    <View style={s.resultRow}>
+                        <Text style={s.resultLabel}>📊 New Balance</Text>
+                        <Text style={[s.resultValue, { color: balance > 0 ? C.danger : C.accent }]}>{formatKES(balance)}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => { resetFlow(); onPaymentComplete(); }} activeOpacity={0.85}>
+                        <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
+                            <Text style={s.doneBtnText}>✅ Back to Dashboard</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        );
+    }
 
-                <View style={{ height: 40 }} />
-            </ScrollView>
-        </KeyboardAvoidingView>
+    // Step: Failed / Timeout — smart recovery screen
+    return (
+        <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
+            <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+            <View style={s.resultCard}>
+                <Text style={s.resultEmoji}>⚠️</Text>
+                <Text style={[s.resultTitle, { color: C.gold }]}>Confirmation Delayed</Text>
+                <Text style={s.failMsg}>{error || 'Transaction status unclear — check History'}</Text>
+                {/* Smart check: fetch latest payment and show success if found */}
+                <TouchableOpacity
+                    onPress={handleManualCheck}
+                    disabled={manualChecking}
+                    activeOpacity={0.85}
+                    style={{ marginBottom: 12, width: '100%' }}
+                >
+                    <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
+                        {manualChecking
+                            ? <ActivityIndicator color="#fff" size="small" />
+                            : <Text style={s.doneBtnText}>🔍 Check If Payment Went Through</Text>
+                        }
+                    </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={resetFlow} activeOpacity={0.85} style={{ marginBottom: 8, width: '100%' }}>
+                    <LinearGradient colors={[C.primary, '#4f46e5']} style={s.doneBtn}>
+                        <Text style={s.doneBtnText}>🔄 Try Again</Text>
+                    </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={onBack} style={s.cancelLink}>
+                    <Text style={s.cancelText}>← Back to Dashboard</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
     );
 }
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.bgPrimary },
-    header: {
-        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        paddingHorizontal: 20, paddingTop: 56, paddingBottom: 16,
-    },
-    backBtn: { padding: 8 },
-    backText: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' },
-    headerTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
-    scrollContent: { paddingHorizontal: 20, paddingBottom: 20 },
+// ── Sub-components ──
 
-    // Tenant Card
-    tenantCard: {
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: colors.bgCard, borderRadius: 18, padding: 18,
-        borderWidth: 1, borderColor: colors.borderColor,
-    },
-    tenantAvatar: {
-        width: 52, height: 52, borderRadius: 16,
-        justifyContent: 'center', alignItems: 'center', marginRight: 14,
-    },
-    tenantAvatarText: { color: '#fff', fontSize: 22, fontWeight: '900' },
-    tenantInfo: { flex: 1 },
-    tenantName: { color: '#fff', fontSize: 16, fontWeight: '800' },
-    tenantDetail: { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 },
-    tenantUnit: { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 2 },
+function Header({ title, sub, onBack }: { title: string; sub: string; onBack: () => void }) {
+    return (
+        <LinearGradient colors={['#4f46e5', '#6366f1']} style={s.header}>
+            <TouchableOpacity onPress={onBack} style={s.backBtn}>
+                <Text style={s.backText}>← Back</Text>
+            </TouchableOpacity>
+            <Text style={s.headerTitle}>{title}</Text>
+            <Text style={s.headerSub}>{sub}</Text>
+        </LinearGradient>
+    );
+}
 
-    // Balance Strip
-    balanceStrip: {
-        flexDirection: 'row', backgroundColor: colors.bgCard, borderRadius: 14,
-        padding: 16, marginTop: 14, borderWidth: 1, borderColor: colors.borderColor,
-    },
-    balanceStripItem: { flex: 1 },
-    balanceStripLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '600', letterSpacing: 1 },
-    balanceStripValue: { color: '#fff', fontSize: 16, fontWeight: '800', marginTop: 4 },
-    balanceStripDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.08)' },
+function ConfirmRow({ label, value, emoji, highlight }: { label: string; value: string; emoji: string; highlight?: boolean }) {
+    return (
+        <View style={s.confirmRow}>
+            <Text style={s.confirmEmoji}>{emoji}</Text>
+            <Text style={s.confirmLabel}>{label}</Text>
+            <Text style={[s.confirmValue, highlight && { color: '#10b981', fontWeight: '900', fontSize: 16 }]}>{value}</Text>
+        </View>
+    );
+}
 
-    // Section
-    section: { marginTop: 22 },
-    sectionTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 10 },
-
-    // Bill Select
-    billSelectCard: {
-        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 14,
-        marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-    },
-    billSelectActive: { borderColor: colors.accentIndigo, backgroundColor: 'rgba(79,70,229,0.1)' },
-    billSelectLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    billRadio: {
-        width: 22, height: 22, borderRadius: 11, borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center',
-    },
-    billRadioActive: { borderColor: colors.accentIndigo, backgroundColor: colors.accentIndigo },
-    billRadioDot: { color: '#fff', fontSize: 12, fontWeight: '900' },
-    billSelectMonth: { color: '#fff', fontSize: 13, fontWeight: '700' },
-    billSelectDue: { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 1 },
-    billSelectRight: { alignItems: 'flex-end' },
-    billSelectAmount: { color: '#fff', fontSize: 14, fontWeight: '800' },
-    billSelectStatus: { color: colors.accentYellow, fontSize: 10, fontWeight: '600', marginTop: 2 },
-
-    // Amount Input
-    amountInputWrapper: {
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: colors.bgInput, borderRadius: 16,
-        paddingHorizontal: 20, borderWidth: 1, borderColor: colors.borderColor,
-    },
-    amountCurrency: { color: 'rgba(255,255,255,0.4)', fontSize: 18, fontWeight: '700', marginRight: 10 },
-    amountInput: { flex: 1, color: '#fff', fontSize: 32, fontWeight: '900', paddingVertical: 18 },
-    quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-    quickBtn: {
-        backgroundColor: 'rgba(79,70,229,0.15)', borderRadius: 10,
-        paddingHorizontal: 14, paddingVertical: 8,
-        borderWidth: 1, borderColor: 'rgba(79,70,229,0.3)',
-    },
-    quickBtnText: { color: '#818cf8', fontSize: 12, fontWeight: '700' },
-
-    // Payment Mode
-    modeRow: { flexDirection: 'row', gap: 10 },
-    modeCard: {
-        flex: 1, backgroundColor: colors.bgCard, borderRadius: 16, padding: 16,
-        borderWidth: 1, borderColor: colors.borderColor, alignItems: 'center',
-    },
-    modeCardActive: { borderColor: colors.accentIndigo, backgroundColor: 'rgba(79,70,229,0.1)' },
+const s = StyleSheet.create({
+    container: { flex: 1, backgroundColor: C.bg },
+    content: { padding: 16, paddingBottom: 40 },
+    header: { paddingTop: 48, paddingBottom: 16, paddingHorizontal: 16 },
+    backBtn: { marginBottom: 8 },
+    backText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
+    headerTitle: { fontSize: 22, fontWeight: '900', color: '#fff' },
+    headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
+    balanceCard: { backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: C.border, alignItems: 'center' },
+    balLabel: { fontSize: 11, color: C.sub, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
+    balValue: { fontSize: 28, fontWeight: '900' },
+    modeCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18, borderRadius: 18, marginBottom: 12, overflow: 'hidden' },
     modeEmoji: { fontSize: 28 },
-    modeTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: '700', marginTop: 8 },
-    modeTitleActive: { color: colors.textPrimary },
-    modeDesc: { color: colors.textMuted, fontSize: 10, marginTop: 4, textAlign: 'center' },
-
-    // Phone Input
-    phoneInputWrapper: {
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: colors.bgInput, borderRadius: 16,
-        paddingHorizontal: 16, borderWidth: 1, borderColor: colors.borderColor,
-    },
-    phonePrefix: { color: 'rgba(255,255,255,0.5)', fontSize: 15, fontWeight: '600', marginRight: 8 },
-    phoneInput: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '600', paddingVertical: 16, letterSpacing: 1 },
-    phoneHint: { color: 'rgba(255,255,255,0.25)', fontSize: 11, marginTop: 8, lineHeight: 16 },
-
-    // Pay-for-Me info
-    payForMeInfo: {
-        backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: 12, padding: 14,
-        marginBottom: 12, borderWidth: 1, borderColor: 'rgba(245,158,11,0.2)',
-    },
-    payForMeInfoText: { color: colors.accentYellow, fontSize: 12, fontWeight: '600', lineHeight: 18 },
-
-    // Pay Button
-    payButton: { borderRadius: 16, overflow: 'hidden', marginTop: 28, ...shadows.md },
-    payButtonGradient: { height: 56, justifyContent: 'center', alignItems: 'center' },
-    payButtonText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-    disclaimer: { color: 'rgba(255,255,255,0.2)', fontSize: 11, textAlign: 'center', marginTop: 14, lineHeight: 16 },
-
-    // Processing
-    processingContainer: { alignItems: 'center', paddingTop: 40 },
-    processingCircle: {
-        width: 100, height: 100, borderRadius: 50,
-        backgroundColor: 'rgba(79,70,229,0.15)', justifyContent: 'center', alignItems: 'center',
-        borderWidth: 2, borderColor: 'rgba(79,70,229,0.3)',
-    },
-    processingTitle: { color: '#fff', fontSize: 22, fontWeight: '900', marginTop: 24 },
-    processingSub: { color: 'rgba(255,255,255,0.45)', fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
-    processingDetails: {
-        backgroundColor: colors.bgCard, borderRadius: 16, padding: 18,
-        marginTop: 24, width: '100%', borderWidth: 1, borderColor: colors.borderColor,
-    },
-    processingDetailText: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600', marginBottom: 6 },
-    processingWait: { color: colors.accentYellow, fontSize: 13, fontWeight: '600', marginTop: 20 },
-    pollText: { color: 'rgba(255,255,255,0.25)', fontSize: 11, marginTop: 8 },
-
-    // Result
-    resultContainer: { alignItems: 'center', paddingTop: 40 },
-    successCircle: {
-        width: 100, height: 100, borderRadius: 50,
-        backgroundColor: 'rgba(16,185,129,0.15)', justifyContent: 'center', alignItems: 'center',
-        borderWidth: 2, borderColor: 'rgba(16,185,129,0.3)',
-    },
-    successEmoji: { fontSize: 44 },
-    failCircle: {
-        width: 100, height: 100, borderRadius: 50,
-        backgroundColor: 'rgba(239,68,68,0.15)', justifyContent: 'center', alignItems: 'center',
-        borderWidth: 2, borderColor: 'rgba(239,68,68,0.3)',
-    },
-    failEmoji: { fontSize: 44 },
-    resultTitle: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: 24 },
-    resultSub: { color: 'rgba(255,255,255,0.45)', fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
-    resultDetails: {
-        backgroundColor: colors.bgCard, borderRadius: 16, padding: 18,
-        marginTop: 24, width: '100%', borderWidth: 1, borderColor: colors.borderColor,
-    },
-    resultDetailText: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600', marginBottom: 6 },
-    resultBtn: { borderRadius: 14, overflow: 'hidden', width: '100%', marginTop: 24 },
-    resultBtnGradient: { height: 50, justifyContent: 'center', alignItems: 'center' },
-    resultBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-    resultBtnSecondary: {
-        borderRadius: 14, height: 50, justifyContent: 'center', alignItems: 'center',
-        width: '100%', marginTop: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    },
-    resultBtnSecondaryText: { color: 'rgba(255,255,255,0.5)', fontSize: 14, fontWeight: '600' },
+    modeTitle: { fontSize: 15, fontWeight: '800', color: '#fff' },
+    modeSub: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
+    modeArrow: { fontSize: 20, color: '#fff', fontWeight: '700' },
+    infoBox: { flexDirection: 'row', gap: 8, backgroundColor: 'rgba(99,102,241,0.1)', borderRadius: 14, padding: 14, marginTop: 8, borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
+    infoIcon: { fontSize: 16 },
+    infoText: { flex: 1, fontSize: 11, color: C.sub, lineHeight: 18 },
+    inputGroup: { marginBottom: 16 },
+    inputLabel: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 8 },
+    input: { backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: C.text, fontWeight: '600' },
+    amountInput: { fontSize: 22, fontWeight: '900', textAlign: 'center', letterSpacing: 1 },
+    inputHint: { fontSize: 10, color: C.dim, marginTop: 6 },
+    quickBtn: { backgroundColor: 'rgba(16,185,129,0.12)', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)' },
+    quickBtnText: { fontSize: 12, color: C.accent, fontWeight: '700', textAlign: 'center' },
+    errorBox: { backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)' },
+    errorText: { fontSize: 12, color: C.danger, fontWeight: '600' },
+    proceedBtn: { borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
+    proceedBtnText: { fontSize: 16, fontWeight: '900', color: '#fff' },
+    confirmCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, marginBottom: 20, overflow: 'hidden' },
+    confirmRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: C.border },
+    confirmEmoji: { fontSize: 16, width: 30 },
+    confirmLabel: { fontSize: 12, color: C.sub, fontWeight: '600', flex: 1 },
+    confirmValue: { fontSize: 13, color: C.text, fontWeight: '700', textAlign: 'right', flex: 1.2 },
+    creditNote: { backgroundColor: 'rgba(16,185,129,0.1)', padding: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+    creditNoteText: { fontSize: 11, color: C.accent, lineHeight: 18, textAlign: 'center' },
+    payNowBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 18, paddingVertical: 18 },
+    payNowEmoji: { fontSize: 20 },
+    payNowText: { fontSize: 18, fontWeight: '900', color: '#fff' },
+    cancelLink: { alignItems: 'center', paddingVertical: 16 },
+    cancelText: { fontSize: 13, color: C.dim, fontWeight: '600' },
+    processingCard: { backgroundColor: C.card, borderRadius: 24, padding: 40, alignItems: 'center', gap: 16, marginHorizontal: 24, borderWidth: 1, borderColor: C.border },
+    processingTitle: { fontSize: 18, fontWeight: '900', color: C.text },
+    processingMsg: { fontSize: 13, color: C.sub, textAlign: 'center', lineHeight: 20 },
+    processingHint: { fontSize: 11, color: C.gold, fontWeight: '700' },
+    resultCard: { backgroundColor: C.card, borderRadius: 24, padding: 32, alignItems: 'center', gap: 12, marginHorizontal: 24, borderWidth: 1, borderColor: C.border },
+    resultEmoji: { fontSize: 50 },
+    resultTitle: { fontSize: 20, fontWeight: '900', color: C.accent },
+    resultRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+    resultLabel: { fontSize: 12, color: C.sub, fontWeight: '600' },
+    resultValue: { fontSize: 13, color: C.text, fontWeight: '800' },
+    failMsg: { fontSize: 13, color: C.sub, textAlign: 'center', lineHeight: 20 },
+    doneBtn: { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 },
+    doneBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
 });
