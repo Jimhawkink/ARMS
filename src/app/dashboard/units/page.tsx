@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getUnits, addUnit, updateUnit, deleteUnit, getLocations } from '@/lib/supabase';
+import { getLocations } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
 import { FiPlus, FiEdit2, FiTrash2, FiX, FiSave, FiSearch, FiRefreshCw, FiChevronLeft, FiChevronRight, FiEye, FiEyeOff, FiSmartphone } from 'react-icons/fi';
@@ -277,8 +277,13 @@ export default function UnitsPage() {
         setLoading(true);
         topProgress.start();
         try {
-            const [u, l] = await Promise.all([getUnits(locId ?? undefined), getLocations()]);
-            setUnits(u); setLocations(l);
+            const params = locId ? `?location_id=${locId}` : '';
+            const [unitsRes, locs] = await Promise.all([
+                fetch(`/api/units${params}`).then(r => r.json()),
+                getLocations(),
+            ]);
+            setUnits(Array.isArray(unitsRes) ? unitsRes : []);
+            setLocations(locs);
         } catch { toast.error('Failed to load units'); } finally { topProgress.done(); }
         setLoading(false);
     }, []);
@@ -311,21 +316,39 @@ export default function UnitsPage() {
         try {
             const payload = { ...form, monthly_rent: parseFloat(form.monthly_rent), deposit_amount: parseFloat(form.deposit_amount || '0') };
             if (editItem) {
-                await updateUnit(editItem.unit_id, payload);
+                const res = await fetch('/api/units', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ unit_id: editItem.unit_id, ...payload }),
+                });
+                const data = await res.json();
+                if (!res.ok) { toast.error(data.error || 'Failed to update'); setSaving(false); return; }
                 toast.success('✅ Unit updated!');
                 setShowModal(false);
             } else {
-                await addUnit(payload);
+                const res = await fetch('/api/units', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (!res.ok) { toast.error(data.error || 'Failed to add unit'); setSaving(false); return; }
                 toast.success('✅ Unit added!');
                 setForm({ location_id: locationId || locations[0]?.location_id || 0, unit_name: '', unit_type: 'Single Room', monthly_rent: '', deposit_amount: '', floor_number: '', description: '' });
             }
             loadData(locationId);
-        } catch { toast.error('Failed to save'); }
+        } catch (e: any) { toast.error(e.message || 'Failed to save'); }
         setSaving(false);
     };
     const handleDelete = async (id: number, name: string) => {
         if (!confirm(`Deactivate ${name}?`)) return;
-        try { await deleteUnit(id); toast.success('Unit removed'); loadData(locationId); } catch { toast.error('Failed'); }
+        try {
+            const res = await fetch(`/api/units?unit_id=${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) { toast.error(data.error || 'Failed to deactivate'); return; }
+            toast.success('Unit removed');
+            loadData(locationId);
+        } catch { toast.error('Failed'); }
     };
 
     const filtered = useMemo(() => {
