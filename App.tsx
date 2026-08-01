@@ -317,6 +317,9 @@ function AppInner() {
         await clearStaffSession();
         setSession(null);
         setStaffSession(null);
+        // Re-run version check immediately on logout — blocks old APKs from reaching login
+        setIsLoading(true);
+        await initApp();
     };
 
     if (isLoading) {

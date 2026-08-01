@@ -829,7 +829,10 @@ export async function checkTenantLicense(
 
         const res = await fetch(`${ARMS_API_URL}/license/tenant-check`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-App-Version': 'v2.2', // version gate — old APKs without this header are blocked
+            },
             body: JSON.stringify({ tenantId, phone }),
             signal: controller.signal,
         });
