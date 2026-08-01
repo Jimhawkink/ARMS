@@ -10,6 +10,29 @@ function getServiceClient() {
     );
 }
 
+// ============================================================
+// VERSION GATE — blocks old APKs (v2.0, v2.1) from logging in
+// Old APKs don't send X-App-Version header → blocked
+// v2.2+ sends the header → passes through
+// ============================================================
+const MIN_APK_VERSION = 'v2.2';
+
+function parseVersion(v: string): number[] {
+    return v.replace(/^v/, '').split('.').map(n => parseInt(n) || 0);
+}
+
+function isTooOld(appVersion: string): boolean {
+    const app = parseVersion(appVersion);
+    const min = parseVersion(MIN_APK_VERSION);
+    for (let i = 0; i < Math.max(app.length, min.length); i++) {
+        const a = app[i] ?? 0;
+        const m = min[i] ?? 0;
+        if (a < m) return true;
+        if (a > m) return false;
+    }
+    return false; // equal → not too old
+}
+
 /**
  * POST /api/license/tenant-check
  *
@@ -22,10 +45,20 @@ function getServiceClient() {
  * Responses:
  *   { licensed: true }                       — active license
  *   { licensed: true, autoLicensed: true }   — newly created
- *   { licensed: false, reason: string }      — revoked
+ *   { licensed: false, reason: string }      — revoked or outdated APK
  */
 export async function POST(req: NextRequest) {
     try {
+        // ── VERSION GATE ──────────────────────────────────────────────────
+        const appVersion = req.headers.get('X-App-Version') || '';
+        if (!appVersion || isTooOld(appVersion)) {
+            return NextResponse.json({
+                licensed: false,
+                reason: `⚠️ Your app (${appVersion || 'unknown'}) is outdated.\n\nPlease scan the QR code on your door to download the new version (${MIN_APK_VERSION}).`,
+            });
+        }
+        // ─────────────────────────────────────────────────────────────────
+
         const body = await req.json();
         const { tenantId, phone } = body;
 
