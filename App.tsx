@@ -217,29 +217,30 @@ function AppInner() {
 
     const initApp = async () => {
         try {
-            // 1. Check license first
+            // 1. Load cached license if any (for landlords/staff who need it)
             const rawLicense = await AsyncStorage.getItem(LICENSE_STORAGE_KEY);
             if (rawLicense) {
-                const storedLicense: MobileLicense = JSON.parse(rawLicense);
-                // Check local expiry first — don't hit network if expired
-                const expiry = new Date(storedLicense.expiryDate);
-                if (expiry <= new Date()) {
-                    await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
-                    setLicenseError('License expired. Please re-activate.');
-                } else {
-                    // Trust cached license — skip online re-validation to avoid crashes
-                    setLicense(storedLicense);
-                    // 2. Check tenant session
-                    const saved = await getSession();
-                    if (saved) setSession(saved);
-                    // 3. Check staff session
-                    const savedStaff = await getStaffSession();
-                    if (savedStaff) setStaffSession(savedStaff);
-                    // Try background re-validation (non-blocking)
-                    validateLicense(storedLicense).catch(() => {/* silent */});
-                }
+                try {
+                    const storedLicense: MobileLicense = JSON.parse(rawLicense);
+                    const expiry = new Date(storedLicense.expiryDate);
+                    if (expiry > new Date()) {
+                        setLicense(storedLicense);
+                        validateLicense(storedLicense).catch(() => {/* silent */});
+                    } else {
+                        await AsyncStorage.removeItem(LICENSE_STORAGE_KEY);
+                    }
+                } catch { /* ignore bad cache */ }
             }
-            // If no license stored, license state stays null → show LicenseScreen
+            // NOTE: No license → still show LoginScreen (PIN first).
+            // License is only needed if the PIN is not found in the DB.
+
+            // 2. Restore tenant session if saved
+            const saved = await getSession();
+            if (saved) setSession(saved);
+
+            // 3. Restore staff session if saved
+            const savedStaff = await getStaffSession();
+            if (savedStaff) setStaffSession(savedStaff);
         } catch (err) {
             console.error('App init error:', err);
         } finally {
@@ -314,15 +315,13 @@ function AppInner() {
         );
     }
 
-    // No license → show activation screen
-    if (!license) {
-        return (
-            <View style={{ flex: 1 }}>
-                <StatusBar style="light" />
-                <LicenseScreen onActivated={handleLicenseActivated} errorMessage={licenseError} />
-            </View>
-        );
-    }
+    // ── RENDER DECISION ──────────────────────────────────────────
+    // Flow: PIN screen → DB check → if PIN found → dashboard (no license needed)
+    //                             → if PIN NOT found → show license activation
+    // Tenants NEVER see the license screen — only unknown users do.
+
+    // No session → show Login (PIN entry) — license NOT required for tenants
+    // The LoginScreen itself calls checkTenantLicense after PIN match (fail-open)
 
     return (
         <NavigationContainer>
