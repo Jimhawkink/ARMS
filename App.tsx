@@ -8,6 +8,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 
+// ─── THIS APK'S VERSION — bump on every release ───────────────
+const APP_VERSION = 'v2.2';
+
 // ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
 class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean, error: string, stack: string}> {
@@ -48,6 +51,7 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import TenantSearchScreen from './src/screens/TenantSearchScreen';
 import LandlordPayScreen from './src/screens/LandlordPayScreen';
 import StaffProfileScreen from './src/screens/StaffProfileScreen';
+import ForceUpdateScreen from './src/screens/ForceUpdateScreen';
 import { TenantSession, StaffSession, TenantSearchResult } from './src/lib/supabase';
 import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
@@ -210,6 +214,7 @@ function AppInner() {
     const [staffSession, setStaffSession] = useState<StaffSession | null>(null);
     const [license, setLicense] = useState<MobileLicense | null>(null);
     const [licenseError, setLicenseError] = useState('');
+    const [forceUpdate, setForceUpdate] = useState<{ required: boolean; latestVersion: string }>({ required: false, latestVersion: APP_VERSION });
 
     useEffect(() => {
         initApp();
@@ -217,7 +222,25 @@ function AppInner() {
 
     const initApp = async () => {
         try {
-            // 1. Load cached license if any (for landlords/staff who need it)
+            // 1. VERSION CHECK — block outdated APKs immediately
+            try {
+                const vRes = await fetch(
+                    `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
+                    { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined }
+                );
+                if (vRes.ok) {
+                    const vData = await vRes.json();
+                    if (vData.forceUpdate) {
+                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
+                        setIsLoading(false);
+                        return; // Stop init — show update screen
+                    }
+                }
+            } catch {
+                // Network error → fail-open (don't block if server unreachable)
+            }
+
+            // 2. Load cached license if any (for landlords/staff who need it)
             const rawLicense = await AsyncStorage.getItem(LICENSE_STORAGE_KEY);
             if (rawLicense) {
                 try {
@@ -231,14 +254,12 @@ function AppInner() {
                     }
                 } catch { /* ignore bad cache */ }
             }
-            // NOTE: No license → still show LoginScreen (PIN first).
-            // License is only needed if the PIN is not found in the DB.
 
-            // 2. Restore tenant session if saved
+            // 3. Restore tenant session if saved
             const saved = await getSession();
             if (saved) setSession(saved);
 
-            // 3. Restore staff session if saved
+            // 4. Restore staff session if saved
             const savedStaff = await getStaffSession();
             if (savedStaff) setStaffSession(savedStaff);
         } catch (err) {
@@ -312,6 +333,16 @@ function AppInner() {
                 <Text style={styles.splashSub}>Tenant Portal</Text>
                 <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 24 }} />
             </View>
+        );
+    }
+
+    // ── FORCE UPDATE — block outdated APKs ────────────────────
+    if (forceUpdate.required) {
+        return (
+            <ForceUpdateScreen
+                currentVersion={APP_VERSION}
+                latestVersion={forceUpdate.latestVersion}
+            />
         );
     }
 
