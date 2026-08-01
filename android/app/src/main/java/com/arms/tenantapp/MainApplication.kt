@@ -1,4 +1,4 @@
-package com.arms.tenantapp
+package com.alphasolutions.armstenant
 
 import android.app.Application
 import android.content.res.Configuration

@@ -214,6 +214,35 @@ export async function refreshTenantBalance(tenantId: number): Promise<number> {
 }
 
 // ============================================================
+// GET LATEST PAYMENT — Fetch most recent completed payment for tenant
+// Used to recover M-Pesa receipt + amount after STK timeout
+// ============================================================
+
+export async function getLatestPayment(tenantId: number): Promise<{
+    mpesa_receipt: string;
+    amount: number;
+    payment_date: string;
+} | null> {
+    try {
+        const { data, error } = await supabase
+            .from('arms_payments')
+            .select('mpesa_receipt, amount, payment_date')
+            .eq('tenant_id', tenantId)
+            .order('payment_date', { ascending: false })
+            .limit(1)
+            .single();
+        if (error || !data) return null;
+        return {
+            mpesa_receipt: data.mpesa_receipt || 'MPesa',
+            amount: data.amount || 0,
+            payment_date: data.payment_date || '',
+        };
+    } catch {
+        return null;
+    }
+}
+
+// ============================================================
 // MPESA STK PUSH — Initiate payment
 // payerPhone: the phone that receives the STK prompt (may differ from tenant)
 // tenantPhone: the tenant's registered phone (for account reference)
@@ -311,11 +340,36 @@ export function pollSTKResult(params: {
         return true;
     };
 
-    // Timeout handler
-    const timer = setTimeout(() => {
-        if (markDone()) {
-            clearInterval(pollInterval);
-            channel.unsubscribe();
+    // ── Final DB check before declaring timeout ──────────────────────────
+    // Safaricom's callback can arrive AFTER the UI timeout. Payment is already
+    // recorded in DB and web app. We do one last check so the app correctly
+    // shows success instead of falsely showing "timeout/failed".
+    const doFinalCheck = async (): Promise<boolean> => {
+        try {
+            const res = await fetch(
+                `${ARMS_API_URL}/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`,
+                { method: 'GET', headers: { 'Accept': 'application/json' },
+                  signal: AbortSignal.timeout(8000) }
+            );
+            if (!res.ok) return false;
+            const data = await res.json();
+            if (data?.status === 'Completed') {
+                params.onConfirmed(data.mpesaReceipt || 'MPesa', data.amountPaid || 0);
+                return true;
+            }
+        } catch (_) { /* ignore */ }
+        return false;
+    };
+
+    // Timeout handler — always do a final check first
+    const timer = setTimeout(async () => {
+        clearInterval(pollInterval);
+        channel.unsubscribe();
+        if (done) return;
+        // CRITICAL: check DB one last time — payment may have confirmed
+        // after our polling window expired but before we declared timeout
+        const confirmedLate = await doFinalCheck();
+        if (!confirmedLate && markDone()) {
             params.onTimeout();
         }
     }, params.timeoutMs);
@@ -461,7 +515,19 @@ export async function recordTenantPayment(params: {
             remaining = Math.round((remaining - allocAmount) * 100) / 100;
         }
 
-        // 4. Insert payment record — tenant_id is ALWAYS the renter, not the payer
+        // 4. Insert payment record — check for duplicate first (server callback may have already recorded it)
+        const { data: existingPayment } = await supabase
+            .from('arms_payments')
+            .select('payment_id, amount')
+            .eq('mpesa_receipt', params.mpesaReceipt)
+            .maybeSingle();
+
+        if (existingPayment) {
+            // Server-side callback already recorded this payment — just refresh balance and return success
+            console.log('✅ Payment already recorded by server callback (receipt:', params.mpesaReceipt, '). Skipping duplicate insert.');
+            return { success: true };
+        }
+
         const notes = `Mobile App Payment via M-Pesa. Payer: ${params.payerPhone}. Ref: ${params.checkoutRequestId}`;
         const { data: paymentRecord, error: payErr } = await supabase
             .from('arms_payments')
@@ -472,7 +538,7 @@ export async function recordTenantPayment(params: {
                 amount: paymentAmount,
                 payment_method: 'M-Pesa',
                 mpesa_receipt: params.mpesaReceipt,
-                mpesa_phone: params.payerPhone,          // who physically paid
+                mpesa_phone: params.payerPhone,
                 reference_no: params.checkoutRequestId,
                 recorded_by: 'Tenant Mobile App',
                 notes,
@@ -525,6 +591,7 @@ export async function recordTenantPayment(params: {
         return { success: false, error: err.message || 'Failed to record payment' };
     }
 }
+
 
 // ============================================================
 // AUTO-GENERATE MISSING BILLING RECORDS

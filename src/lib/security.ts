@@ -177,3 +177,49 @@ export function sanitizeInput(input: string): string {
         .replace(/;/g, '')        // no SQL semicolons
         .trim();
 }
+
+// ============================================================
+// ─── NEW: STAFF SESSION MANAGEMENT (Caretaker / Landlord) ───
+// All existing code above is 100% untouched
+// ============================================================
+
+import { StaffSession } from './supabase';
+
+const STAFF_SESSION_KEY = 'arms_staff_session';
+
+export async function saveStaffSession(staff: StaffSession): Promise<void> {
+    const session = { ...staff, loggedInAt: Date.now() };
+    await AsyncStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(session));
+}
+
+export async function getStaffSession(): Promise<StaffSession | null> {
+    try {
+        const raw = await AsyncStorage.getItem(STAFF_SESSION_KEY);
+        if (!raw) return null;
+        const session = JSON.parse(raw) as StaffSession;
+        // 8 hour session for staff (vs 30 min for tenants)
+        const STAFF_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+        const age = Date.now() - (session.loggedInAt || 0);
+        if (age > STAFF_TIMEOUT_MS) {
+            await clearStaffSession();
+            return null;
+        }
+        return session;
+    } catch {
+        return null;
+    }
+}
+
+export async function clearStaffSession(): Promise<void> {
+    await AsyncStorage.removeItem(STAFF_SESSION_KEY);
+}
+
+export async function updateStaffSessionActivity(): Promise<void> {
+    try {
+        const raw = await AsyncStorage.getItem(STAFF_SESSION_KEY);
+        if (!raw) return;
+        const session = JSON.parse(raw);
+        session.loggedInAt = Date.now();
+        await AsyncStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(session));
+    } catch { /* silent */ }
+}

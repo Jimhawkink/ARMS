@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, formatKES, maskPhone, normalizePhone,
     initiateSTKPush, pollSTKResult,
-    refreshTenantBalance, getUnpaidBilling,
+    refreshTenantBalance, getUnpaidBilling, getLatestPayment,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
 
@@ -37,7 +37,10 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [error, setError] = useState('');
     const [receipt, setReceipt] = useState('');
     const [paidAmount, setPaidAmount] = useState(0);
+    const [checkingSeconds, setCheckingSeconds] = useState(0);
+    const [manualChecking, setManualChecking] = useState(false);
     const cleanupRef = useRef<(() => void) | null>(null);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
         loadBalance();
@@ -74,6 +77,13 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         setProcessing(true);
         setStatusMsg('Sending M-Pesa prompt…');
         setError('');
+        setCheckingSeconds(0);
+
+        // Start seconds counter so we can show "Check Status" button after 30s
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = setInterval(() => {
+            setCheckingSeconds(prev => prev + 1);
+        }, 1000);
 
         const phone = mode === 'self' ? session.phone : payerPhone;
         const amtVal = Math.round(parseFloat(amount));
@@ -89,18 +99,21 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
             });
 
             if (stkErr || !checkoutRequestId) {
+                if (timerRef.current) clearInterval(timerRef.current);
                 setStep('failed');
                 setError(stkErr || 'STK Push failed');
                 setProcessing(false);
                 return;
             }
 
-            setStatusMsg('Waiting for payment confirmation…\nCheck your phone for the M-Pesa prompt');
+            setStatusMsg('Waiting for M-Pesa confirmation…\nEnter your PIN on the M-Pesa prompt');
 
             cleanupRef.current = pollSTKResult({
                 checkoutRequestId,
-                timeoutMs: 65000,
+                // 120 seconds — Safaricom callbacks can take up to 90s
+                timeoutMs: 120000,
                 onConfirmed: async (mpesaReceipt, confirmedAmount) => {
+                    if (timerRef.current) clearInterval(timerRef.current);
                     setStatusMsg('Payment confirmed! ✅');
                     const finalAmt = confirmedAmount || amtVal;
 
@@ -120,21 +133,74 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     setProcessing(false);
                 },
                 onFailed: (reason) => {
-                    setError(reason || 'Payment was cancelled');
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setError(reason || 'Payment was cancelled or rejected on M-Pesa');
                     setStep('failed');
                     setProcessing(false);
                 },
-                onTimeout: () => {
-                    setError('Payment timed out. If you paid, it will reflect shortly.');
+                onTimeout: async () => {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    // Safaricom callback arrived late but DB is already updated.
+                    // Fetch the latest payment record and show the SUCCESS screen
+                    // with the real M-Pesa receipt + new balance.
+                    try {
+                        const [latestPay, newBal] = await Promise.all([
+                            getLatestPayment(session.tenant_id),
+                            refreshTenantBalance(session.tenant_id),
+                        ]);
+                        if (latestPay && latestPay.amount > 0) {
+                            // ✅ Payment found in DB — show success
+                            setBalance(newBal);
+                            await updateSessionBalance(newBal);
+                            setReceipt(latestPay.mpesa_receipt);
+                            setPaidAmount(latestPay.amount);
+                            setStep('success');
+                            setProcessing(false);
+                            return;
+                        }
+                    } catch (_) { /* ignore, fall through to friendly message */ }
+                    // Payment not yet in DB — show a helpful non-alarming message
+                    setError(
+                        'Your M-Pesa payment went through but confirmation is delayed.\n\n' +
+                        'Check your M-Pesa SMS for the receipt code.\nYour History tab will show the transaction.'
+                    );
                     setStep('failed');
                     setProcessing(false);
                 },
             });
         } catch (err: any) {
+            if (timerRef.current) clearInterval(timerRef.current);
             setError(err.message || 'Network error');
             setStep('failed');
             setProcessing(false);
         }
+    };
+
+    // Manual "Check Status" — for when tenant already paid but app is still waiting
+    const handleManualCheck = async () => {
+        if (manualChecking) return;
+        setManualChecking(true);
+        try {
+            const newBal = await refreshTenantBalance(session.tenant_id);
+            if (newBal !== balance) {
+                // Balance changed — payment went through!
+                if (timerRef.current) clearInterval(timerRef.current);
+                setBalance(newBal);
+                await updateSessionBalance(newBal);
+                setReceipt('MPesa');
+                setPaidAmount(Math.round(parseFloat(amount)));
+                setStep('success');
+                setProcessing(false);
+            } else {
+                Alert.alert(
+                    'Still Processing',
+                    'Payment not yet confirmed. If you entered your M-Pesa PIN, please wait a few more seconds.'
+                );
+            }
+        } catch (_) {
+            Alert.alert('Error', 'Could not check payment status. Please check History tab.');
+        }
+        setManualChecking(false);
     };
 
     const resetFlow = () => {
@@ -144,6 +210,9 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         setError('');
         setReceipt('');
         setPaidAmount(0);
+        setCheckingSeconds(0);
+        setManualChecking(false);
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
     };
 
@@ -310,7 +379,33 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     <ActivityIndicator size="large" color={C.accent} />
                     <Text style={s.processingTitle}>Processing Payment</Text>
                     <Text style={s.processingMsg}>{statusMsg}</Text>
+                    {checkingSeconds > 0 && (
+                        <Text style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                            ⏱ {checkingSeconds}s elapsed
+                        </Text>
+                    )}
                     <Text style={s.processingHint}>Do NOT close this screen</Text>
+                    {/* Show manual check button after 30s in case callback is slow */}
+                    {checkingSeconds >= 30 && (
+                        <TouchableOpacity
+                            onPress={handleManualCheck}
+                            disabled={manualChecking}
+                            activeOpacity={0.8}
+                            style={{
+                                marginTop: 16, paddingVertical: 10, paddingHorizontal: 20,
+                                borderRadius: 12, borderWidth: 1,
+                                borderColor: C.accent,
+                                backgroundColor: 'rgba(16,185,129,0.1)',
+                            }}
+                        >
+                            {manualChecking
+                                ? <ActivityIndicator color={C.accent} size="small" />
+                                : <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
+                                    ✅ I've paid — Check Status
+                                  </Text>
+                            }
+                        </TouchableOpacity>
+                    )}
                 </View>
             </View>
         );
@@ -323,12 +418,21 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 <StatusBar barStyle="light-content" backgroundColor={C.bg} />
                 <View style={s.resultCard}>
                     <Text style={s.resultEmoji}>🎉</Text>
-                    <Text style={s.resultTitle}>Payment Successful!</Text>
-                    <View style={s.resultRow}><Text style={s.resultLabel}>Amount</Text><Text style={s.resultValue}>{formatKES(paidAmount)}</Text></View>
-                    <View style={s.resultRow}><Text style={s.resultLabel}>M-Pesa Receipt</Text><Text style={s.resultValue}>{receipt}</Text></View>
-                    <View style={s.resultRow}><Text style={s.resultLabel}>New Balance</Text><Text style={[s.resultValue, { color: balance > 0 ? C.danger : C.accent }]}>{formatKES(balance)}</Text></View>
+                    <Text style={s.resultTitle}>Payment Confirmed!</Text>
+                    <View style={[s.resultRow, { backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: 10, padding: 10, marginBottom: 4 }]}>
+                        <Text style={s.resultLabel}>💰 Amount Paid</Text>
+                        <Text style={[s.resultValue, { color: C.accent, fontSize: 18, fontWeight: '900' }]}>{formatKES(paidAmount)}</Text>
+                    </View>
+                    <View style={s.resultRow}>
+                        <Text style={s.resultLabel}>📋 M-Pesa Receipt</Text>
+                        <Text style={[s.resultValue, { color: C.gold, letterSpacing: 1 }]}>{receipt}</Text>
+                    </View>
+                    <View style={s.resultRow}>
+                        <Text style={s.resultLabel}>📊 New Balance</Text>
+                        <Text style={[s.resultValue, { color: balance > 0 ? C.danger : C.accent }]}>{formatKES(balance)}</Text>
+                    </View>
                     <TouchableOpacity onPress={() => { resetFlow(); onPaymentComplete(); }} activeOpacity={0.85}>
-                        <LinearGradient colors={[C.primary, '#4f46e5']} style={s.doneBtn}>
+                        <LinearGradient colors={[C.accent, C.accentDark ?? '#059669']} style={s.doneBtn}>
                             <Text style={s.doneBtnText}>✅ Back to Dashboard</Text>
                         </LinearGradient>
                     </TouchableOpacity>
@@ -337,15 +441,29 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         );
     }
 
-    // Step: Failed
+    // Step: Failed / Timeout — smart recovery screen
     return (
         <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
             <StatusBar barStyle="light-content" backgroundColor={C.bg} />
             <View style={s.resultCard}>
-                <Text style={s.resultEmoji}>❌</Text>
-                <Text style={[s.resultTitle, { color: C.danger }]}>Payment Failed</Text>
-                <Text style={s.failMsg}>{error || 'Transaction was not completed'}</Text>
-                <TouchableOpacity onPress={resetFlow} activeOpacity={0.85}>
+                <Text style={s.resultEmoji}>⚠️</Text>
+                <Text style={[s.resultTitle, { color: C.gold }]}>Confirmation Delayed</Text>
+                <Text style={s.failMsg}>{error || 'Transaction status unclear — check History'}</Text>
+                {/* Smart check: fetch latest payment and show success if found */}
+                <TouchableOpacity
+                    onPress={handleManualCheck}
+                    disabled={manualChecking}
+                    activeOpacity={0.85}
+                    style={{ marginBottom: 12, width: '100%' }}
+                >
+                    <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
+                        {manualChecking
+                            ? <ActivityIndicator color="#fff" size="small" />
+                            : <Text style={s.doneBtnText}>🔍 Check If Payment Went Through</Text>
+                        }
+                    </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={resetFlow} activeOpacity={0.85} style={{ marginBottom: 8, width: '100%' }}>
                     <LinearGradient colors={[C.primary, '#4f46e5']} style={s.doneBtn}>
                         <Text style={s.doneBtnText}>🔄 Try Again</Text>
                     </LinearGradient>

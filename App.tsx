@@ -45,8 +45,11 @@ import DashboardScreen from './src/screens/DashboardScreen';
 import PayRentScreen from './src/screens/PayRentScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
-import { TenantSession } from './src/lib/supabase';
-import { getSession, clearSession, updateSessionActivity } from './src/lib/security';
+import TenantSearchScreen from './src/screens/TenantSearchScreen';
+import LandlordPayScreen from './src/screens/LandlordPayScreen';
+import StaffProfileScreen from './src/screens/StaffProfileScreen';
+import { TenantSession, StaffSession, TenantSearchResult } from './src/lib/supabase';
+import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
 const ARMS_API_BASE = 'https://arms-opal.vercel.app';
 const LICENSE_STORAGE_KEY = 'arms_mobile_license';
@@ -57,6 +60,70 @@ type RootStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+// ── Staff Shell — Caretaker or Landlord ──────────────────────────────
+// Caretaker: Search (read-only) + Profile
+// Landlord:  Search + Collect Rent (STK) + Profile
+function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
+    type StaffTab = 'search' | 'profile';
+    const [activeTab, setActiveTab] = useState<StaffTab>('search');
+    const [collectTenant, setCollectTenant] = useState<TenantSearchResult | null>(null);
+
+    useEffect(() => { updateStaffSessionActivity(); }, [activeTab]);
+
+    const isLandlord = staff.role === 'landlord';
+
+    // Landlord: STK collect flow (slides in over search)
+    if (collectTenant) {
+        return (
+            <LandlordPayScreen
+                staff={staff}
+                tenant={collectTenant}
+                onBack={() => setCollectTenant(null)}
+                onPaymentComplete={() => setCollectTenant(null)}
+            />
+        );
+    }
+
+    return (
+        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+            {activeTab === 'search' ? (
+                <TenantSearchScreen
+                    staff={staff}
+                    onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
+                />
+            ) : (
+                <StaffProfileScreen staff={staff} onLogout={onLogout} />
+            )}
+
+            {/* Bottom tab bar */}
+            <View style={styles.bottomBar}>
+                {[
+                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
+                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
+                ].map(tab => {
+                    const isActive = activeTab === tab.key;
+                    return (
+                        <View key={tab.key} style={styles.tabWrap}>
+                            <View
+                                style={[styles.tab, isActive && styles.tabActive]}
+                                onTouchEnd={() => setActiveTab(tab.key)}
+                            >
+                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                    {tab.emoji}
+                                </Text>
+                                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+                                    {tab.label}
+                                </Text>
+                                {isActive && <View style={styles.tabDot} />}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
+    );
+}
 
 // ─── Main App Shell with bottom tabs ─────────────────────────
 function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
@@ -140,6 +207,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
 function AppInner() {
     const [isLoading, setIsLoading] = useState(true);
     const [session, setSession] = useState<TenantSession | null>(null);
+    const [staffSession, setStaffSession] = useState<StaffSession | null>(null);
     const [license, setLicense] = useState<MobileLicense | null>(null);
     const [licenseError, setLicenseError] = useState('');
 
@@ -161,9 +229,12 @@ function AppInner() {
                 } else {
                     // Trust cached license — skip online re-validation to avoid crashes
                     setLicense(storedLicense);
-                    // 2. Check session only if licensed
+                    // 2. Check tenant session
                     const saved = await getSession();
                     if (saved) setSession(saved);
+                    // 3. Check staff session
+                    const savedStaff = await getStaffSession();
+                    if (savedStaff) setStaffSession(savedStaff);
                     // Try background re-validation (non-blocking)
                     validateLicense(storedLicense).catch(() => {/* silent */});
                 }
@@ -210,13 +281,20 @@ function AppInner() {
         setLicenseError('');
     };
 
-    const handleLoginSuccess = (tenant: TenantSession) => {
-        setSession(tenant);
+    const handleLoginSuccess = (incoming: TenantSession | StaffSession) => {
+        // Distinguish by presence of 'role' field (StaffSession) vs 'tenant_id' (TenantSession)
+        if ('role' in incoming) {
+            setStaffSession(incoming as StaffSession);
+        } else {
+            setSession(incoming as TenantSession);
+        }
     };
 
     const handleLogout = async () => {
         await clearSession();
+        await clearStaffSession();
         setSession(null);
+        setStaffSession(null);
     };
 
     if (isLoading) {
@@ -250,13 +328,16 @@ function AppInner() {
         <NavigationContainer>
             <StatusBar style="light" />
             <Stack.Navigator screenOptions={{ headerShown: false }}>
-                {!session ? (
+                {!session && !staffSession ? (
                     <Stack.Screen name="Login">
                         {() => <LoginScreen onLoginSuccess={handleLoginSuccess} license={license} />}
                     </Stack.Screen>
                 ) : (
                     <Stack.Screen name="Main">
-                        {() => <AppShell session={session} onLogout={handleLogout} />}
+                        {() => staffSession
+                            ? <StaffShell staff={staffSession} onLogout={handleLogout} />
+                            : <AppShell session={session!} onLogout={handleLogout} />
+                        }
                     </Stack.Screen>
                 )}
             </Stack.Navigator>

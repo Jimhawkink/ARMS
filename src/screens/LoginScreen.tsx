@@ -5,15 +5,15 @@ import {
     StatusBar, SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loginTenantByPin, checkTenantLicense, TenantSession } from '../lib/supabase';
+import { loginTenantByPin, loginStaffByPin, checkTenantLicense, TenantSession, StaffSession } from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
-    clearRateLimit, saveSession,
+    clearRateLimit, saveSession, saveStaffSession,
 } from '../lib/security';
 import { MobileLicense } from './LicenseScreen';
 
 interface Props {
-    onLoginSuccess: (tenant: TenantSession) => void;
+    onLoginSuccess: (session: TenantSession | StaffSession) => void;
     license?: MobileLicense | null;
 }
 
@@ -126,7 +126,6 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const handleLogin = useCallback(async () => {
         if (isLoading || lockoutSeconds > 0) return;
 
-        // Check rate limit
         const { limited, secondsLeft } = await isRateLimited();
         if (limited) { startLockoutCountdown(secondsLeft); return; }
 
@@ -137,12 +136,11 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         setError('');
 
         try {
+            // ── Step 1: Try tenant login ──────────────────────────────
             const tenant = await loginTenantByPin(pin);
             if (tenant) {
                 await clearRateLimit();
                 await saveSession(tenant);
-
-                // ── License check after successful PIN auth ──
                 setIsLoading(false);
                 setCheckingLicense(true);
                 try {
@@ -157,25 +155,35 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         onLoginSuccess(tenant);
                     }
                 } catch {
-                    // Fail-open: license check error → allow login
-                    onLoginSuccess(tenant);
+                    onLoginSuccess(tenant); // fail-open
                 } finally {
                     setCheckingLicense(false);
                 }
-                return; // prevent finally from setting isLoading again
-            } else {
-                triggerShake();
-                const { locked, attemptsLeft, lockoutMs } = await recordFailedAttempt();
-                if (locked) {
-                    startLockoutCountdown(Math.ceil(lockoutMs / 1000));
-                } else {
-                    setError(attemptsLeft > 0
-                        ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
-                        : 'Incorrect PIN'
-                    );
-                }
-                setPin('');
+                return;
             }
+
+            // ── Step 2: Try staff login (caretaker / landlord) ──────
+            const staff = await loginStaffByPin(pin);
+            if (staff) {
+                await clearRateLimit();
+                await saveStaffSession(staff);
+                setIsLoading(false);
+                onLoginSuccess(staff);
+                return;
+            }
+
+            // ── Step 3: No match ────────────────────────────────
+            triggerShake();
+            const { locked, attemptsLeft, lockoutMs } = await recordFailedAttempt();
+            if (locked) {
+                startLockoutCountdown(Math.ceil(lockoutMs / 1000));
+            } else {
+                setError(attemptsLeft > 0
+                    ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
+                    : 'Incorrect PIN'
+                );
+            }
+            setPin('');
         } catch (err: any) {
             setError('Connection error. Please try again.');
             triggerShake();
@@ -506,4 +514,23 @@ const styles = StyleSheet.create({
     licensedBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 },
     licensedText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
     licensedName: { fontSize: 10, color: COLORS.gold, fontWeight: '800' },
+
+    // ── Role Selector (NEW) ──────────────────────────────────
+    roleSelector: {
+        flexDirection: 'row', gap: 6,
+        marginBottom: 20, marginTop: 4,
+        width: '100%', maxWidth: 320,
+    },
+    roleBtn: {
+        flex: 1, paddingVertical: 9, paddingHorizontal: 4,
+        borderRadius: 14, alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    },
+    roleBtnActive: {
+        backgroundColor: 'rgba(99,102,241,0.2)',
+        borderColor: 'rgba(99,102,241,0.5)',
+    },
+    roleBtnText: { fontSize: 10, color: COLORS.textDim, fontWeight: '700', textAlign: 'center' },
+    roleBtnTextActive: { color: '#a5b4fc', fontWeight: '900' },
 });
