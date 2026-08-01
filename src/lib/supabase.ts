@@ -346,11 +346,13 @@ export function pollSTKResult(params: {
     // shows success instead of falsely showing "timeout/failed".
     const doFinalCheck = async (): Promise<boolean> => {
         try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 8000);
             const res = await fetch(
                 `${ARMS_API_URL}/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`,
-                { method: 'GET', headers: { 'Accept': 'application/json' },
-                  signal: AbortSignal.timeout(8000) }
+                { method: 'GET', headers: { 'Accept': 'application/json' }, signal: ctrl.signal }
             );
+            clearTimeout(t);
             if (!res.ok) return false;
             const data = await res.json();
             if (data?.status === 'Completed') {

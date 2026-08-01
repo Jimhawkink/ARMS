@@ -432,7 +432,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <Text style={[s.resultValue, { color: balance > 0 ? C.danger : C.accent }]}>{formatKES(balance)}</Text>
                     </View>
                     <TouchableOpacity onPress={() => { resetFlow(); onPaymentComplete(); }} activeOpacity={0.85}>
-                        <LinearGradient colors={[C.accent, C.accentDark ?? '#059669']} style={s.doneBtn}>
+                        <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
                             <Text style={s.doneBtnText}>✅ Back to Dashboard</Text>
                         </LinearGradient>
                     </TouchableOpacity>
