@@ -6,7 +6,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, BillingRecord, formatKES, formatMonth,
-    getTenantBilling, getUnpaidBilling, refreshTenantBalance,
+    getTenantBilling, getUnpaidBilling, refreshTenantBalance, getTrueTotalBalance,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
 
@@ -62,6 +62,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const [unpaidBills, setUnpaidBills] = useState<BillingRecord[]>([]);
     const [allBills, setAllBills] = useState<BillingRecord[]>([]);
     const [balance, setBalance] = useState(session.balance);
+    const [effectiveRent, setEffectiveRent] = useState(session.monthly_rent);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [showAll, setShowAll] = useState(false);
@@ -69,15 +70,16 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const loadData = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const [unpaid, all, freshBalance] = await Promise.all([
+            const [unpaid, all, trueBalance] = await Promise.all([
                 getUnpaidBilling(session.tenant_id),
                 getTenantBilling(session.tenant_id),
-                refreshTenantBalance(session.tenant_id),
+                getTrueTotalBalance(session.tenant_id),
             ]);
             setUnpaidBills(unpaid);
             setAllBills(all);
-            setBalance(freshBalance);
-            await updateSessionBalance(freshBalance);
+            setBalance(trueBalance.total);
+            setEffectiveRent(trueBalance.effectiveRent);
+            await updateSessionBalance(trueBalance.total);
         } catch (err: any) {
             console.error('Dashboard load error:', err.message);
         } finally {
@@ -161,7 +163,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                 <View style={styles.kpiGrid}>
                     <KPICard
                         emoji="💰" label="Monthly Rent"
-                        value={formatKES(session.monthly_rent)}
+                        value={formatKES(effectiveRent)}
                         color={COLORS.accent} bg={COLORS.successBg}
                     />
                     <KPICard

@@ -128,7 +128,27 @@ export async function loginTenantByPin(pin: string): Promise<TenantSession | nul
 }
 
 // ============================================================
+// VACATION HELPERS (matches web app logic exactly)
+// ============================================================
+
+const VACATION_MONTHS = ['05', '06', '07', '08']; // May, Jun, Jul, Aug
+
+function isVacationMonth(month: string): boolean {
+    const mm = month.slice(5, 7);
+    return VACATION_MONTHS.includes(mm);
+}
+
+function getEffectiveRent(monthlyRent: number, month: string, isOnVacation: boolean): number {
+    if (isOnVacation && isVacationMonth(month)) {
+        return Math.round(monthlyRent * 0.5 * 100) / 100;
+    }
+    return monthlyRent;
+}
+
+// ============================================================
 // BILLING — Get tenant's billing records (unpaid + all)
+// Generates virtual "Unbilled" entries for months with no DB record,
+// matching the web app behaviour exactly.
 // ============================================================
 
 export async function getTenantBilling(tenantId: number): Promise<BillingRecord[]> {
@@ -147,20 +167,90 @@ export async function getTenantBilling(tenantId: number): Promise<BillingRecord[
     }
 }
 
+// Returns all unpaid bills (DB records) + virtual unbilled months
 export async function getUnpaidBilling(tenantId: number): Promise<BillingRecord[]> {
     try {
-        const { data, error } = await supabase
+        // Fetch tenant info (rent, move-in, vacation status)
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('monthly_rent, move_in_date, is_on_vacation')
+            .eq('tenant_id', tenantId)
+            .single();
+
+        const monthlyRent = tenant?.monthly_rent || 0;
+        const isOnVacation = !!(tenant as any)?.is_on_vacation;
+        const moveIn = tenant?.move_in_date || null;
+
+        // Fetch all existing billing records
+        const { data: allBills, error } = await supabase
             .from('arms_billing')
             .select('*')
             .eq('tenant_id', tenantId)
-            .neq('status', 'Paid')
-            .order('billing_date', { ascending: true }); // oldest first
+            .order('billing_date', { ascending: true });
 
         if (error) throw error;
-        return data || [];
+
+        const existingSet = new Set((allBills || []).map((b: any) => b.billing_month));
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const earliestMonth = moveIn ? moveIn.slice(0, 7) : currentMonth;
+
+        // Generate virtual "Unbilled" entries for months missing in DB
+        const virtualBills: BillingRecord[] = [];
+        let cursor = new Date(earliestMonth + '-01');
+        const end = new Date(currentMonth + '-01');
+
+        while (cursor <= end) {
+            const m = cursor.toISOString().slice(0, 7);
+            if (!existingSet.has(m)) {
+                const effectiveRent = getEffectiveRent(monthlyRent, m, isOnVacation);
+                virtualBills.push({
+                    billing_id: null,
+                    tenant_id: tenantId,
+                    billing_month: m,
+                    billing_date: `${m}-01`,
+                    due_date: `${m}-05`,
+                    rent_amount: effectiveRent,
+                    amount_paid: 0,
+                    balance: effectiveRent,
+                    status: 'Unbilled',
+                    _virtual: true,
+                });
+            }
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+
+        // Filter existing to only unpaid, then combine with virtual
+        const unpaidExisting = (allBills || []).filter((b: any) => b.status !== 'Paid');
+        const combined = [...unpaidExisting, ...virtualBills];
+        combined.sort((a, b) => a.billing_month.localeCompare(b.billing_month));
+
+        return combined;
     } catch (err: any) {
         console.error('getUnpaidBilling error:', err.message);
         return [];
+    }
+}
+
+// Get the TRUE total balance = sum of all unpaid (real + virtual) bills
+export async function getTrueTotalBalance(tenantId: number): Promise<{ total: number; effectiveRent: number }> {
+    try {
+        const unpaid = await getUnpaidBilling(tenantId);
+        const total = unpaid.reduce((s, b) => s + (b.balance || 0), 0);
+
+        // Effective rent for THIS month
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('monthly_rent, is_on_vacation')
+            .eq('tenant_id', tenantId)
+            .single();
+        const monthlyRent = tenant?.monthly_rent || 0;
+        const isOnVacation = !!(tenant as any)?.is_on_vacation;
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const effectiveRent = getEffectiveRent(monthlyRent, currentMonth, isOnVacation);
+
+        return { total, effectiveRent };
+    } catch {
+        return { total: 0, effectiveRent: 0 };
     }
 }
 
@@ -196,20 +286,26 @@ function extractBillingMonth(notes: string | null): string {
 }
 
 // ============================================================
-// TENANT BALANCE — Refresh balance from DB
+// TENANT BALANCE — Refresh true total balance (real + virtual bills)
 // ============================================================
 
 export async function refreshTenantBalance(tenantId: number): Promise<number> {
     try {
-        const { data, error } = await supabase
-            .from('arms_tenants')
-            .select('balance')
-            .eq('tenant_id', tenantId)
-            .single();
-        if (error || !data) return 0;
-        return data.balance || 0;
+        // Use true total: sum of all unpaid bills including unbilled virtual months
+        const { total } = await getTrueTotalBalance(tenantId);
+        return total;
     } catch {
-        return 0;
+        // Fallback: read from DB column
+        try {
+            const { data } = await supabase
+                .from('arms_tenants')
+                .select('balance')
+                .eq('tenant_id', tenantId)
+                .single();
+            return data?.balance || 0;
+        } catch {
+            return 0;
+        }
     }
 }
 
