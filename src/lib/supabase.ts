@@ -1044,6 +1044,7 @@ export async function getTenantStatement(tenantId: number): Promise<{
 
         const entries: StatementEntry[] = [];
 
+        // ── Real billing records (Partial / Unpaid / Paid) ───────────────
         for (const b of (billingRes.data || [])) {
             entries.push({
                 type: 'billing',
@@ -1057,6 +1058,26 @@ export async function getTenantStatement(tenantId: number): Promise<{
             });
         }
 
+        // ── Virtual Unbilled months (months with no DB record yet) ────────
+        // This makes Total Charged include ALL owed rent, same as tenant dashboard
+        const billedMonths = new Set((billingRes.data || []).map((b: any) => b.billing_month));
+        const unpaidAll = await getUnpaidBilling(tenantId);
+        for (const vb of unpaidAll) {
+            if ((vb as any)._virtual && !billedMonths.has(vb.billing_month)) {
+                entries.push({
+                    type: 'billing',
+                    date: vb.billing_date,
+                    description: `Rent — ${formatMonth(vb.billing_month)} (Unbilled)`,
+                    debit: vb.rent_amount || 0,
+                    credit: 0,
+                    balance: 0,
+                    status: 'Unbilled',
+                    month: vb.billing_month,
+                });
+            }
+        }
+
+        // ── Payments ──────────────────────────────────────────────────────
         for (const p of (paymentsRes.data || [])) {
             const bMonth = (p as any).arms_billing?.billing_month || extractBillingMonth(p.notes);
             entries.push({
@@ -1075,12 +1096,13 @@ export async function getTenantStatement(tenantId: number): Promise<{
         // Sort chronologically
         entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Compute running balance
+        // Compute running balance — every payment correctly deducted
         let running = 0;
         for (const e of entries) {
             running = running + e.debit - e.credit;
             e.balance = running;
         }
+
 
         const t = tenantRes.data as any;
         const tenant: TenantSearchResult | null = t ? {
@@ -1096,6 +1118,19 @@ export async function getTenantStatement(tenantId: number): Promise<{
             deposit_paid: t.deposit_paid || 0,
             move_in_date: t.move_in_date || '',
         } : null;
+
+        // Use TRUE total balance (includes virtual unbilled months) + effective rent (vacation-adjusted)
+        // This matches what the tenant dashboard shows
+        let trueBalance = tenant?.balance || 0;
+        if (tenant) {
+            try {
+                const { total, effectiveRent } = await getTrueTotalBalance(tenantId);
+                trueBalance = total;
+                // Show effective rent (vacation-adjusted), not raw DB monthly_rent
+                tenant.monthly_rent = effectiveRent || tenant.monthly_rent;
+            } catch { /* keep DB values as fallback */ }
+        }
+        if (tenant) tenant.balance = trueBalance;
 
         return { tenant, entries };
     } catch (err: any) {

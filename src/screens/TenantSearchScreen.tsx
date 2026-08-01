@@ -186,7 +186,14 @@ export default function TenantSearchScreen({ staff, onCollectRent }: Props) {
         setDetailLoading(true);
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
         const { tenant: fresh, entries } = await getTenantStatement(tenant.tenant_id);
-        if (fresh) setFreshBalance(fresh.balance);
+        if (fresh) {
+            // Update detailTenant with corrected data:
+            // - balance = true total (includes unbilled virtual months)
+            // - monthly_rent = effective rent (vacation-adjusted)
+            // This makes the KPI strip match the tenant's own dashboard
+            setDetailTenant(fresh);
+            setFreshBalance(fresh.balance);
+        }
         setDetailEntries(entries);
         setDetailLoading(false);
     };
