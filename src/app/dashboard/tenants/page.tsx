@@ -413,14 +413,16 @@ export default function TenantsPage() {
         }
 
         // ── Strict unit-occupancy check (prevent double-booking) ─────────────
-        const selectedUnit = units.find(u => u.unit_id === form.unit_id);
+        // Use active-tenant set (not DB status which can lag after move-out)
         if (!editItem) {
-            if (selectedUnit && selectedUnit.status !== 'Vacant') {
-                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied.`); return;
+            if (allOccupiedUnitIds.has(form.unit_id)) {
+                const unitName = units.find(u => u.unit_id === form.unit_id)?.unit_name || 'selected unit';
+                toast.error(`🚫 Unit "${unitName}" is already occupied by an active tenant.`); return;
             }
         } else {
-            if (form.unit_id !== editItem.unit_id && selectedUnit && selectedUnit.status !== 'Vacant') {
-                toast.error(`🚫 Unit "${selectedUnit.unit_name}" is already occupied.`); return;
+            if (form.unit_id !== editItem.unit_id && allOccupiedUnitIds.has(form.unit_id)) {
+                const unitName = units.find(u => u.unit_id === form.unit_id)?.unit_name || 'selected unit';
+                toast.error(`🚫 Unit "${unitName}" is already occupied by an active tenant.`); return;
             }
         }
 
