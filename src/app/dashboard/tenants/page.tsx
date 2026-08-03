@@ -310,13 +310,18 @@ export default function TenantsPage() {
 
     // ── Modal helpers ─────────────────────────────────────────────────────────
     // Cross-check: even if DB says 'Vacant', check if an active tenant occupies it
+    const activeTenantIdSet = new Set(
+        tenants.filter(t => t.status === 'Active').map(t => t.tenant_id)
+    );
     const occupiedUnitIds = new Set(
         tenants.filter(t => t.status === 'Active' && t.unit_id).map(t => t.unit_id)
     );
-    // Also collect all unit_ids from tenant_units for occupied check
+    // Only add multi-room units from ACTIVE tenants (prevents moved-out tenants blocking rooms)
     const allOccupiedUnitIds = new Set(occupiedUnitIds);
-    Object.values(tenantUnitsMap).forEach(tuList => {
-        tuList.forEach(tu => allOccupiedUnitIds.add(tu.unit_id));
+    Object.entries(tenantUnitsMap).forEach(([tenantId, tuList]) => {
+        if (activeTenantIdSet.has(Number(tenantId))) {
+            tuList.forEach(tu => allOccupiedUnitIds.add(tu.unit_id));
+        }
     });
     // IDs of units the CURRENT tenant owns (edit mode)
     const editTenantUnitIds = new Set(
@@ -325,9 +330,10 @@ export default function TenantsPage() {
     // Selected additional unit IDs (to exclude from dropdowns)
     const selectedAdditionalIds = new Set(additionalUnits.map(au => au.unit_id).filter(Boolean));
 
+    // Show unit if: not occupied by any active tenant (regardless of status field, which can lag)
     const availableUnits = units.filter(u =>
         u.location_id === form.location_id && (
-            (u.status === 'Vacant' && !allOccupiedUnitIds.has(u.unit_id)) ||
+            (!allOccupiedUnitIds.has(u.unit_id) && u.status !== 'Maintenance') ||
             u.unit_id === editItem?.unit_id ||
             editTenantUnitIds.has(u.unit_id)
         ) && !selectedAdditionalIds.has(u.unit_id)
@@ -335,7 +341,7 @@ export default function TenantsPage() {
     // Available units for additional room dropdowns (exclude primary + other selected)
     const availableForAdditional = (excludeIdx: number) => units.filter(u =>
         u.location_id === form.location_id && (
-            (u.status === 'Vacant' && !allOccupiedUnitIds.has(u.unit_id)) ||
+            (!allOccupiedUnitIds.has(u.unit_id) && u.status !== 'Maintenance') ||
             editTenantUnitIds.has(u.unit_id)
         ) &&
         u.unit_id !== form.unit_id &&
