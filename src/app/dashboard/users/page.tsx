@@ -61,7 +61,7 @@ export default function UsersAccessPage() {
     const [editUser, setEditUser] = useState<any>(null);
     const [saving, setSaving] = useState(false);
     const [showPwd, setShowPwd] = useState(false);
-    const [form, setForm] = useState({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager' });
+    const [form, setForm] = useState({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager', mobile_pin: '' });
 
     // Menu permissions per user
     const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
@@ -175,14 +175,15 @@ export default function UsersAccessPage() {
             if (editUser) {
                 const updates: any = { name: form.name, email: form.email, phone: form.phone, user_role: form.user_role };
                 if (form.password_hash.trim()) updates.password_hash = form.password_hash;
+                if (form.mobile_pin.trim()) updates.mobile_pin = form.mobile_pin.trim();
                 await updateARMSUser(editUser.user_id, updates);
                 toast.success('User updated');
             } else {
-                await createARMSUser({ user_name: form.user_name, password_hash: form.password_hash, name: form.name, email: form.email, phone: form.phone, user_role: form.user_role, user_type: form.user_role });
+                await createARMSUser({ user_name: form.user_name, password_hash: form.password_hash, name: form.name, email: form.email, phone: form.phone, user_role: form.user_role, user_type: form.user_role, ...(form.mobile_pin.trim() ? { mobile_pin: form.mobile_pin.trim() } : {}) });
                 toast.success('User created');
             }
             setShowAddUser(false); setEditUser(null);
-            setForm({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager' });
+            setForm({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager', mobile_pin: '' });
             loadData();
         } catch (e: any) { toast.error(e.message); } finally { topProgress.done(); }
         setSaving(false);
@@ -197,7 +198,7 @@ export default function UsersAccessPage() {
 
     const openEdit = (u: any) => {
         setEditUser(u);
-        setForm({ user_name: u.user_name, password_hash: '', name: u.name, email: u.email || '', phone: u.phone || '', user_role: u.user_role || 'manager' });
+        setForm({ user_name: u.user_name, password_hash: '', name: u.name, email: u.email || '', phone: u.phone || '', user_role: u.user_role || 'manager', mobile_pin: u.mobile_pin || '' });
         setShowAddUser(true);
     };
 
@@ -276,6 +277,18 @@ export default function UsersAccessPage() {
                                 </div>
                                 <div><label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📧 Email</label><input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="input-field" placeholder="john@example.com" /></div>
                                 <div><label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📱 Phone</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} className="input-field" placeholder="07XXXXXXXX" /></div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-600 mb-1 block uppercase tracking-wider">📲 Mobile App PIN <span className="text-indigo-500 normal-case font-normal">(4-6 digits for mobile login)</span></label>
+                                    <input
+                                        value={form.mobile_pin}
+                                        onChange={e => setForm({ ...form, mobile_pin: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                                        className="input-field tracking-widest font-mono text-lg"
+                                        placeholder="e.g. 1234"
+                                        maxLength={6}
+                                        inputMode="numeric"
+                                    />
+                                    <p className="text-[10px] text-gray-400 mt-1">Used by Caretakers &amp; Landlords to log into the ARMS mobile app. Leave blank to keep existing PIN.</p>
+                                </div>
                                 <div className="col-span-2 flex gap-3 justify-end pt-2">
                                     <button onClick={() => { setShowAddUser(false); setEditUser(null); }} className="btn-outline flex items-center gap-2"><FiX size={14} /> Cancel</button>
                                     <button onClick={handleSaveUser} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)' }}>

@@ -4,7 +4,8 @@ import { getTenants, addTenant, updateTenant, deactivateTenant, getUnits, getLoc
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
-import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield, FiTrash2, FiLayers } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiUserX, FiSearch, FiPhone, FiMail, FiCalendar, FiHome, FiDollarSign, FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp, FiMapPin, FiUsers, FiShield, FiTrash2, FiLayers, FiDownload } from 'react-icons/fi';
+import { exportTenantsToExcel } from '@/lib/exportTenantsExcel';
 
 // ── Color tokens per column ────────────────────────────────────────────────────
 const C = {
@@ -87,6 +88,7 @@ export default function TenantsPage() {
     const [units, setUnits] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
+    const [exporting, setExporting] = useState(false);
 
     // Filters & sorting
     const [search, setSearch] = useState('');
@@ -199,6 +201,55 @@ export default function TenantsPage() {
             topProgress.done();
         }
         setSyncing(false);
+    };
+
+    // ── Excel Export ──────────────────────────────────────────────────────────
+    const handleExportExcel = async () => {
+        if (filtered.length === 0) { toast.error('No tenants to export'); return; }
+        setExporting(true);
+        const t = toast.loading(`Preparing Excel for ${filtered.length} tenants…`);
+        try {
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            const rows = filtered.map((tenant, idx) => {
+                const bal  = tenantBalances[tenant.tenant_id] ?? tenant.balance ?? 0;
+                const det  = tenantDetails[tenant.tenant_id];
+                const moveIn = tenant.move_in_date?.slice(0, 7) || '';
+                let monthsBehind = 0;
+                if (moveIn && moveIn < currentMonth) {
+                    const s = new Date(moveIn + '-01');
+                    const e = new Date(currentMonth + '-01');
+                    monthsBehind = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+                }
+                // Collect all unit names (multi-room support)
+                const allUnits = tenantUnitsMap[tenant.tenant_id];
+                const unitName = allUnits && allUnits.length > 0
+                    ? allUnits.map((u: any) => u.arms_units?.unit_name || u.unit_name || '').filter(Boolean).join(' + ')
+                    : tenant.arms_units?.unit_name || '';
+                return {
+                    no:               idx + 1,
+                    name:             tenant.tenant_name || '',
+                    phone:            tenant.phone || '',
+                    email:            tenant.email || '',
+                    idNumber:         tenant.id_number || '',
+                    unit:             unitName,
+                    location:         tenant.arms_locations?.location_name || '',
+                    moveInDate:       tenant.move_in_date ? new Date(tenant.move_in_date).toLocaleDateString('en-KE') : '',
+                    status:           tenant.status || '',
+                    monthlyRent:      Number(tenant.monthly_rent) || 0,
+                    totalOwed:        det?.totalOwed   || 0,
+                    totalPaid:        det?.totalPaidAllTime || 0,
+                    penalty:          det?.totalPenalty || 0,
+                    outstandingBalance: bal,
+                    monthsBehind,
+                };
+            });
+            const title = `Tenant Outstanding Balance Report — ${new Date().toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })}`;
+            await exportTenantsToExcel(rows, title, 'ARMS Admin');
+            toast.success(`✅ Exported ${rows.length} tenants to Excel!`, { id: t });
+        } catch (err: any) {
+            toast.error(err.message || 'Export failed', { id: t });
+        }
+        setExporting(false);
     };
 
     // ── Derived data ──────────────────────────────────────────────────────────
@@ -494,6 +545,12 @@ export default function TenantsPage() {
                         style={{ background: '#fff7ed', color: '#c2410c', borderColor: '#fed7aa' }}>
                         🔄
                         {syncing ? 'Syncing…' : 'Sync Balances'}
+                    </button>
+                    <button onClick={handleExportExcel} disabled={exporting}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition border"
+                        style={{ background: exporting ? '#f1f5f9' : '#f0fdf4', color: exporting ? '#94a3b8' : '#15803d', borderColor: exporting ? '#e2e8f0' : '#86efac' }}>
+                        <FiDownload size={15} />
+                        {exporting ? 'Exporting…' : `Export Excel (${filtered.length})`}
                     </button>
                     <button onClick={openAdd} className="btn-primary flex items-center gap-2"><FiPlus size={15} /> Add Tenant</button>
                 </div>
