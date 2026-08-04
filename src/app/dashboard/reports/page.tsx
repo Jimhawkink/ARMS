@@ -82,6 +82,8 @@ export default function ReportsPage() {
 
     // Statement tab
     const [selectedTenant, setSelectedTenant] = useState(0);
+    const [tenantSearch, setTenantSearch] = useState('');
+    const [tenantDropOpen, setTenantDropOpen] = useState(false);
     const [statement, setStatement] = useState<any>(null);
     const [stmtLoading, setStmtLoading] = useState(false);
 
@@ -838,21 +840,63 @@ export default function ReportsPage() {
                     <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm no-print">
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Select Tenant to Generate Statement</p>
                         <div className="flex flex-wrap gap-3 items-end">
-                            <div className="flex-1 min-w-[260px]">
-                                <select value={selectedTenant} onChange={e => setSelectedTenant(parseInt(e.target.value))} className="select-field">
-                                    <option value={0}>Choose tenant…</option>
-                                    {tenants.filter(t => t.status === 'Active').map(t => (
-                                        <option key={t.tenant_id} value={t.tenant_id}>
-                                            {t.tenant_name} — {t.arms_units?.unit_name} ({t.arms_locations?.location_name})
-                                        </option>
-                                    ))}
-                                </select>
+                            <div className="flex-1 min-w-[260px] relative">
+                                {/* Searchable tenant picker */}
+                                <input
+                                    type="text"
+                                    className="select-field"
+                                    placeholder="🔍 Search by name or phone number…"
+                                    value={tenantSearch}
+                                    onChange={e => {
+                                        setTenantSearch(e.target.value);
+                                        setTenantDropOpen(true);
+                                        if (!e.target.value) { setSelectedTenant(0); }
+                                    }}
+                                    onFocus={() => setTenantDropOpen(true)}
+                                    onBlur={() => setTimeout(() => setTenantDropOpen(false), 200)}
+                                    autoComplete="off"
+                                />
+                                {tenantDropOpen && tenantSearch.length > 0 && (() => {
+                                    const q = tenantSearch.toLowerCase();
+                                    const matches = tenants.filter(t =>
+                                        t.status === 'Active' && (
+                                            t.tenant_name?.toLowerCase().includes(q) ||
+                                            t.phone?.toLowerCase().includes(q)
+                                        )
+                                    );
+                                    return matches.length > 0 ? (
+                                        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                                            {matches.map(t => (
+                                                <div
+                                                    key={t.tenant_id}
+                                                    className="flex items-center gap-3 px-4 py-3 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0"
+                                                    onMouseDown={() => {
+                                                        setSelectedTenant(t.tenant_id);
+                                                        setTenantSearch(`${t.tenant_name} — ${t.arms_units?.unit_name ?? ''} (${t.arms_locations?.location_name ?? ''})`);
+                                                        setTenantDropOpen(false);
+                                                    }}
+                                                >
+                                                    <div className="w-8 h-8 rounded-full bg-cyan-100 flex items-center justify-center text-cyan-700 font-bold text-sm flex-shrink-0">
+                                                        {t.tenant_name?.charAt(0)}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="font-semibold text-gray-800 text-sm truncate">{t.tenant_name}</p>
+                                                        <p className="text-xs text-gray-500 truncate">{t.phone} · {t.arms_units?.unit_name} · {t.arms_locations?.location_name}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl px-4 py-3 text-sm text-gray-400">
+                                            No tenants found for "{tenantSearch}"
+                                        </div>
+                                    );
+                                })()}
                             </div>
                             <button onClick={loadStatement} disabled={!selectedTenant || stmtLoading}
-                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90"
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-50"
                                 style={{ background: 'linear-gradient(135deg,#0891b2,#06b6d4)' }}>
-                                📄
-                                Generate Statement
+                                📄 {stmtLoading ? 'Loading…' : 'Generate Statement'}
                             </button>
                         </div>
                     </div>
