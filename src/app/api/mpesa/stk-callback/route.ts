@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
                         return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (duplicate skipped)' });
                     }
 
-                    // Get unpaid bills (FIFO - oldest first)
+                    // Get unpaid bills (FIFO - oldest first), including Unbilled status
                     const { data: unpaidBills } = await supabase
                         .from('arms_billing')
                         .select('*')
@@ -188,6 +188,50 @@ export async function POST(request: NextRequest) {
                             const alloc = Math.min(remaining, bill.balance);
                             allocations.push({ billingId: bill.billing_id, amount: alloc });
                             remaining -= alloc;
+                        }
+                    }
+
+                    // If still remaining after real bills, create/update current month billing record
+                    if (remaining > 0) {
+                        const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+                        const monthlyRent = tenant.monthly_rent || 0;
+
+                        // Check if a billing record exists for current month
+                        const { data: existingBill } = await supabase
+                            .from('arms_billing')
+                            .select('*')
+                            .eq('tenant_id', tenantId)
+                            .eq('billing_month', currentMonth)
+                            .maybeSingle();
+
+                        if (existingBill) {
+                            // Allocate remaining to existing bill
+                            const alloc = Math.min(remaining, existingBill.balance || 0);
+                            if (alloc > 0) {
+                                allocations.push({ billingId: existingBill.billing_id, amount: alloc });
+                                remaining -= alloc;
+                            }
+                        } else if (monthlyRent > 0) {
+                            // Create billing record for current month
+                            const rentDue = monthlyRent;
+                            const alloc = Math.min(remaining, rentDue);
+                            const { data: newBill } = await supabase.from('arms_billing').insert([{
+                                tenant_id: tenantId,
+                                location_id: tenant.location_id,
+                                billing_month: currentMonth,
+                                billing_date: new Date().toISOString(),
+                                rent_amount: rentDue,
+                                amount_paid: alloc,
+                                balance: Math.max(0, rentDue - alloc),
+                                status: alloc >= rentDue ? 'Paid' : 'Partial',
+                                notes: `Auto-created on STK payment. Receipt: ${mpesaCode}`,
+                                created_at: new Date().toISOString(),
+                                updated_at: new Date().toISOString(),
+                            }]).select().single();
+                            if (newBill) {
+                                allocations.push({ billingId: newBill.billing_id, amount: alloc });
+                                remaining -= alloc;
+                            }
                         }
                     }
 
@@ -210,12 +254,12 @@ export async function POST(request: NextRequest) {
                     }]).select().single();
 
                     if (!payError && payment) {
-                        // Update bill allocations
+                        // Update bill allocations (for bills that already existed)
                         for (const alloc of allocations) {
-                            const bill = unpaidBills?.find(b => b.billing_id === alloc.billingId);
+                            const bill = (unpaidBills || []).find(b => b.billing_id === alloc.billingId);
                             if (bill) {
                                 const newPaid = (bill.amount_paid || 0) + alloc.amount;
-                                const newBal = bill.rent_amount - newPaid;
+                                const newBal = (bill.rent_amount || bill.balance) - newPaid;
                                 await supabase.from('arms_billing').update({
                                     amount_paid: newPaid,
                                     balance: Math.max(0, newBal),
