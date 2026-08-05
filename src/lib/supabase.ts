@@ -796,31 +796,10 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
         if (sm > 12) { sm = 1; sy++; }
     }
 
-    let totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
+    const totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
     const arrearsMonths = resultBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month);
     const hasVirtualBills = resultBills.some(b => b._virtual);
     const virtualMonths = resultBills.filter(b => b._virtual).map(b => b.billing_month);
-
-    // ── DB balance is the source of truth (STK callback always keeps it accurate) ──
-    // If calculated totalDue > DB balance, it means MPesa payments reduced the balance
-    // but the unbilled/virtual months weren't updated. Reflect the real payments in display.
-    const dbBalance = Math.round((tenant.balance || 0) * 100) / 100;
-    let overage = Math.max(0, totalDue - dbBalance);
-    if (overage > 0) {
-        for (let i = 0; i < resultBills.length && overage > 0; i++) {
-            const b = resultBills[i];
-            if (b._virtual) { // only adjust virtual/unbilled entries, never real billing records
-                const reduce = Math.min(b.balance, overage);
-                b.balance       = Math.round((b.balance - reduce) * 100) / 100;
-                b.amount_paid   = Math.round(((b.amount_paid || 0) + reduce) * 100) / 100;
-                b.status        = b.balance <= 0 ? 'Partial' : 'Partial';
-                if (b.billing_month < currentMonth) arrearsTotal = Math.max(0, arrearsTotal - reduce);
-                else currentMonthDue = Math.max(0, currentMonthDue - reduce);
-                overage -= reduce;
-            }
-        }
-        totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
-    }
 
     return {
         bills: resultBills,
