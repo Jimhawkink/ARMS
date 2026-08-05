@@ -796,58 +796,45 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
         if (sm > 12) { sm = 1; sy++; }
     }
 
-    // ── Re-allocate ALL payments FIFO across months (same logic as calculateUnpaidRent) ──
-    // This is independent of billing table state — always accurate regardless of
-    // whether billing records were created or not for unbilled months.
-    const { data: tenantPayments } = await supabase
+    // ── Adjust for unallocated payments (billing_id IS NULL) ──
+    // These are MPesa payments not linked to any billing record (e.g. payments on unbilled months
+    // before billing record was created). Subtract them from bills oldest-first (FIFO).
+    const { data: unallocPayments } = await supabase
         .from('arms_payments')
-        .select('amount, payment_date, created_at')
+        .select('amount')
         .eq('tenant_id', tenantId)
-        .order('payment_date', { ascending: true });
+        .is('billing_id', null);
 
-    if (tenantPayments && tenantPayments.length > 0) {
-        // Reset all bills to full rent for clean FIFO re-allocation
+    let unalloc = Math.round((unallocPayments || []).reduce((s, p) => s + (p.amount || 0), 0) * 100) / 100;
+
+    if (unalloc > 0) {
         for (const b of resultBills) {
-            b.amount_paid = 0;
-            b.balance = Math.round((b.rent_amount || b.balance) * 100) / 100;
-        }
-        // Allocate payments chronologically (FIFO)
-        for (const pmt of tenantPayments) {
-            let remaining = Math.round((pmt.amount || 0) * 100) / 100;
-            if (remaining <= 0) continue;
-            for (const b of resultBills) {
-                if (remaining <= 0) break;
-                if (b.balance <= 0) continue;
-                const alloc = Math.min(remaining, b.balance);
-                b.amount_paid = Math.round((b.amount_paid + alloc) * 100) / 100;
-                b.balance     = Math.round((b.balance - alloc) * 100) / 100;
-                remaining     = Math.round((remaining - alloc) * 100) / 100;
-            }
-        }
-        // Update status based on re-allocated balances
-        for (const b of resultBills) {
+            if (unalloc <= 0) break;
+            const reduce = Math.min(b.balance, unalloc);
+            b.balance     = Math.round((b.balance - reduce) * 100) / 100;
+            b.amount_paid = Math.round(((b.amount_paid || 0) + reduce) * 100) / 100;
             if (b.balance <= 0)        b.status = 'Paid';
             else if (b.amount_paid > 0) b.status = 'Partial';
-            else                        b.status = b._virtual ? 'Unbilled' : 'Unpaid';
+            unalloc -= reduce;
         }
     }
 
-    // Recompute totals from re-allocated bills
+    // Recompute totals after unallocated adjustment
     arrearsTotal    = 0;
     currentMonthDue = 0;
-    const unpaidResultBills = resultBills.filter(b => b.balance > 0);
-    for (const b of unpaidResultBills) {
+    const finalBills = resultBills.filter(b => b.balance > 0);
+    for (const b of finalBills) {
         if (b.billing_month < currentMonth) arrearsTotal    += b.balance;
         else                                currentMonthDue += b.balance;
     }
 
     const totalDue = Math.round((arrearsTotal + currentMonthDue) * 100) / 100;
-    const arrearsMonths = unpaidResultBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month);
+    const arrearsMonths = finalBills.filter(b => b.billing_month < currentMonth).map(b => b.billing_month);
     const hasVirtualBills = resultBills.some(b => b._virtual);
     const virtualMonths   = resultBills.filter(b => b._virtual).map(b => b.billing_month);
 
     return {
-        bills: unpaidResultBills,
+        bills: finalBills,
         arrearsTotal: Math.round(arrearsTotal * 100) / 100,
         currentMonthDue: Math.round(currentMonthDue * 100) / 100,
         totalDue,
