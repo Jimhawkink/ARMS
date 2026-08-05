@@ -8,8 +8,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 
-// ─── THIS APK'S VERSION — bump on every release ───────────────
-const APP_VERSION = 'v2.2';
+// 🚀 THIS APK'S VERSION - bump on every release 🚀
+const APP_VERSION = 'v2.3';
 
 // ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
@@ -279,7 +279,10 @@ function AppInner() {
             );
             const res = await fetch(`${ARMS_API_BASE}/api/license/validate`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-App-Version': 'v2.3' 
+                },
                 body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
             });
             const result = await res.json();

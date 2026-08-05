@@ -235,7 +235,7 @@ export async function getUnpaidBilling(tenantId: number): Promise<BillingRecord[
 export async function getTrueTotalBalance(tenantId: number): Promise<{ total: number; effectiveRent: number }> {
     try {
         const unpaid = await getUnpaidBilling(tenantId);
-        const total = unpaid.reduce((s, b) => s + (b.balance || 0), 0);
+        let total = unpaid.reduce((s, b) => s + (b.balance || 0), 0);
 
         // Effective rent for THIS month
         const { data: tenant } = await supabase
@@ -248,11 +248,23 @@ export async function getTrueTotalBalance(tenantId: number): Promise<{ total: nu
         const currentMonth = new Date().toISOString().slice(0, 7);
         const effectiveRent = getEffectiveRent(monthlyRent, currentMonth, isOnVacation);
 
+        // Subtract unallocated payments (billing_id IS NULL) — these are MPesa
+        // payments not linked to any billing record (e.g. payments on unbilled months)
+        const { data: unallocated } = await supabase
+            .from('arms_payments')
+            .select('amount')
+            .eq('tenant_id', tenantId)
+            .is('billing_id', null);
+        const unallocSum = (unallocated || []).reduce((s: number, p: any) => s + (p.amount || 0), 0);
+        total = Math.max(0, Math.round((total - unallocSum) * 100) / 100);
+
         return { total, effectiveRent };
     } catch {
         return { total: 0, effectiveRent: 0 };
     }
 }
+
+
 
 // ============================================================
 // PAYMENTS — Get tenant's payment history
@@ -291,11 +303,9 @@ function extractBillingMonth(notes: string | null): string {
 
 export async function refreshTenantBalance(tenantId: number): Promise<number> {
     try {
-        // Use true total: sum of all unpaid bills including unbilled virtual months
         const { total } = await getTrueTotalBalance(tenantId);
         return total;
     } catch {
-        // Fallback: read from DB column
         try {
             const { data } = await supabase
                 .from('arms_tenants')
@@ -308,7 +318,6 @@ export async function refreshTenantBalance(tenantId: number): Promise<number> {
         }
     }
 }
-
 // ============================================================
 // GET LATEST PAYMENT — Fetch most recent completed payment for tenant
 // Used to recover M-Pesa receipt + amount after STK timeout
@@ -549,7 +558,7 @@ export function pollSTKResult(params: {
             }
         } catch (_) { /* ignore polling errors, keep trying */ }
 
-        if (pollCount >= 35) { // 70s max polling (2s × 35)
+        if (pollCount >= 10) { // 20s max polling (2s × 10)
             clearInterval(pollInterval);
         }
     }, 2000);

@@ -41,6 +41,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [manualChecking, setManualChecking] = useState(false);
     const cleanupRef = useRef<(() => void) | null>(null);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const checkoutRef = useRef<string | null>(null);
 
     useEffect(() => {
         loadBalance();
@@ -106,12 +107,14 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 return;
             }
 
+            checkoutRef.current = checkoutRequestId; // store for manual check
+
             setStatusMsg('Waiting for M-Pesa confirmation…\nEnter your PIN on the M-Pesa prompt');
 
             cleanupRef.current = pollSTKResult({
                 checkoutRequestId,
-                // 120 seconds — Safaricom callbacks can take up to 90s
-                timeoutMs: 120000,
+                // 20 seconds — fast resolution for user experience
+                timeoutMs: 20000,
                 onConfirmed: async (mpesaReceipt, confirmedAmount) => {
                     if (timerRef.current) clearInterval(timerRef.current);
                     setStatusMsg('Payment confirmed! ✅');
@@ -181,9 +184,38 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         if (manualChecking) return;
         setManualChecking(true);
         try {
+            // 1) First check STK status API for the receipt (most reliable)
+            if (checkoutRef.current) {
+                const res = await fetch(
+                    `https://arms-opal.vercel.app/api/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(checkoutRef.current)}`,
+                    { headers: { Accept: 'application/json' } }
+                );
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data?.status === 'Completed') {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        const newBal = await refreshTenantBalance(session.tenant_id);
+                        setBalance(newBal);
+                        await updateSessionBalance(newBal);
+                        setReceipt(data.mpesaReceipt || 'MPesa');
+                        setPaidAmount(data.amountPaid || Math.round(parseFloat(amount)));
+                        setStep('success');
+                        setProcessing(false);
+                        setManualChecking(false);
+                        return;
+                    }
+                    if (data?.status === 'Failed' || data?.status === 'Cancelled') {
+                        setError(data.resultDesc || 'Payment was cancelled');
+                        setStep('failed');
+                        setProcessing(false);
+                        setManualChecking(false);
+                        return;
+                    }
+                }
+            }
+            // 2) Fallback: check if balance changed
             const newBal = await refreshTenantBalance(session.tenant_id);
             if (newBal !== balance) {
-                // Balance changed — payment went through!
                 if (timerRef.current) clearInterval(timerRef.current);
                 setBalance(newBal);
                 await updateSessionBalance(newBal);
@@ -385,8 +417,8 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         </Text>
                     )}
                     <Text style={s.processingHint}>Do NOT close this screen</Text>
-                    {/* Show manual check button after 30s in case callback is slow */}
-                    {checkingSeconds >= 30 && (
+                    {/* Show manual check button after 10s in case callback is slow */}
+                    {checkingSeconds >= 10 && (
                         <TouchableOpacity
                             onPress={handleManualCheck}
                             disabled={manualChecking}
