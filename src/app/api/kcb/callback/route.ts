@@ -1,0 +1,267 @@
+// ═══════════════════════════════════════════════════════════════
+// ARMS — KCB Buni Async Callback Handler
+// POST /api/kcb/callback
+//
+// KCB calls this URL after tenant enters M-Pesa PIN.
+// Handles all possible KCB callback shapes.
+// On success: updates arms_kcb_stk_requests + records in arms_payments.
+// This file does NOT touch any M-Pesa callback or payment tables.
+// ═══════════════════════════════════════════════════════════════
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin as supabase } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
+
+export async function POST(req: NextRequest) {
+    try {
+        const body = await req.json();
+        console.log('[KCB Callback ARMS] RAW:', JSON.stringify(body));
+
+        // Parse all possible KCB Buni callback shapes
+        const stkCallback = body?.Body?.stkCallback || body?.body?.stkCallback;
+        const flat         = body?.body || body;
+        const header       = body?.header || {};
+
+        // Extract CheckoutRequestID
+        const checkoutRequestId =
+            stkCallback?.CheckoutRequestID ||
+            flat?.CheckoutRequestID        ||
+            flat?.checkoutRequestId        ||
+            flat?.MerchantTransID          ||
+            flat?.merchantTransId          || '';
+
+        // Extract ResultCode — 0 = success
+        const resultCode =
+            stkCallback?.ResultCode ??
+            flat?.ResultCode        ??
+            flat?.resultCode        ??
+            flat?.ResponseCode      ??
+            header?.responseCode    ?? -1;
+
+        const isSuccess =
+            resultCode === 0     || resultCode === '0'  ||
+            flat?.Status === 'Success'                  ||
+            flat?.status === 'Success'                  ||
+            flat?.Status === 'COMPLETED';
+
+        // Extract M-Pesa receipt code (e.g. QFX12345AB)
+        let receiptNo  = flat?.TransactionID      ||
+                         flat?.transactionId      ||
+                         flat?.ReceiptNo          ||
+                         flat?.receiptNo          ||
+                         flat?.MpesaReceiptNumber || '';
+        let paidAmount = Number(flat?.Amount || flat?.amount || 0);
+        let msisdn     = flat?.MSISDN || flat?.msisdn || flat?.PhoneNumber || '';
+
+        // Extract invoiceNumber — KCB echoes what we sent: '{accountNumber}-{tenantId}'
+        const invoiceNumber =
+            flat?.invoiceNumber    ||
+            flat?.InvoiceNumber    ||
+            flat?.AccountReference ||
+            flat?.accountReference ||
+            flat?.BillRefNumber    ||
+            stkCallback?.AccountReference || '';
+
+        // Daraja-style CallbackMetadata (most reliable for receipt + amount)
+        const metaItems = stkCallback?.CallbackMetadata?.Item || flat?.CallbackMetadata?.Item || [];
+        for (const item of metaItems) {
+            if (item.Name === 'MpesaReceiptNumber') receiptNo  = String(item.Value || '');
+            if (item.Name === 'Amount')              paidAmount = Number(item.Value || 0);
+            if (item.Name === 'PhoneNumber')         msisdn     = String(item.Value || '');
+        }
+
+        console.log('[KCB Callback ARMS] CheckoutID:', checkoutRequestId,
+                    '| Success:', isSuccess, '| Receipt:', receiptNo, '| Amount:', paidAmount);
+
+        if (!checkoutRequestId) {
+            console.error('[KCB Callback ARMS] No CheckoutRequestID — ignoring');
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'OK' });
+        }
+
+        // ── 1. Find our original STK request ──
+        const { data: stkReq, error: stkErr } = await supabase
+            .from('arms_kcb_stk_requests')
+            .select('*')
+            .eq('checkout_request_id', checkoutRequestId)
+            .maybeSingle();
+
+        if (stkErr) console.error('[KCB Callback] STK lookup error:', stkErr.message);
+
+        // ── 2. Update arms_kcb_stk_requests status ──
+        const newStatus = isSuccess ? 'Completed' : (resultCode === 1032 ? 'Cancelled' : 'Failed');
+        await supabase
+            .from('arms_kcb_stk_requests')
+            .update({
+                status:        newStatus,
+                mpesa_receipt: receiptNo || null,
+                result_code:   String(resultCode),
+                result_desc:   stkCallback?.ResultDesc || flat?.ResultDesc || flat?.resultDesc || '',
+                amount_paid:   paidAmount || null,
+                updated_at:    new Date().toISOString(),
+            })
+            .eq('checkout_request_id', checkoutRequestId);
+
+        // ── 3. Resolve tenantId ──
+        // PRIMARY: from our original STK request (most reliable — set server-side at initiation)
+        let tenantId: number | null = stkReq?.tenant_id || null;
+
+        // FALLBACK: parse from invoiceNumber '{accountNumber}-{tenantId}'
+        if (!tenantId && invoiceNumber) {
+            const parts  = String(invoiceNumber).split('-');
+            const parsed = parts.length >= 2 ? Number(parts[parts.length - 1]) : NaN;
+            if (!isNaN(parsed) && parsed > 0) {
+                tenantId = parsed;
+                console.log('[KCB Callback ARMS] Resolved tenantId from invoiceNumber:', tenantId);
+            }
+        }
+
+        const txnAmount = paidAmount || Number(stkReq?.amount || 0);
+
+        if (!isSuccess) {
+            console.log('[KCB Callback ARMS] ❌ Payment FAILED. Code:', resultCode);
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+        }
+
+        if (!tenantId || txnAmount <= 0 || !receiptNo) {
+            console.warn('[KCB Callback ARMS] Missing tenant, amount, or receipt — cannot record payment.',
+                         { tenantId, txnAmount, receiptNo });
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+        }
+
+        // ── 4. Deduplication: skip if this receipt already recorded ──
+        const { data: existingPay } = await supabase
+            .from('arms_payments')
+            .select('payment_id')
+            .eq('mpesa_receipt', receiptNo)
+            .maybeSingle();
+
+        if (existingPay) {
+            console.log('[KCB Callback ARMS] Receipt already recorded:', receiptNo);
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (duplicate skipped)' });
+        }
+
+        // ── 5. Load tenant for FIFO billing allocation ──
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .single();
+
+        if (!tenant) {
+            console.warn('[KCB Callback ARMS] Tenant not found:', tenantId);
+            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+        }
+
+        // ── 6. FIFO allocation across unpaid bills ──
+        const { data: unpaidBills } = await supabase
+            .from('arms_billing')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .gt('balance', 0)
+            .order('billing_date', { ascending: true });
+
+        let remaining = txnAmount;
+        const allocations: { billingId: number; amount: number }[] = [];
+
+        for (const bill of (unpaidBills || [])) {
+            if (remaining <= 0) break;
+            const alloc = Math.min(remaining, bill.balance);
+            allocations.push({ billingId: bill.billing_id, amount: alloc });
+            remaining -= alloc;
+        }
+
+        // If still remaining and no billed month exists, auto-create billing for current month
+        if (remaining > 0) {
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            const monthlyRent  = tenant.monthly_rent || 0;
+            const { data: existingBill } = await supabase
+                .from('arms_billing')
+                .select('*')
+                .eq('tenant_id', tenantId)
+                .eq('billing_month', currentMonth)
+                .maybeSingle();
+
+            if (existingBill && (existingBill.balance || 0) > 0) {
+                const alloc = Math.min(remaining, existingBill.balance);
+                allocations.push({ billingId: existingBill.billing_id, amount: alloc });
+                remaining -= alloc;
+            } else if (!existingBill && monthlyRent > 0) {
+                const alloc = Math.min(remaining, monthlyRent);
+                const { data: newBill } = await supabase.from('arms_billing').insert([{
+                    tenant_id:     tenantId,
+                    location_id:   tenant.location_id,
+                    unit_id:       tenant.unit_id,
+                    billing_month: currentMonth,
+                    billing_date:  `${currentMonth}-01`,
+                    due_date:      `${currentMonth}-05`,
+                    rent_amount:   monthlyRent,
+                    amount_paid:   alloc,
+                    balance:       Math.max(0, monthlyRent - alloc),
+                    status:        alloc >= monthlyRent ? 'Paid' : 'Partial',
+                    notes:         `Auto-created on KCB payment. Receipt: ${receiptNo}`,
+                    created_at:    new Date().toISOString(),
+                    updated_at:    new Date().toISOString(),
+                }]).select().single();
+                if (newBill) {
+                    allocations.push({ billingId: newBill.billing_id, amount: alloc });
+                    remaining -= alloc;
+                }
+            }
+        }
+
+        // ── 7. Record payment in arms_payments ──
+        const { data: payment, error: payErr } = await supabase.from('arms_payments').insert([{
+            tenant_id:      tenantId,
+            billing_id:     allocations.length > 0 ? allocations[0].billingId : null,
+            location_id:    tenant.location_id,
+            amount:         txnAmount,
+            payment_method: 'KCB Buni',
+            mpesa_receipt:  receiptNo,
+            mpesa_phone:    msisdn || null,
+            reference_no:   checkoutRequestId,
+            recorded_by:    'KCB Buni STK Auto',
+            notes:          `KCB Buni confirmed. Receipt: ${receiptNo}. CheckoutID: ${checkoutRequestId}`,
+            payment_date:   new Date().toISOString(),
+        }]).select().single();
+
+        if (payErr) {
+            console.error('[KCB Callback ARMS] Payment insert error:', payErr.message);
+        } else {
+            console.log(`[KCB Callback ARMS] ✅ Payment recorded: tenant=${tenantId} KES${txnAmount} receipt=${receiptNo}`);
+
+            // Update billing allocations
+            for (const alloc of allocations) {
+                const bill = (unpaidBills || []).find(b => b.billing_id === alloc.billingId);
+                if (bill) {
+                    const newPaid = (bill.amount_paid || 0) + alloc.amount;
+                    const newBal  = Math.max(0, bill.rent_amount - newPaid);
+                    await supabase.from('arms_billing').update({
+                        amount_paid: newPaid,
+                        balance:     newBal,
+                        status:      newBal <= 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid',
+                        updated_at:  new Date().toISOString(),
+                    }).eq('billing_id', alloc.billingId);
+                }
+            }
+
+            // Update tenant balance
+            const newTenantBalance = Math.max(0, (tenant.balance || 0) - txnAmount);
+            await supabase.from('arms_tenants').update({
+                balance:    newTenantBalance,
+                updated_at: new Date().toISOString(),
+            }).eq('tenant_id', tenantId);
+        }
+
+        return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
+    } catch (err: any) {
+        console.error('[KCB Callback ARMS] Error:', err.message);
+        // Always return 200 to KCB — they retry on non-200
+        return NextResponse.json({ ResultCode: 0, ResultDesc: 'OK' });
+    }
+}
+
+// Health check
+export async function GET() {
+    return NextResponse.json({ status: 'ARMS KCB Buni Callback Active', time: new Date().toISOString() });
+}
