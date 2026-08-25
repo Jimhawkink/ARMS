@@ -12,6 +12,24 @@ import { supabaseAdmin as supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+// KCB Buni required IPN response per API documentation
+function kcbResponse(messageID: string, originatorConversationID: string, transactionId: string) {
+    return NextResponse.json({
+        header: {
+            messageID,
+            originatorConversationID,
+            statusCode: '0',
+            statusMessage: 'Notification received',
+        },
+        responsePayload: {
+            transactionInfo: {
+                transactionId,
+            },
+        },
+    });
+}
+
+
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
@@ -75,7 +93,7 @@ export async function POST(req: NextRequest) {
 
         if (!checkoutRequestId) {
             console.error('[KCB Callback ARMS] No CheckoutRequestID — ignoring');
-            return NextResponse.json({ ResultCode: 0, ResultDesc: 'OK' });
+            return kcbResponse(String(Date.now()), String(Date.now()), '0');
         }
 
         // ── 1. Find our original STK request ──
@@ -119,13 +137,13 @@ export async function POST(req: NextRequest) {
 
         if (!isSuccess) {
             console.log('[KCB Callback ARMS] ❌ Payment FAILED. Code:', resultCode);
-            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+            return kcbResponse(String(Date.now()), String(Date.now()), '0');
         }
 
         if (!tenantId || txnAmount <= 0 || !receiptNo) {
             console.warn('[KCB Callback ARMS] Missing tenant, amount, or receipt — cannot record payment.',
                          { tenantId, txnAmount, receiptNo });
-            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+            return kcbResponse(String(Date.now()), String(Date.now()), '0');
         }
 
         // ── 4. Deduplication: skip if this receipt already recorded ──
@@ -137,7 +155,7 @@ export async function POST(req: NextRequest) {
 
         if (existingPay) {
             console.log('[KCB Callback ARMS] Receipt already recorded:', receiptNo);
-            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted (duplicate skipped)' });
+            return kcbResponse(String(Date.now()), String(Date.now()), '0');
         }
 
         // ── 5. Load tenant for FIFO billing allocation ──
@@ -149,7 +167,7 @@ export async function POST(req: NextRequest) {
 
         if (!tenant) {
             console.warn('[KCB Callback ARMS] Tenant not found:', tenantId);
-            return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+            return kcbResponse(String(Date.now()), String(Date.now()), '0');
         }
 
         // ── 6. FIFO allocation across unpaid bills ──
@@ -252,12 +270,12 @@ export async function POST(req: NextRequest) {
             }).eq('tenant_id', tenantId);
         }
 
-        return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+        return kcbResponse(String(Date.now()), String(Date.now()), '0');
 
     } catch (err: any) {
         console.error('[KCB Callback ARMS] Error:', err.message);
         // Always return 200 to KCB — they retry on non-200
-        return NextResponse.json({ ResultCode: 0, ResultDesc: 'OK' });
+        return kcbResponse(String(Date.now()), String(Date.now()), '0');
     }
 }
 
@@ -265,3 +283,7 @@ export async function POST(req: NextRequest) {
 export async function GET() {
     return NextResponse.json({ status: 'ARMS KCB Buni Callback Active', time: new Date().toISOString() });
 }
+
+
+
+

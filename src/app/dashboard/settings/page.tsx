@@ -127,6 +127,14 @@ const settingGroups = [
         description: 'Configure M-Pesa till per unit. STK Push is blocked for unconfigured units.',
         fields: [], // Rendered by UnitTillsPanel — not the standard field grid
     },
+    {
+        key: 'kcb_tills',
+        title: 'KCB Buni Tills',
+        emoji: '🏦',
+        color: '#0ea5e9',
+        description: 'Configure KCB Buni credentials per location. Apply to all units at once.',
+        fields: [], // Rendered by KcbTillsPanel — not the standard field grid
+    },
 ];
 
 /* ─── Field Component ─── */
@@ -715,6 +723,211 @@ function UnitTillsPanel() {
     );
 }
 
+/* ═══════════════════════════════════════════════════════════
+   KCB Buni Tills Panel
+   Mirrors UnitTillsPanel exactly but for KCB Buni.
+   One card per LOCATION — save once applies to ALL units.
+═══════════════════════════════════════════════════════════ */
+function KcbTillsPanel() {
+    const [locations, setLocations] = useState<any[]>([]);
+    const [forms,     setForms]     = useState<Record<number, any>>({});
+    const [loading,   setLoading]   = useState(true);
+    const [saving,    setSaving]    = useState<Record<number, boolean>>({});
+    const [show,      setShow]      = useState<Record<string, boolean>>({});
+
+    const loadData = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/kcb/location-config');
+            const data: any[] = res.ok ? await res.json() : [];
+            setLocations(data);
+            const initForms: Record<number, any> = {};
+            data.forEach((loc: any) => {
+                initForms[loc.location_id] = {
+                    account_number:  loc.account_number  || '',
+                    consumer_key:    '',   // always blank — masked on display
+                    consumer_secret: '',
+                    environment:     loc.environment || 'production',
+                };
+            });
+            setForms(initForms);
+        } catch { toast.error('Failed to load KCB configs'); }
+        setLoading(false);
+    };
+
+    useEffect(() => { loadData(); }, []);
+
+    const handleSave = async (locationId: number, locationName: string) => {
+        const form = forms[locationId];
+        if (!form?.account_number?.trim()) { toast.error('KCB Account Number is required'); return; }
+        setSaving(prev => ({ ...prev, [locationId]: true }));
+        try {
+            const res = await fetch('/api/kcb/location-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location_id: locationId, ...form }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast.success(`🏦 KCB config saved for all ${data.updated} units in ${locationName}`);
+                loadData();
+            } else {
+                toast.error(data.error || 'Failed to save KCB config');
+            }
+        } catch (e: any) { toast.error(e.message); }
+        setSaving(prev => ({ ...prev, [locationId]: false }));
+    };
+
+    const updateForm = (lid: number, key: string, value: string) =>
+        setForms(prev => ({ ...prev, [lid]: { ...prev[lid], [key]: value } }));
+
+    const toggleShow = (key: string) =>
+        setShow(prev => ({ ...prev, [key]: !prev[key] }));
+
+    if (loading) return (
+        <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+            <FiRefreshCw size={16} className="animate-spin" />
+            <span className="text-sm">Loading KCB configurations…</span>
+        </div>
+    );
+
+    const totalLocs      = locations.length;
+    const configuredLocs = locations.filter((l: any) => l.unit_count > 0 && l.configured_count === l.unit_count).length;
+
+    return (
+        <div className="space-y-5">
+            {/* Summary */}
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${configuredLocs === totalLocs && totalLocs > 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                <span className="text-xl">{configuredLocs === totalLocs && totalLocs > 0 ? '✅' : '⚠️'}</span>
+                <div>
+                    <p className={`text-sm font-bold ${configuredLocs === totalLocs && totalLocs > 0 ? 'text-green-800' : 'text-amber-800'}`}>
+                        {configuredLocs} of {totalLocs} locations KCB configured
+                    </p>
+                    <p className="text-xs mt-0.5 text-gray-500">Save once to apply KCB credentials to all units in a location</p>
+                </div>
+                <button onClick={loadData} className="ml-auto p-2 rounded-lg text-gray-400 hover:text-sky-600 transition">
+                    <FiRefreshCw size={14} />
+                </button>
+            </div>
+
+            {/* Callback URL */}
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl border bg-sky-50 border-sky-200">
+                <span className="text-xl">🔗</span>
+                <div className="flex-1">
+                    <p className="text-sm font-bold text-sky-800">KCB Callback URL</p>
+                    <p className="text-xs mt-0.5 text-sky-600 font-mono">https://arms-opal.vercel.app/api/kcb/callback</p>
+                    <p className="text-[10px] mt-1 text-gray-500">Set this in your KCB Buni developer portal as the callback URL.</p>
+                </div>
+            </div>
+
+            {/* One card per location */}
+            <div className="space-y-4">
+                {[...locations].sort((a: any, b: any) => a.location_name.localeCompare(b.location_name)).map((loc: any) => {
+                    const lid      = loc.location_id;
+                    const form     = forms[lid] || {};
+                    const isSaving = saving[lid];
+                    const allOk    = loc.unit_count > 0 && loc.configured_count === loc.unit_count;
+                    const partial  = loc.configured_count > 0 && loc.configured_count < loc.unit_count;
+
+                    return (
+                        <div key={lid} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100"
+                                style={{ background: allOk ? '#f0fdf4' : partial ? '#fffbeb' : '#f0f9ff' }}>
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                                        style={{ background: allOk ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}>
+                                        🏦
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-extrabold text-gray-900">{loc.location_name}</p>
+                                        <p className="text-[11px] text-gray-500 mt-0.5">{loc.unit_count} units · {loc.configured_count} configured</p>
+                                    </div>
+                                    <span className={`ml-2 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                        allOk   ? 'bg-green-50 text-green-700 border-green-200' :
+                                        partial ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                                  'bg-sky-50 text-sky-700 border-sky-200'
+                                    }`}>
+                                        {allOk ? '✅ All Configured' : partial ? '⚡ Partial' : '⚙️ Not Configured'}
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => handleSave(lid, loc.location_name)}
+                                    disabled={isSaving}
+                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
+                                    style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}
+                                >
+                                    {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
+                                    {isSaving ? 'Saving…' : `Save · Apply to All ${loc.unit_count} Units`}
+                                </button>
+                            </div>
+
+                            {/* Note */}
+                            <div className="mx-5 mt-4 px-3 py-2 rounded-xl bg-sky-50 border border-sky-100 text-xs text-sky-700">
+                                🏦 KCB Buni credentials apply to <strong>all {loc.unit_count} units</strong> in <strong>{loc.location_name}</strong>. Tenants in this location will use these credentials for KCB STK Push.
+                            </div>
+
+                            {/* Fields */}
+                            <div className="p-5 grid grid-cols-2 gap-4">
+                                {/* Account Number */}
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">🏦 KCB Account Number *</label>
+                                    <input value={form.account_number || ''} onChange={e => updateForm(lid, 'account_number', e.target.value)}
+                                        placeholder="e.g. 8128983"
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-50 transition" />
+                                </div>
+                                {/* Consumer Key */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">🔑 Consumer Key</label>
+                                    <div className="relative">
+                                        <input type={show[`kck_${lid}`] ? 'text' : 'password'} value={form.consumer_key || ''}
+                                            onChange={e => updateForm(lid, 'consumer_key', e.target.value)}
+                                            placeholder="Enter to update (leave blank to keep existing)"
+                                            className="w-full pl-3 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-sky-400 transition" />
+                                        <button type="button" onClick={() => toggleShow(`kck_${lid}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-sky-600">
+                                            {show[`kck_${lid}`] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {/* Consumer Secret */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">🔐 Consumer Secret</label>
+                                    <div className="relative">
+                                        <input type={show[`kcs_${lid}`] ? 'text' : 'password'} value={form.consumer_secret || ''}
+                                            onChange={e => updateForm(lid, 'consumer_secret', e.target.value)}
+                                            placeholder="Enter to update (leave blank to keep existing)"
+                                            className="w-full pl-3 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-sky-400 transition" />
+                                        <button type="button" onClick={() => toggleShow(`kcs_${lid}`)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-sky-600">
+                                            {show[`kcs_${lid}`] ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {/* Environment */}
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">🌍 Environment</label>
+                                    <select value={form.environment || 'production'} onChange={e => updateForm(lid, 'environment', e.target.value)}
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-sky-400 transition">
+                                        <option value="production">Production (Live)</option>
+                                        <option value="sandbox">Sandbox (Testing)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {locations.length === 0 && (
+                <div className="text-center py-12 text-gray-400">
+                    <p className="text-4xl mb-3">🏦</p>
+                    <p className="text-sm font-medium">No locations found</p>
+                    <p className="text-xs mt-1">Add locations first, then configure KCB per location</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function SettingsPage() {
     const [settings, setSettings] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
@@ -830,6 +1043,8 @@ export default function SettingsPage() {
                             {/* Unit Tills — custom panel */}
                             {activeGroup.key === 'unit_tills' ? (
                                 <UnitTillsPanel />
+                            ) : activeGroup.key === 'kcb_tills' ? (
+                                <KcbTillsPanel />
                             ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {activeGroup.fields.map(field => (
