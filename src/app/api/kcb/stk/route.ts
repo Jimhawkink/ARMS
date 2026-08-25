@@ -1,4 +1,4 @@
-﻿// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 // ARMS — KCB Buni STK Push
 // POST /api/kcb/stk
 //
@@ -16,10 +16,11 @@ export const dynamic = "force-dynamic";
 const lastPushTime = new Map<string, number>();
 const KCB_COOLDOWN_MS = 90_000;
 
-// Production endpoints — never change
-const TOKEN_URL = "https://api.buni.kcbgroup.com/token";
-const STK_URL   = "https://api.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
-const KCB_CALLBACK_URL = process.env.KCB_CALLBACK_URL || "https://arms-opal.vercel.app/api/kcb/callback";
+// Endpoints — read from env var so you can change without redeploying
+// Token URL from KCB portal: https://accounts.buni.kcbgroup.com/oauth2/token
+const TOKEN_URL        = process.env.KCB_TOKEN_URL     || "https://accounts.buni.kcbgroup.com/oauth2/token";
+const STK_URL          = process.env.KCB_STK_URL       || "https://sandbox.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
+const KCB_CALLBACK_URL = process.env.KCB_CALLBACK_URL  || "https://arms-opal.vercel.app/api/kcb/callback";
 
 /* ── Step 1: Resolve KCB credentials from DB for a tenant ── */
 async function resolveKcbCredentials(tenantId: number): Promise<{
