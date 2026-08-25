@@ -1,60 +1,97 @@
-// ═══════════════════════════════════════════════════════════════
+﻿// ═══════════════════════════════════════════════════════════════
 // ARMS — KCB Buni STK Status Polling
-// GET /api/kcb/status?checkoutRequestId=ws_CO_...
+// GET /api/kcb/status?checkoutRequestId=...&tenantId=...&invoiceNumber=...
 //
-// Mobile app polls this every 5 seconds after initiating KCB push.
-// Queries arms_kcb_stk_requests by the exact KCB CheckoutRequestID.
-// Returns: { status: 'Pending' | 'Completed' | 'Failed' | 'Cancelled', receipt, amount, resultCode }
-//
-// This is INDEPENDENT of M-Pesa — does NOT touch arms_stk_requests.
+// Super-accurate multi-fallback lookup:
+// 1. Exact checkout_request_id match
+// 2. Invoice number match (echoed by KCB)
+// 3. Most recent STK request for this tenant (within 10 minutes)
 // ═══════════════════════════════════════════════════════════════
-import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin as supabase } from '@/lib/supabase';
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin as supabase } from "@/lib/supabase";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
+function buildResponse(data: any) {
+    return NextResponse.json({
+        status:     data.status     || "Pending",
+        receipt:    data.mpesa_receipt  || null,
+        amount:     data.amount_paid    || data.amount || 0,
+        resultCode: data.result_code    || null,
+        resultDesc: data.result_desc    || null,
+    });
+}
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
-    const checkoutRequestId = searchParams.get('checkoutRequestId');
+    const checkoutRequestId = searchParams.get("checkoutRequestId") || "";
+    const tenantIdParam     = searchParams.get("tenantId")          || "";
+    const invoiceNumber     = searchParams.get("invoiceNumber")     || "";
 
-    if (!checkoutRequestId) {
-        return NextResponse.json({ error: 'checkoutRequestId is required' }, { status: 400 });
+    if (!checkoutRequestId && !tenantIdParam && !invoiceNumber) {
+        return NextResponse.json({ error: "checkoutRequestId or tenantId required" }, { status: 400 });
     }
 
     try {
-        const { data, error } = await supabase
-            .from('arms_kcb_stk_requests')
-            .select('status, mpesa_receipt, amount_paid, result_code, result_desc, tenant_id, amount')
-            .eq('checkout_request_id', checkoutRequestId)
-            .maybeSingle();
+        // ── 1. Exact checkout_request_id match ──
+        if (checkoutRequestId) {
+            const { data, error } = await supabase
+                .from("arms_kcb_stk_requests")
+                .select("status, mpesa_receipt, amount_paid, result_code, result_desc, tenant_id, amount, invoice_number, created_at")
+                .eq("checkout_request_id", checkoutRequestId)
+                .maybeSingle();
 
-        if (error) {
-            console.error('[KCB Status ARMS] DB error:', error.message);
-            return NextResponse.json({ status: 'Pending' });
+            if (!error && data) {
+                console.log(`[KCB Status] ✅ Found by checkoutId: ${checkoutRequestId} → ${data.status}`);
+                return buildResponse(data);
+            }
         }
 
-        if (!data) {
-            // Not yet written by callback — still processing
-            return NextResponse.json({ status: 'Pending' });
+        // ── 2. Invoice number match (KCB echoes our invoiceNumber) ──
+        const inv = invoiceNumber || (checkoutRequestId.includes("-") ? checkoutRequestId : "");
+        if (inv) {
+            const { data, error } = await supabase
+                .from("arms_kcb_stk_requests")
+                .select("status, mpesa_receipt, amount_paid, result_code, result_desc, tenant_id, amount, created_at")
+                .eq("invoice_number", inv)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (!error && data) {
+                console.log(`[KCB Status] ✅ Found by invoice: ${inv} → ${data.status}`);
+                return buildResponse(data);
+            }
         }
 
-        const status = data.status || 'Pending';
+        // ── 3. Most recent STK request for this tenant (within 10 min) ──
+        if (tenantIdParam) {
+            const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const { data, error } = await supabase
+                .from("arms_kcb_stk_requests")
+                .select("status, mpesa_receipt, amount_paid, result_code, result_desc, tenant_id, amount, created_at")
+                .eq("tenant_id", Number(tenantIdParam))
+                .gte("created_at", tenMinsAgo)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
 
-        return NextResponse.json({
-            status:     status,                          // 'Pending' | 'Completed' | 'Failed' | 'Cancelled'
-            receipt:    data.mpesa_receipt  || null,
-            amount:     data.amount_paid    || data.amount || 0,
-            resultCode: data.result_code    || null,
-            resultDesc: data.result_desc    || null,
-        });
+            if (!error && data) {
+                console.log(`[KCB Status] ✅ Found by tenantId: ${tenantIdParam} → ${data.status}`);
+                return buildResponse(data);
+            }
+        }
+
+        // ── 4. Nothing found — still processing ──
+        console.log(`[KCB Status] ⏳ Not yet found. checkoutId=${checkoutRequestId} tenantId=${tenantIdParam}`);
+        return NextResponse.json({ status: "Pending" });
 
     } catch (err: any) {
-        console.error('[KCB Status ARMS] Error:', err.message);
-        return NextResponse.json({ status: 'Pending' });
+        console.error("[KCB Status ARMS] Error:", err.message);
+        return NextResponse.json({ status: "Pending" });
     }
 }
 
-// Health check
 export async function POST() {
-    return NextResponse.json({ status: 'ARMS KCB Status Active', time: new Date().toISOString() });
+    return NextResponse.json({ status: "ARMS KCB Status Active", time: new Date().toISOString() });
 }
