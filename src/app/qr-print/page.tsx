@@ -339,10 +339,10 @@ export default function QRPrintPage() {
                                 </div>
                                 <div className="main-title">📱 ARMS Mobile App</div>
                                 <div className="sub-title">Scan to download — Pay rent instantly</div>
-                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.2.3</strong></div>
+                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.3.0</strong></div>
                                 <div className="notice-banner">
                                     <div className="notice-title">⚠️ IMPORTANT NOTICE</div>
-                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK Ver.2.3</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
+                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK Ver.3.0</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
                                 </div>
                             </div>
 
@@ -363,7 +363,7 @@ export default function QRPrintPage() {
                             <div className="steps">
                                 {[
                                     ['1','Open your camera app and point at the QR code'],
-                                    ['2','Download & install ARMS Mobile APK v2.3'],
+                                    ['2','Download & install ARMS Mobile APK v3.0'],
                                     ['3','Enter your phone number & 6-digit PIN to login'],
                                 ].map(([n, t]) => (
                                     <div className="step" key={n}>
