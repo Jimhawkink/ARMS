@@ -1,29 +1,12 @@
 ﻿// ═══════════════════════════════════════════════════════════════
 // ARMS — KCB Buni STK Status Polling
 // GET /api/kcb/status?checkoutRequestId=...&invoiceNumber=...
-//
-// Lookup order:
-// 1. Exact checkout_request_id match (any status)
-// 2. invoice_number match — ONLY if status is Pending (prevents
-//    old completed payments from triggering false success)
-//
-// NOTE: tenantId fallback was intentionally removed — it matched
-//       previous payments and caused false "success" on new payments.
+// Mirrors APSIMS kcb-status logic exactly
 // ═══════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
-
-function buildResponse(data: any) {
-    return NextResponse.json({
-        status:     data.status          || "Pending",
-        receipt:    data.mpesa_receipt   || null,
-        amount:     data.amount_paid     || data.amount || 0,
-        resultCode: data.result_code     || null,
-        resultDesc: data.result_desc     || null,
-    });
-}
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
@@ -35,41 +18,73 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        // ── 1. Exact checkout_request_id match (most reliable) ──
+        // ── 1. Exact checkout_request_id match in arms_kcb_stk_requests ──
         if (checkoutRequestId) {
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from("arms_kcb_stk_requests")
                 .select("status, mpesa_receipt, amount_paid, result_code, result_desc, amount")
                 .eq("checkout_request_id", checkoutRequestId)
                 .maybeSingle();
 
-            if (!error && data) {
-                console.log(`[KCB Status] ✅ Found by checkoutId: ${checkoutRequestId} → ${data.status}`);
-                return buildResponse(data);
+            if (data) {
+                const s = (data.status || "").toLowerCase();
+                if (s === "completed" || s === "success") {
+                    return NextResponse.json({
+                        status:  "Completed",
+                        receipt: data.mpesa_receipt || "",
+                        amount:  data.amount_paid || data.amount || 0,
+                    });
+                }
+                if (s === "failed" || s === "cancelled") {
+                    return NextResponse.json({
+                        status:     "Failed",
+                        resultCode: data.result_code || "",
+                        resultDesc: data.result_desc || "",
+                    });
+                }
             }
         }
 
-        // ── 2. Invoice number fallback — ONLY Pending records ──
-        // This prevents old Completed payments from triggering false success
+        // ── 2. Check arms_payments by reference_no (checkoutRequestId stored there) ──
+        // Mirrors APSIMS: search notes/reference_no for checkoutId,
+        // exclude KCB-ws_CO_ receipts (only accept real M-Pesa codes)
+        if (checkoutRequestId) {
+            const { data: pay } = await supabase
+                .from("arms_payments")
+                .select("mpesa_receipt, amount, payment_date")
+                .eq("reference_no", checkoutRequestId)
+                .not("mpesa_receipt", "ilike", "KCB-%")
+                .maybeSingle();
+
+            if (pay) {
+                console.log(`[KCB Status] Found real receipt in arms_payments: ${pay.mpesa_receipt}`);
+                return NextResponse.json({
+                    status:  "Completed",
+                    receipt: pay.mpesa_receipt || "",
+                    amount:  pay.amount || 0,
+                });
+            }
+        }
+
+        // ── 3. Invoice number fallback — ONLY Pending records within 5 min ──
         if (invoiceNumber) {
             const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from("arms_kcb_stk_requests")
                 .select("status, mpesa_receipt, amount_paid, result_code, result_desc, amount")
                 .eq("invoice_number", invoiceNumber)
-                .eq("status", "Pending")              // ← CRITICAL: only Pending, never old Completed
-                .gte("created_at", fiveMinsAgo)       // ← only within last 5 minutes
+                .eq("status", "Pending")
+                .gte("created_at", fiveMinsAgo)
                 .order("created_at", { ascending: false })
                 .limit(1)
                 .maybeSingle();
 
-            if (!error && data) {
-                console.log(`[KCB Status] ✅ Found by invoice (Pending): ${invoiceNumber} → ${data.status}`);
-                return buildResponse(data);
+            if (data) {
+                return NextResponse.json({ status: "Pending" });
             }
         }
 
-        // ── 3. Not found — still processing ──
+        // ── 4. Still processing ──
         return NextResponse.json({ status: "Pending" });
 
     } catch (err: any) {

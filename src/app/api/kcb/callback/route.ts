@@ -1,22 +1,15 @@
-﻿// ═══════════════════════════════════════════════════════════════
-// ARMS — KCB Buni Async Callback Handler
+﻿// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ARMS â€” KCB Buni Async Callback Handler
 // POST /api/kcb/callback
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-function kcbResponse(messageID: string, originatorConversationID: string, transactionId: string) {
-    return NextResponse.json({
-        header: {
-            messageID,
-            originatorConversationID,
-            statusCode: '0',
-            statusMessage: 'Notification received',
-        },
-        responsePayload: { transactionInfo: { transactionId } },
-    });
+// Match APSIMS response format exactly
+function kcbResponse() {
+    return NextResponse.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 }
 
 export async function POST(req: NextRequest) {
@@ -37,7 +30,7 @@ export async function POST(req: NextRequest) {
             flat?.MerchantTransID          ||
             flat?.merchantTransId          || '';
 
-        // Extract ResultCode — 0 = success
+        // Extract ResultCode â€” 0 = success
         const resultCode =
             stkCallback?.ResultCode ??
             flat?.ResultCode        ??
@@ -80,11 +73,11 @@ export async function POST(req: NextRequest) {
                     '| Success:', isSuccess, '| Receipt:', receiptNo, '| Amount:', paidAmount);
 
         if (!checkoutRequestId) {
-            console.error('[KCB Callback ARMS] No CheckoutRequestID — ignoring');
-            return kcbResponse(String(Date.now()), String(Date.now()), '0');
+            console.error('[KCB Callback ARMS] No CheckoutRequestID â€” ignoring');
+            return kcbResponse();
         }
 
-        // ── 1. Find our original STK request ──
+        // â”€â”€ 1. Find our original STK request â”€â”€
         const { data: stkReq, error: stkErr } = await supabase
             .from('arms_kcb_stk_requests')
             .select('*')
@@ -93,7 +86,7 @@ export async function POST(req: NextRequest) {
 
         if (stkErr) console.error('[KCB Callback] STK lookup error:', stkErr.message);
 
-        // ── 2. Update arms_kcb_stk_requests status ──
+        // â”€â”€ 2. Update arms_kcb_stk_requests status â”€â”€
         const newStatus = isSuccess ? 'Completed' : (resultCode === 1032 ? 'Cancelled' : 'Failed');
         await supabase
             .from('arms_kcb_stk_requests')
@@ -107,7 +100,7 @@ export async function POST(req: NextRequest) {
             })
             .eq('checkout_request_id', checkoutRequestId);
 
-        // ── 3. Resolve tenantId ──
+        // â”€â”€ 3. Resolve tenantId â”€â”€
         let tenantId: number | null = stkReq?.tenant_id || null;
 
         // FALLBACK: parse from invoiceNumber '{accountNumber}-{tenantId}'
@@ -120,24 +113,24 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // ── 4. Amount — use callback value or fall back to DB amount ──
+        // â”€â”€ 4. Amount â€” use callback value or fall back to DB amount â”€â”€
         const txnAmount = paidAmount || Number(stkReq?.amount || 0);
 
-        // ── 5. Receipt — use M-Pesa code or fall back to checkoutRequestId ──
+        // â”€â”€ 5. Receipt â€” use M-Pesa code or fall back to checkoutRequestId â”€â”€
         const finalReceipt = receiptNo || `KCB-${checkoutRequestId}`;
 
         if (!isSuccess) {
             console.log('[KCB Callback ARMS] Payment FAILED. Code:', resultCode);
-            return kcbResponse(String(Date.now()), String(Date.now()), '0');
+            return kcbResponse();
         }
 
         if (!tenantId || txnAmount <= 0) {
-            console.warn('[KCB Callback ARMS] Missing tenant or amount — skipping payment record.',
+            console.warn('[KCB Callback ARMS] Missing tenant or amount â€” skipping payment record.',
                          { tenantId, txnAmount, receiptNo, checkoutRequestId });
-            return kcbResponse(String(Date.now()), String(Date.now()), '0');
+            return kcbResponse();
         }
 
-        // ── 6. Deduplication ──
+        // â”€â”€ 6. Deduplication â”€â”€
         const { data: existingPay } = await supabase
             .from('arms_payments')
             .select('payment_id')
@@ -146,10 +139,10 @@ export async function POST(req: NextRequest) {
 
         if (existingPay) {
             console.log('[KCB Callback ARMS] Already recorded:', finalReceipt);
-            return kcbResponse(String(Date.now()), String(Date.now()), '0');
+            return kcbResponse();
         }
 
-        // ── 7. Load tenant ──
+        // â”€â”€ 7. Load tenant â”€â”€
         const { data: tenant } = await supabase
             .from('arms_tenants')
             .select('*')
@@ -158,10 +151,10 @@ export async function POST(req: NextRequest) {
 
         if (!tenant) {
             console.warn('[KCB Callback ARMS] Tenant not found:', tenantId);
-            return kcbResponse(String(Date.now()), String(Date.now()), '0');
+            return kcbResponse();
         }
 
-        // ── 8. FIFO allocation ──
+        // â”€â”€ 8. FIFO allocation â”€â”€
         const { data: unpaidBills } = await supabase
             .from('arms_billing')
             .select('*')
@@ -217,7 +210,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // ── 9. Record payment ──
+        // â”€â”€ 9. Record payment â”€â”€
         const { data: payment, error: payErr } = await supabase.from('arms_payments').insert([{
             tenant_id:      tenantId,
             billing_id:     allocations.length > 0 ? allocations[0].billingId : null,
@@ -260,11 +253,11 @@ export async function POST(req: NextRequest) {
             }).eq('tenant_id', tenantId);
         }
 
-        return kcbResponse(String(Date.now()), String(Date.now()), '0');
+        return kcbResponse();
 
     } catch (err: any) {
         console.error('[KCB Callback ARMS] Error:', err.message);
-        return kcbResponse(String(Date.now()), String(Date.now()), '0');
+        return kcbResponse();
     }
 }
 
