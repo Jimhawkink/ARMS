@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, formatKES, maskPhone, normalizePhone,
     initiateSTKPush, pollSTKResult,
+    initiateKCBPush, pollKCBResult,
     refreshTenantBalance, getUnpaidBilling, getLatestPayment,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
@@ -17,7 +18,8 @@ interface Props {
     onPaymentComplete: () => void;
 }
 
-type PayMode = 'self' | 'payForMe';
+type PayMode   = 'self' | 'payForMe';
+type PayMethod = 'MPesa' | 'KCB';   // KCB Buni added alongside M-Pesa
 type PayStep = 'choose' | 'amount' | 'confirm' | 'processing' | 'success' | 'failed';
 
 const C = {
@@ -29,6 +31,7 @@ const C = {
 export default function PayRentScreen({ session, onBack, onPaymentComplete }: Props) {
     const [mode, setMode] = useState<PayMode>('self');
     const [step, setStep] = useState<PayStep>('choose');
+    const [payMethod, setPayMethod] = useState<PayMethod>('MPesa'); // auto-set after availability check
     const [amount, setAmount] = useState('');
     const [payerPhone, setPayerPhone] = useState('');
     const [balance, setBalance] = useState(session.balance);
@@ -39,18 +42,66 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [paidAmount, setPaidAmount] = useState(0);
     const [checkingSeconds, setCheckingSeconds] = useState(0);
     const [manualChecking, setManualChecking] = useState(false);
-    const cleanupRef = useRef<(() => void) | null>(null);
-    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // ── Payment method availability ──
+    const [mpesaAvailable, setMpesaAvailable] = useState(true);
+    const [kcbAvailable,   setKcbAvailable]   = useState(true);
+    const [methodLoading,  setMethodLoading]   = useState(true);
+
+    const cleanupRef  = useRef<(() => void) | null>(null);
+    const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
     const checkoutRef = useRef<string | null>(null);
 
     useEffect(() => {
         loadBalance();
+        checkPaymentMethods();
         return () => { if (cleanupRef.current) cleanupRef.current(); };
     }, []);
 
     const loadBalance = async () => {
         const b = await refreshTenantBalance(session.tenant_id);
         setBalance(b);
+    };
+
+    // ── Check which payment methods are configured for this tenant's unit ──
+    const checkPaymentMethods = async () => {
+        setMethodLoading(true);
+        try {
+            const [kcbRes, mpesaRes] = await Promise.allSettled([
+                fetch(`https://arms-opal.vercel.app/api/kcb/unit-config?tenant_id=${session.tenant_id}`),
+                fetch(`https://arms-opal.vercel.app/api/mpesa/unit-config/by-unit?unit_id=${session.unit_id}`),
+            ]);
+
+            let kcbOn   = false;
+            let mpesaOn = false;
+
+            if (kcbRes.status === 'fulfilled' && kcbRes.value.ok) {
+                const d = await kcbRes.value.json();
+                kcbOn = d?.kcbConfigured === true;
+            }
+            if (mpesaRes.status === 'fulfilled' && mpesaRes.value.ok) {
+                const d = await mpesaRes.value.json();
+                mpesaOn = !!(d?.till_number || d?.shortcode || d?.consumer_key);
+            }
+
+            // If neither is configured, enable both (fallback — let user try)
+            if (!kcbOn && !mpesaOn) { kcbOn = true; mpesaOn = true; }
+
+            setKcbAvailable(kcbOn);
+            setMpesaAvailable(mpesaOn);
+
+            // Auto-select the available method
+            if (kcbOn && !mpesaOn)   setPayMethod('KCB');
+            else if (mpesaOn && !kcbOn) setPayMethod('MPesa');
+            else setPayMethod('MPesa'); // default when both available
+
+            console.log(`[PayMethod] KCB=${kcbOn} MPesa=${mpesaOn} tenant=${session.tenant_id}`);
+        } catch (e) {
+            // Network error — show both
+            setKcbAvailable(true);
+            setMpesaAvailable(true);
+        }
+        setMethodLoading(false);
     };
 
     const handleSelectMode = (m: PayMode) => {
@@ -76,20 +127,100 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const handlePayNow = async () => {
         setStep('processing');
         setProcessing(true);
-        setStatusMsg('Sending M-Pesa prompt…');
         setError('');
         setCheckingSeconds(0);
 
-        // Start seconds counter so we can show "Check Status" button after 30s
+        // Start seconds counter so we can show "Check Status" button after 10s
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = setInterval(() => {
             setCheckingSeconds(prev => prev + 1);
         }, 1000);
 
-        const phone = mode === 'self' ? session.phone : payerPhone;
+        const phone  = mode === 'self' ? session.phone : payerPhone;
         const amtVal = Math.round(parseFloat(amount));
-        const desc = `Rent - ${session.tenant_name} - ${session.unit_name}`;
+        const desc   = `Rent - ${session.tenant_name} - ${session.unit_name}`;
 
+        // ── KCB Buni path ─────────────────────────────────────────────────────
+        if (payMethod === 'KCB') {
+            setStatusMsg('Sending KCB Buni prompt…');
+            try {
+                const { checkoutRequestId, error: kcbErr } = await initiateKCBPush({
+                    payerPhone:  phone,
+                    amount:      amtVal,
+                    tenantId:    session.tenant_id,
+                    description: desc,
+                });
+
+                if (kcbErr || !checkoutRequestId) {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setStep('failed');
+                    setError(kcbErr || 'KCB STK Push failed. Try M-Pesa instead.');
+                    setProcessing(false);
+                    return;
+                }
+
+                checkoutRef.current = checkoutRequestId;
+                setStatusMsg('KCB prompt sent! Enter your M-Pesa PIN when prompted.');
+
+                // Poll KCB status — multi-fallback: checkoutId → invoiceNumber → tenantId
+                const kcbInvoiceNumber = `8128983-${session.tenant_id}`;
+                cleanupRef.current = pollKCBResult({
+                    checkoutRequestId,
+                    tenantId:      session.tenant_id,
+                    invoiceNumber: kcbInvoiceNumber,
+                    timeoutMs: 90000,  // KCB allows up to 90s
+                    onConfirmed: async (kcbReceipt, confirmedAmount) => {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        const finalAmt = confirmedAmount || amtVal;
+                        // Callback already recorded payment on server — just refresh balance
+                        setReceipt(kcbReceipt || 'KCB');
+                        setPaidAmount(finalAmt);
+                        const newBal = await refreshTenantBalance(session.tenant_id);
+                        setBalance(newBal);
+                        await updateSessionBalance(newBal);
+                        setStep('success');
+                        setProcessing(false);
+                    },
+                    onFailed: (reason) => {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        setError(reason || 'KCB payment failed. Money was NOT deducted.');
+                        setStep('failed');
+                        setProcessing(false);
+                    },
+                    onTimeout: async () => {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        // Last-chance: check if balance changed (callback may have arrived)
+                        try {
+                            const newBal = await refreshTenantBalance(session.tenant_id);
+                            if (newBal !== balance) {
+                                setBalance(newBal);
+                                await updateSessionBalance(newBal);
+                                setReceipt('KCB');
+                                setPaidAmount(amtVal);
+                                setStep('success');
+                                setProcessing(false);
+                                return;
+                            }
+                        } catch (_) { /* ignore */ }
+                        setError(
+                            'KCB payment timed out.\n\n' +
+                            'If money was deducted, check your M-Pesa SMS and contact the landlord with your KCB receipt.'
+                        );
+                        setStep('failed');
+                        setProcessing(false);
+                    },
+                });
+            } catch (err: any) {
+                if (timerRef.current) clearInterval(timerRef.current);
+                setError(err.message || 'Network error');
+                setStep('failed');
+                setProcessing(false);
+            }
+            return; // KCB path done
+        }
+
+        // ── M-Pesa path (UNCHANGED) ────────────────────────────────────────────
+        setStatusMsg('Sending M-Pesa prompt…');
         try {
             const { checkoutRequestId, error: stkErr } = await initiateSTKPush({
                 payerPhone: phone,
@@ -244,6 +375,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         setPaidAmount(0);
         setCheckingSeconds(0);
         setManualChecking(false);
+        setPayMethod('MPesa'); // reset to default on new flow
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
     };
@@ -264,6 +396,70 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         </Text>
                     </View>
 
+                    {/* ── Payment Method Toggle: M-Pesa vs KCB Buni ── */}
+                    <Text style={s.sectionLabel}>💳 Payment Network</Text>
+                    {methodLoading ? (
+                        <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                            <ActivityIndicator size="small" color={C.primary} />
+                            <Text style={[s.methodHint, { marginTop: 6 }]}>Checking available payment methods…</Text>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={s.methodToggleRow}>
+                                {/* M-Pesa button */}
+                                <TouchableOpacity
+                                    style={[
+                                        s.methodBtn,
+                                        payMethod === 'MPesa' && s.methodBtnActive,
+                                        !mpesaAvailable && s.methodBtnDisabled,
+                                    ]}
+                                    onPress={() => mpesaAvailable && setPayMethod('MPesa')}
+                                    activeOpacity={mpesaAvailable ? 0.8 : 1}
+                                >
+                                    <Text style={s.methodBtnEmoji}>📱</Text>
+                                    <Text style={[s.methodBtnText, payMethod === 'MPesa' && s.methodBtnTextActive, !mpesaAvailable && s.methodBtnTextDisabled]}>
+                                        M-Pesa
+                                    </Text>
+                                    {!mpesaAvailable && (
+                                        <Text style={s.methodBadgeOff}>Not configured</Text>
+                                    )}
+                                    {mpesaAvailable && payMethod === 'MPesa' && (
+                                        <Text style={s.methodBadgeOn}>✓ Active</Text>
+                                    )}
+                                </TouchableOpacity>
+
+                                {/* KCB Buni button */}
+                                <TouchableOpacity
+                                    style={[
+                                        s.methodBtn,
+                                        payMethod === 'KCB' && s.methodBtnActiveKCB,
+                                        !kcbAvailable && s.methodBtnDisabled,
+                                    ]}
+                                    onPress={() => kcbAvailable && setPayMethod('KCB')}
+                                    activeOpacity={kcbAvailable ? 0.8 : 1}
+                                >
+                                    <Text style={s.methodBtnEmoji}>🏦</Text>
+                                    <Text style={[s.methodBtnText, payMethod === 'KCB' && s.methodBtnTextActive, !kcbAvailable && s.methodBtnTextDisabled]}>
+                                        KCB Buni
+                                    </Text>
+                                    {!kcbAvailable && (
+                                        <Text style={s.methodBadgeOff}>Not configured</Text>
+                                    )}
+                                    {kcbAvailable && payMethod === 'KCB' && (
+                                        <Text style={s.methodBadgeOnKCB}>✓ Active</Text>
+                                    )}
+                                </TouchableOpacity>
+                            </View>
+                            <Text style={s.methodHint}>
+                                {payMethod === 'MPesa'
+                                    ? '✅ Safaricom M-Pesa STK push to your phone'
+                                    : '✅ KCB Buni — enter M-Pesa PIN when prompted'}
+                            </Text>
+                        </>
+                    )}
+
+                    {/* ── Pay mode: own number or someone else ── */}
+                    <Text style={[s.sectionLabel, { marginTop: 16 }]}>📲 Who Pays?</Text>
                     <TouchableOpacity onPress={() => handleSelectMode('self')} activeOpacity={0.85}>
                         <LinearGradient colors={['#10b981', '#059669']} style={s.modeCard}>
                             <Text style={s.modeEmoji}>📱</Text>
@@ -289,7 +485,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     <View style={s.infoBox}>
                         <Text style={s.infoIcon}>🔒</Text>
                         <Text style={s.infoText}>
-                            Payments are processed securely via M-Pesa.{'\n'}
+                            Payments are processed securely via {payMethod === 'KCB' ? 'KCB Buni' : 'M-Pesa'}.{'\n'}
                             All payments are credited to your account regardless of who pays.
                         </Text>
                     </View>
@@ -297,6 +493,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
             </View>
         );
     }
+
 
     // Step: Enter amount (+ payer phone if pay-for-me)
     if (step === 'amount') {
@@ -384,7 +581,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                 </Text>
                             </View>
                         )}
-                        <ConfirmRow label="Method" value="M-Pesa STK Push" emoji="📲" />
+                        <ConfirmRow label="Method" value={payMethod === 'KCB' ? '🏦 KCB Buni STK' : '📲 M-Pesa STK Push'} emoji={payMethod === 'KCB' ? '🏦' : '📲'} />
                     </View>
 
                     <TouchableOpacity onPress={handlePayNow} activeOpacity={0.85}>
@@ -587,4 +784,19 @@ const s = StyleSheet.create({
     failMsg: { fontSize: 13, color: C.sub, textAlign: 'center', lineHeight: 20 },
     doneBtn: { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 },
     doneBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
+    // ── KCB Buni method toggle styles ──
+    sectionLabel: { fontSize: 11, color: C.sub, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, marginTop: 4 },
+    methodToggleRow: { flexDirection: 'row', gap: 10, marginBottom: 8 },
+    methodBtn: { flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, borderRadius: 14, borderWidth: 2, borderColor: C.border, backgroundColor: C.card },
+    methodBtnActive:    { borderColor: C.accent, backgroundColor: 'rgba(16,185,129,0.12)' },
+    methodBtnActiveKCB: { borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.12)' },
+    methodBtnDisabled:  { borderColor: '#1e293b', backgroundColor: '#0f1724', opacity: 0.45 },
+    methodBtnEmoji:     { fontSize: 18 },
+    methodBtnText:      { fontSize: 13, fontWeight: '700', color: C.sub },
+    methodBtnTextActive:   { color: C.text },
+    methodBtnTextDisabled: { color: C.dim },
+    methodBadgeOff:    { fontSize: 9, color: '#ef4444', fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
+    methodBadgeOn:     { fontSize: 9, color: C.accent, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
+    methodBadgeOnKCB:  { fontSize: 9, color: '#3b82f6', fontWeight: '700', backgroundColor: 'rgba(59,130,246,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
+    methodHint: { fontSize: 11, color: C.dim, marginBottom: 4, textAlign: 'center' },
 });

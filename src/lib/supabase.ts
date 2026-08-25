@@ -1147,3 +1147,122 @@ export async function getTenantStatement(tenantId: number): Promise<{
         return { tenant: null, entries: [] };
     }
 }
+
+// ============================================================
+// KCB BUNI STK PUSH — Initiate KCB payment
+// Added alongside M-Pesa — does NOT replace or affect it.
+// Routes through ARMS web app API (Vercel) which holds credentials.
+// ============================================================
+
+export async function initiateKCBPush(params: {
+    payerPhone:  string;
+    amount:      number;
+    tenantId:    number;
+    description: string;
+}): Promise<{ checkoutRequestId: string | null; error: string | null }> {
+    try {
+        const normalized = normalizePhone(params.payerPhone);
+        if (!normalized) {
+            return { checkoutRequestId: null, error: 'Invalid phone number. Use format: 0712345678' };
+        }
+
+        const response = await fetch(`${ARMS_API_URL}/kcb/stk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                phone:       normalized,
+                amount:      Math.round(params.amount),
+                tenantId:    params.tenantId,
+                description: params.description || 'Rent Payment',
+            }),
+        });
+
+        const result = await response.json();
+        console.log('[KCB ARMS Mobile] STK response:', result);
+
+        if (!response.ok || result.error) {
+            return { checkoutRequestId: null, error: result.error || 'KCB STK Push failed' };
+        }
+
+        return { checkoutRequestId: result.checkoutRequestId || null, error: null };
+    } catch (err: any) {
+        console.error('initiateKCBPush error:', err.message);
+        return { checkoutRequestId: null, error: 'Network error — please check your connection' };
+    }
+}
+
+// ============================================================
+// KCB BUNI — Poll payment status every 5 seconds
+// Multi-fallback: checkoutRequestId → invoiceNumber → tenantId (most recent within 10min)
+// ============================================================
+
+export function pollKCBResult(params: {
+    checkoutRequestId: string;
+    tenantId?:         number;
+    invoiceNumber?:    string;
+    timeoutMs:         number;
+    onConfirmed:  (receipt: string, amount: number) => void;
+    onFailed:     (reason: string, resultCode?: string) => void;
+    onTimeout:    () => void;
+}): () => void {
+    let done = false;
+    const finish = () => { if (done) return false; done = true; return true; };
+
+    // Build URL with all available IDs — server does multi-fallback lookup
+    const buildUrl = () => {
+        let url = `${ARMS_API_URL}/kcb/status?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`;
+        if (params.tenantId)      url += `&tenantId=${params.tenantId}`;
+        if (params.invoiceNumber) url += `&invoiceNumber=${encodeURIComponent(params.invoiceNumber)}`;
+        return url;
+    };
+
+    const handleData = (data: any): boolean => {
+        const status = (data?.status || '').toLowerCase();
+        if (status === 'completed') {
+            clearInterval(pollInterval);
+            clearTimeout(timer);
+            if (finish()) params.onConfirmed(data.receipt || '', data.amount || 0);
+            return true;
+        } else if (status === 'failed' || status === 'cancelled') {
+            clearInterval(pollInterval);
+            clearTimeout(timer);
+            if (finish()) {
+                const code = String(data.resultCode || '');
+                let msg = 'KCB payment failed. Money was NOT deducted.';
+                if (code === '1032')      msg = 'Payment cancelled. Money was NOT deducted.';
+                else if (code === '1')    msg = 'Insufficient M-Pesa balance. Please top up and try again.';
+                else if (code === '2001') msg = 'Wrong M-Pesa PIN entered. Money was NOT deducted.';
+                else if (data.resultDesc) msg = data.resultDesc;
+                params.onFailed(msg, code);
+            }
+            return true;
+        }
+        return false;
+    };
+
+    const pollInterval = setInterval(async () => {
+        if (done) { clearInterval(pollInterval); return; }
+        try {
+            const res = await fetch(buildUrl(), { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) return;
+            const data = await res.json();
+            handleData(data);
+        } catch { /* keep polling on network error */ }
+    }, 5000);
+
+    const timer = setTimeout(async () => {
+        clearInterval(pollInterval);
+        if (done) return;
+        try {
+            const res = await fetch(buildUrl(), { headers: { 'Accept': 'application/json' } });
+            if (res.ok) {
+                const data = await res.json();
+                if (handleData(data)) return;
+            }
+        } catch { /* ignore */ }
+        if (finish()) params.onTimeout();
+    }, params.timeoutMs);
+
+    return () => { done = true; clearInterval(pollInterval); clearTimeout(timer); };
+}
+
