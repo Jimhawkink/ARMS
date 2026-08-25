@@ -72,3 +72,46 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 });
     }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   DELETE /api/mpesa/location-till-config
+   Clears ALL M-Pesa till credentials for every unit in a location.
+   Body: { location_id }
+───────────────────────────────────────────────────────────── */
+export async function DELETE(request: NextRequest) {
+    try {
+        const { location_id } = await request.json();
+        if (!location_id) {
+            return NextResponse.json({ error: 'location_id is required' }, { status: 400 });
+        }
+
+        // Get all unit_ids for this location
+        const { data: units, error: unitsErr } = await supabase
+            .from('arms_units')
+            .select('unit_id')
+            .eq('location_id', location_id)
+            .eq('active', true);
+
+        if (unitsErr) return NextResponse.json({ error: unitsErr.message }, { status: 500 });
+        if (!units || units.length === 0) {
+            return NextResponse.json({ error: 'No active units found' }, { status: 404 });
+        }
+
+        const unitIds = units.map((u: any) => u.unit_id);
+
+        // Delete config rows for all units in this location
+        const { error: delErr } = await supabase
+            .from('arms_unit_mpesa_config')
+            .delete()
+            .in('unit_id', unitIds);
+
+        if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+
+        console.log(`🗑️ Cleared M-Pesa config for ${unitIds.length} units in location ${location_id}`);
+
+        return NextResponse.json({ success: true, cleared: unitIds.length, location_id });
+    } catch (err: any) {
+        console.error('DELETE /api/mpesa/location-till-config error:', err);
+        return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 });
+    }
+}

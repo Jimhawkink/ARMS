@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +67,49 @@ export async function POST(request: NextRequest) {
         });
     } catch (err: any) {
         console.error("POST /api/kcb/location-config error:", err);
+        return NextResponse.json({ error: err.message || "Internal error" }, { status: 500 });
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   DELETE /api/kcb/location-config
+   Clears ALL KCB Buni credentials for every unit in a location.
+   Body: { location_id }
+───────────────────────────────────────────────────────────── */
+export async function DELETE(request: NextRequest) {
+    try {
+        const { location_id } = await request.json();
+        if (!location_id) {
+            return NextResponse.json({ error: "location_id is required" }, { status: 400 });
+        }
+
+        // Get all unit_ids for this location
+        const { data: units, error: unitsErr } = await supabase
+            .from("arms_units")
+            .select("unit_id")
+            .eq("location_id", location_id)
+            .eq("active", true);
+
+        if (unitsErr) return NextResponse.json({ error: unitsErr.message }, { status: 500 });
+        if (!units || units.length === 0) {
+            return NextResponse.json({ error: "No active units found" }, { status: 404 });
+        }
+
+        const unitIds = units.map((u: any) => u.unit_id);
+
+        // Delete KCB config rows for all units in this location
+        const { error: delErr } = await supabase
+            .from("arms_unit_kcb_config")
+            .delete()
+            .in("unit_id", unitIds);
+
+        if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+
+        console.log(`🗑️ Cleared KCB config for ${unitIds.length} units in location ${location_id}`);
+
+        return NextResponse.json({ success: true, cleared: unitIds.length, location_id });
+    } catch (err: any) {
+        console.error("DELETE /api/kcb/location-config error:", err);
         return NextResponse.json({ error: err.message || "Internal error" }, { status: 500 });
     }
 }

@@ -546,6 +546,27 @@ function UnitTillsPanel() {
         setSaving(prev => ({ ...prev, [locationId]: false }));
     };
 
+    const handleClear = async (locationId: number, locationName: string) => {
+        if (!window.confirm(`Clear ALL M-Pesa credentials for ${locationName}?\n\nThis will remove the till from all units in this location.`)) return;
+        setSaving(prev => ({ ...prev, [locationId]: true }));
+        try {
+            const res = await fetch('/api/mpesa/location-till-config', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location_id: locationId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast.success(`🗑️ M-Pesa cleared for all units in ${locationName}`);
+                setForms(prev => ({ ...prev, [locationId]: { till_number: '', shortcode: '', consumer_key: '', consumer_secret: '', passkey: '', environment: 'production' } }));
+                loadData();
+            } else {
+                toast.error(data.error || 'Failed to clear');
+            }
+        } catch (e: any) { toast.error(e.message); }
+        setSaving(prev => ({ ...prev, [locationId]: false }));
+    };
+
     const updateForm = (lid: number, key: string, value: string) =>
         setForms(prev => ({ ...prev, [lid]: { ...prev[lid], [key]: value } }));
 
@@ -631,15 +652,25 @@ function UnitTillsPanel() {
                                         {allOk ? ' All Configured' : partial ? ' Partial' : ' Till Not Configured'}
                                     </span>
                                 </div>
-                                <button
-                                    onClick={() => handleSave(lid, loc.location_name)}
-                                    disabled={isSaving}
-                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
-                                    style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
-                                >
-                                    {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
-                                    {isSaving ? 'Saving' : `Save  Apply to All ${stats.total} Units`}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => handleClear(lid, loc.location_name)}
+                                        disabled={isSaving}
+                                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition disabled:opacity-60 whitespace-nowrap"
+                                        title="Clear all M-Pesa credentials for this location"
+                                    >
+                                        🗑️ Clear
+                                    </button>
+                                    <button
+                                        onClick={() => handleSave(lid, loc.location_name)}
+                                        disabled={isSaving}
+                                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
+                                        style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
+                                    >
+                                        {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
+                                        {isSaving ? 'Saving' : `Save  Apply to All ${stats.total} Units`}
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Info note */}
@@ -778,6 +809,27 @@ function KcbTillsPanel() {
         setSaving(prev => ({ ...prev, [locationId]: false }));
     };
 
+    const handleClear = async (locationId: number, locationName: string) => {
+        if (!window.confirm(`Clear ALL KCB Buni credentials for ${locationName}?\n\nThis will remove KCB config from all units in this location.`)) return;
+        setSaving(prev => ({ ...prev, [locationId]: true }));
+        try {
+            const res = await fetch('/api/kcb/location-config', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location_id: locationId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast.success(`🗑️ KCB config cleared for all units in ${locationName}`);
+                setForms(prev => ({ ...prev, [locationId]: { account_number: '', consumer_key: '', consumer_secret: '', environment: 'production' } }));
+                loadData();
+            } else {
+                toast.error(data.error || 'Failed to clear KCB config');
+            }
+        } catch (e: any) { toast.error(e.message); }
+        setSaving(prev => ({ ...prev, [locationId]: false }));
+    };
+
     const updateForm = (lid: number, key: string, value: string) =>
         setForms(prev => ({ ...prev, [lid]: { ...prev[lid], [key]: value } }));
 
@@ -851,15 +903,25 @@ function KcbTillsPanel() {
                                         {allOk ? '✅ All Configured' : partial ? '⚡ Partial' : '⚙️ Not Configured'}
                                     </span>
                                 </div>
-                                <button
-                                    onClick={() => handleSave(lid, loc.location_name)}
-                                    disabled={isSaving}
-                                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
-                                    style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}
-                                >
-                                    {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
-                                    {isSaving ? 'Saving…' : `Save · Apply to All ${loc.unit_count} Units`}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => handleClear(lid, loc.location_name)}
+                                        disabled={isSaving}
+                                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition disabled:opacity-60 whitespace-nowrap"
+                                        title="Clear all KCB credentials for this location"
+                                    >
+                                        🗑️ Clear
+                                    </button>
+                                    <button
+                                        onClick={() => handleSave(lid, loc.location_name)}
+                                        disabled={isSaving}
+                                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition disabled:opacity-60 whitespace-nowrap"
+                                        style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}
+                                    >
+                                        {isSaving ? <FiRefreshCw size={12} className="animate-spin" /> : <FiSave size={12} />}
+                                        {isSaving ? 'Saving…' : `Save · Apply to All ${loc.unit_count} Units`}
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Note */}
