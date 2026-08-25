@@ -162,11 +162,10 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 checkoutRef.current = checkoutRequestId;
                 setStatusMsg('KCB prompt sent! Enter your M-Pesa PIN when prompted.');
 
-                // Poll KCB status — multi-fallback: checkoutId → invoiceNumber → tenantId
+                // Poll KCB status — checkoutId first, invoiceNumber as fallback (Pending only)
                 const kcbInvoiceNumber = `8128983-${session.tenant_id}`;
                 cleanupRef.current = pollKCBResult({
                     checkoutRequestId,
-                    tenantId:      session.tenant_id,
                     invoiceNumber: kcbInvoiceNumber,
                     timeoutMs: 90000,  // KCB allows up to 90s
                     onConfirmed: async (kcbReceipt, confirmedAmount) => {
