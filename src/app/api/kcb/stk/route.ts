@@ -22,7 +22,7 @@ const TOKEN_URL        = process.env.KCB_TOKEN_URL     || "https://accounts.buni
 const STK_URL          = process.env.KCB_STK_URL       || "https://sandbox.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
 const KCB_CALLBACK_URL = process.env.KCB_CALLBACK_URL  || "https://arms-opal.vercel.app/api/kcb/callback";
 
-/* ── Step 1: Resolve KCB credentials from DB for a tenant ── */
+/* ── Resolve KCB credentials: DB first, env vars as fallback ── */
 async function resolveKcbCredentials(tenantId: number): Promise<{
     consumerKey: string;
     consumerSecret: string;
@@ -39,35 +39,57 @@ async function resolveKcbCredentials(tenantId: number): Promise<{
 
     if (tenantErr || !tenant?.unit_id) {
         console.warn(`⚠️ KCB STK: tenant ${tenantId} not found or has no unit`);
+        // If tenant lookup fails, try env var fallback
+        const ck = process.env.KCB_CONSUMER_KEY;
+        const cs = process.env.KCB_CONSUMER_SECRET;
+        if (ck && cs) {
+            console.log("[KCB STK] Using env var fallback (no tenant unit)");
+            return { consumerKey: ck, consumerSecret: cs, accountNumber: process.env.KCB_ACCOUNT_NUMBER || "", environment: "production", unitId: 0 };
+        }
         return null;
     }
 
-    // 2. Get KCB config for this unit from DB
-    const { data: config, error: cfgErr } = await supabase
-        .from("arms_unit_kcb_config")
-        .select("consumer_key, consumer_secret, account_number, environment, is_configured")
-        .eq("unit_id", tenant.unit_id)
-        .eq("active", true)
-        .maybeSingle();
+    // 2. Try DB config first
+    try {
+        const { data: config, error: cfgErr } = await supabase
+            .from("arms_unit_kcb_config")
+            .select("consumer_key, consumer_secret, account_number, environment, is_configured")
+            .eq("unit_id", tenant.unit_id)
+            .eq("active", true)
+            .maybeSingle();
 
-    if (cfgErr) {
-        console.warn(`⚠️ KCB STK: DB error for unit ${tenant.unit_id}:`, cfgErr.message);
-        return null;
+        if (!cfgErr && config && config.is_configured) {
+            console.log(`[KCB STK] Using DB config for unit ${tenant.unit_id}`);
+            return {
+                consumerKey:    config.consumer_key.trim(),
+                consumerSecret: config.consumer_secret.trim(),
+                accountNumber:  config.account_number?.trim() || "",
+                environment:    config.environment || "production",
+                unitId:         tenant.unit_id,
+            };
+        }
+    } catch (e: any) {
+        console.warn("[KCB STK] DB config read failed (table may not exist yet):", e.message);
     }
 
-    if (!config || !config.is_configured) {
-        console.warn(`⚠️ KCB STK: no/incomplete config for unit ${tenant.unit_id}`);
-        return null;
+    // 3. Fallback to env vars (works before DB is set up / SQL is run)
+    const ck = process.env.KCB_CONSUMER_KEY;
+    const cs = process.env.KCB_CONSUMER_SECRET;
+    if (ck && cs) {
+        console.log(`[KCB STK] Env var fallback for unit ${tenant.unit_id} (DB not configured)`);
+        return {
+            consumerKey:    ck,
+            consumerSecret: cs,
+            accountNumber:  process.env.KCB_ACCOUNT_NUMBER || "",
+            environment:    "production",
+            unitId:         tenant.unit_id,
+        };
     }
 
-    return {
-        consumerKey:    config.consumer_key.trim(),
-        consumerSecret: config.consumer_secret.trim(),
-        accountNumber:  config.account_number?.trim() || "",
-        environment:    config.environment || "production",
-        unitId:         tenant.unit_id,
-    };
+    console.warn(`⚠️ KCB STK: no config in DB and no env vars set for unit ${tenant.unit_id}`);
+    return null;
 }
+
 
 /* ── Step 2: Get OAuth2 Bearer token using DB credentials ── */
 async function getKCBToken(consumerKey: string, consumerSecret: string): Promise<string> {
