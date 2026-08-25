@@ -206,19 +206,18 @@ export async function POST(req: NextRequest) {
         const kcbCheckoutId = result?.response?.CheckoutRequestID || invoiceNumber;
 
         // ── Log to Supabase ──
-        await supabase.from("arms_kcb_stk_requests").insert([{
+        const insertPayload: any = {
             checkout_request_id: kcbCheckoutId,
             merchant_request_id: result?.response?.MerchantRequestID || invoiceNumber,
-            tenant_id:   Number(tenantId),
-            unit_id:     creds.unitId,
-            amount:      Number(amount),
-            phone:       normalizedPhone,
-            status:      "Pending",
+            tenant_id:      Number(tenantId),
+            amount:         Number(amount),
+            phone:          normalizedPhone,
+            status:         "Pending",
             invoice_number: invoiceNumber,
-            created_at:  new Date().toISOString(),
-        }]).then(({ error: e }) => {
-            if (e) console.error("[KCB ARMS] DB log error:", e.message);
-        });
+        };
+        const { error: insertErr } = await supabase.from("arms_kcb_stk_requests").insert([insertPayload]);
+        if (insertErr) console.error("[KCB ARMS] DB log error:", insertErr.message, "payload:", JSON.stringify(insertPayload));
+        else console.log("[KCB ARMS] STK record saved. checkoutId:", kcbCheckoutId);
 
         // ── Friendly errors ──
         let friendlyMsg = rawDesc;
