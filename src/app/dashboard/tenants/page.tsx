@@ -519,7 +519,7 @@ export default function TenantsPage() {
             await deactivateTenant(id);
             toast.success(`${name} moved out. Mobile app access blocked.`);
             loadData(globalLocationId);
-        } catch { toast.error('Failed'); }
+        } catch (err: any) { toast.error(err?.message || err?.error_description || 'Move-out failed'); console.error('deactivateTenant error:', err); }
     };
 
     if (loading) return (

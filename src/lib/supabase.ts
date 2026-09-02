@@ -608,7 +608,16 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
 }
 
 export async function deactivateTenant(id: number) {
-    const tenant = await getTenantById(id);
+    // Safely fetch tenant (may fail if related table has issues)
+    let tenant: any = null;
+    try {
+        tenant = await getTenantById(id);
+    } catch (e) {
+        console.warn('getTenantById failed (continuing with deactivate):', e);
+        // Fall back: query without the join so we still get unit_id
+        const { data } = await supabase.from('arms_tenants').select('tenant_id, unit_id').eq('tenant_id', id).single();
+        tenant = data;
+    }
     // Vacate primary unit
     if (tenant?.unit_id) {
         await supabase.from('arms_units').update({ status: 'Vacant' }).eq('unit_id', tenant.unit_id);
@@ -632,7 +641,7 @@ export async function deactivateTenant(id: number) {
         mobile_pin: null,
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', id);
-    if (error) throw error;
+    if (error) throw new Error(`Move-out failed: ${error.message} (code: ${error.code})`);
 }
 
 // ==================== BILLING ====================
