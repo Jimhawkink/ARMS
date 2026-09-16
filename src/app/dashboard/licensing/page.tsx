@@ -25,6 +25,8 @@ export default function LicensingPage() {
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
     const [revoking, setRevoking] = useState<string | null>(null);
+    const [resettingMachine, setResettingMachine] = useState<string | null>(null);
+
     const [showForm, setShowForm] = useState(false);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -120,6 +122,39 @@ export default function LicensingPage() {
         }
         setRevoking(null);
     };
+
+    const handleResetMachine = async (licenseId: string, clientName: string) => {
+        if (!confirm(
+            `Reset machine binding for "${clientName}"?\n\n` +
+            `This will:\n` +
+            `• Clear the machine lock from the database\n` +
+            `• Set their license to "Pending" until they re-activate\n` +
+            `• Allow them to re-activate using their existing license key on any machine\n\n` +
+            `Use this when:\n` +
+            `• Their browser updated and their license shows as expired\n` +
+            `• They got a new computer\n` +
+            `• The fingerprint changed unexpectedly`
+        )) return;
+        setResettingMachine(licenseId);
+        topProgress.start();
+        try {
+            const res = await fetch('/api/license/reset-machine', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ licenseId, isSuperAdmin: true }),
+            });
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
+            toast.success(`✅ Machine binding reset for ${clientName}. They can now re-activate with their key.`, { duration: 5000 });
+            loadLicenses();
+        } catch (e: any) {
+            toast.error(e.message);
+        } finally {
+            topProgress.done();
+            setResettingMachine(null);
+        }
+    };
+
 
     const copyKey = (key: string) => {
         navigator.clipboard.writeText(key);
@@ -337,13 +372,26 @@ export default function LicensingPage() {
                                         {lic.notes && <p className="text-[10px] text-gray-400 mt-1 italic">{lic.notes}</p>}
                                     </div>
                                     {!isRevoked && (
-                                        <button onClick={() => handleRevoke(lic.license_id, lic.client_name)}
-                                            disabled={revoking === lic.license_id}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition disabled:opacity-50 flex-shrink-0">
-                                            <FiX size={12} />
-                                            Revoke
-                                        </button>
+                                        <div className="flex flex-col gap-1.5 flex-shrink-0">
+                                            {/* Reset Machine Binding — for when fingerprint drifts after browser update */}
+                                            {lic.machine_id && (
+                                                <button
+                                                    onClick={() => handleResetMachine(lic.license_id, lic.client_name)}
+                                                    disabled={resettingMachine === lic.license_id}
+                                                    title="Reset machine binding — allows client to re-activate on any machine"
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 transition disabled:opacity-50">
+                                                    🔄 {resettingMachine === lic.license_id ? 'Resetting…' : 'Reset Machine'}
+                                                </button>
+                                            )}
+                                            <button onClick={() => handleRevoke(lic.license_id, lic.client_name)}
+                                                disabled={revoking === lic.license_id}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition disabled:opacity-50">
+                                                <FiX size={12} />
+                                                Revoke
+                                            </button>
+                                        </div>
                                     )}
+
                                 </div>
                             </div>
                         );

@@ -97,13 +97,42 @@ export async function POST(req: NextRequest) {
         if (license.machine_id !== null) {
             // Already activated — check if same machine
             if (license.machine_id !== machineHash) {
-                return NextResponse.json(
-                    {
-                        error: 'This license is already activated on a different machine and CANNOT be transferred. Each license is permanently bound to one machine. Contact your administrator for a new license.',
-                        code: 'MACHINE_MISMATCH',
-                    },
-                    { status: 403 }
-                );
+                // ── Smart Re-binding (Ultra Grade) ────────────────
+                // Allow re-binding when the machine fingerprint has drifted.
+                // This happens legitimately when:
+                //   • Chrome auto-updates (userAgent changes every 2–4 weeks)
+                //   • System migrates to the new stable UUID fingerprint
+                //   • User re-installs their browser
+                // The license key itself is the primary security token.
+                // Admin can always revoke a license if misuse is suspected.
+                const { error: rebindError } = await supabase
+                    .from('arms_licenses')
+                    .update({
+                        machine_id: machineHash,
+                        activated_at: new Date().toISOString(),
+                    })
+                    .eq('license_id', license.license_id);
+
+                if (rebindError) {
+                    console.error('License rebind error:', rebindError);
+                    return NextResponse.json(
+                        { error: 'Re-activation failed. Please try again or contact your administrator.' },
+                        { status: 500 }
+                    );
+                }
+
+                console.log(`License re-bound for ${license.client_name} [${license.license_id}]`);
+                return NextResponse.json({
+                    success: true,
+                    reactivated: true,
+                    rebound: true,
+                    clientName: license.client_name,
+                    expiryDate: license.expiry_date,
+                    features: license.features,
+                    licenseKey: license.license_key,
+                    activatedAt: new Date().toISOString(),
+                    message: `License re-activated for ${license.client_name}. Machine binding updated.`,
+                });
             }
             // Same machine — re-activation (e.g. after clearing storage)
             return NextResponse.json({
@@ -117,6 +146,7 @@ export async function POST(req: NextRequest) {
                 message: `License re-activated for ${license.client_name}`,
             });
         }
+
 
         // ── First activation — bind to this machine ───────────
         const { error: updateError } = await supabase

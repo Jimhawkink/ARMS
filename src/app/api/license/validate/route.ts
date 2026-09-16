@@ -82,7 +82,11 @@ export async function POST(req: NextRequest) {
 
         if (license.machine_id !== machineHash) {
             return NextResponse.json(
-                { valid: false, error: 'License is bound to a different machine. Unauthorized access attempt logged.' },
+                {
+                    valid: false,
+                    code: 'MACHINE_DRIFT',
+                    error: 'Your browser was updated or this machine\'s fingerprint has changed. Please re-enter your license key to re-activate. Your license is still valid.',
+                },
                 { status: 403 }
             );
         }

@@ -149,23 +149,48 @@ export function parseStoredLicense(raw: string | null): LicensePayload | null {
 }
 
 // ── Compute browser machine fingerprint ──────────────────────
+// Uses a stable UUID stored in localStorage rather than volatile browser
+// properties like navigator.userAgent (which changes on every Chrome update,
+// causing machine mismatch / "license expired" errors every 2–4 weeks).
+const MACHINE_UUID_KEY = 'arms_machine_uuid';
+
 export async function computeMachineFingerprint(): Promise<string> {
     if (typeof window === 'undefined') return 'server';
-    const components = [
-        navigator.userAgent,
-        `${screen.width}x${screen.height}`,
-        Intl.DateTimeFormat().resolvedOptions().timeZone,
+
+    // ── Get or create a stable machine UUID ──────────────────
+    let machineUUID = localStorage.getItem(MACHINE_UUID_KEY);
+    if (!machineUUID) {
+        // Generate a cryptographically random UUID (stable for lifetime of localStorage)
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            machineUUID = crypto.randomUUID();
+        } else {
+            // Fallback for older browsers
+            machineUUID = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = Math.random() * 16 | 0;
+                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+            });
+        }
+        localStorage.setItem(MACHINE_UUID_KEY, machineUUID);
+    }
+
+    // ── Hash UUID with stable system info (NOT userAgent) ────
+    // userAgent changes on every browser update → was causing the 2-week expiry bug
+    const stableComponents = [
+        machineUUID,
         navigator.language,
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
         String(navigator.hardwareConcurrency || 0),
-        String((navigator as any).deviceMemory || 0),
-        screen.colorDepth,
-        navigator.platform || '',
     ].join('|');
 
-    // Use SubtleCrypto for SHA-256
     const encoder = new TextEncoder();
-    const data = encoder.encode(components);
+    const data = encoder.encode(stableComponents);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Get stored machine UUID (for display/debugging) ───────────
+export function getMachineUUID(): string | null {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(MACHINE_UUID_KEY);
 }

@@ -207,7 +207,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (saved) setSelectedLocation(parseInt(saved));
     }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Separate function (not useCallback) to avoid dependency issues
     const doValidateLicense = async (lic: LicensePayload | null) => {
         try {
             if (!lic?.licenseKey) {
@@ -223,7 +222,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const result = await res.json();
             if (!result.valid) {
                 localStorage.removeItem('arms_license');
-                router.push(`/license-activate?error=${encodeURIComponent(result.error || 'License invalid')}`);
+                if (result.code === 'MACHINE_DRIFT') {
+                    // Browser was updated — fingerprint changed. Guide user to re-activate.
+                    toast.error('🔄 Browser update detected — please re-enter your license key to continue.', { duration: 6000 });
+                    router.push(`/license-activate?error=${encodeURIComponent('Your browser was updated. Please re-enter your license key to re-activate — your license is still valid.')}`);
+                } else {
+                    router.push(`/license-activate?error=${encodeURIComponent(result.error || 'License invalid')}`);
+                }
                 return;
             }
             // Update license in storage with fresh server data
@@ -243,6 +248,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             setLicenseChecked(true);
         }
     };
+
 
     // ── Auto-expand active group ──────────────────────────────
     useEffect(() => {
