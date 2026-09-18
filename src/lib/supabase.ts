@@ -191,16 +191,21 @@ export async function getUnpaidBilling(tenantId: number): Promise<BillingRecord[
         if (error) throw error;
 
         const existingSet = new Set((allBills || []).map((b: any) => b.billing_month));
-        const currentMonth = new Date().toISOString().slice(0, 7);
+
+        // Use LOCAL date arithmetic — avoids UTC timezone shift bug (EAT = UTC+3)
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonthNum = now.getMonth() + 1;
+        const currentMonth = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
         const earliestMonth = moveIn ? moveIn.slice(0, 7) : currentMonth;
 
         // Generate virtual "Unbilled" entries for months missing in DB
         const virtualBills: BillingRecord[] = [];
-        let cursor = new Date(earliestMonth + '-01');
-        const end = new Date(currentMonth + '-01');
+        let [sy, sm] = earliestMonth.split('-').map(Number);
 
-        while (cursor <= end) {
-            const m = cursor.toISOString().slice(0, 7);
+        // Integer arithmetic — no Date timezone issues
+        while (sy < currentYear || (sy === currentYear && sm <= currentMonthNum)) {
+            const m = `${sy}-${String(sm).padStart(2, '0')}`;
             if (!existingSet.has(m)) {
                 const effectiveRent = getEffectiveRent(monthlyRent, m, isOnVacation);
                 virtualBills.push({
@@ -216,11 +221,12 @@ export async function getUnpaidBilling(tenantId: number): Promise<BillingRecord[
                     _virtual: true,
                 });
             }
-            cursor.setMonth(cursor.getMonth() + 1);
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
         }
 
-        // Filter existing to only unpaid, then combine with virtual
-        const unpaidExisting = (allBills || []).filter((b: any) => b.status !== 'Paid');
+        // Filter existing to only unpaid/partial, then combine with virtual
+        const unpaidExisting = (allBills || []).filter((b: any) => b.status !== 'Paid' && (b.balance || 0) > 0);
         const combined = [...unpaidExisting, ...virtualBills];
         combined.sort((a, b) => a.billing_month.localeCompare(b.billing_month));
 
@@ -245,7 +251,9 @@ export async function getTrueTotalBalance(tenantId: number): Promise<{ total: nu
             .single();
         const monthlyRent = tenant?.monthly_rent || 0;
         const isOnVacation = !!(tenant as any)?.is_on_vacation;
-        const currentMonth = new Date().toISOString().slice(0, 7);
+        // Use local date — avoids UTC timezone shift (EAT = UTC+3)
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         const effectiveRent = getEffectiveRent(monthlyRent, currentMonth, isOnVacation);
 
         // Subtract unallocated payments (billing_id IS NULL) — these are MPesa
@@ -280,19 +288,31 @@ export async function getTenantPayments(tenantId: number): Promise<PaymentRecord
 
         if (error) throw error;
 
-        return (data || []).map((p: any) => ({
-            ...p,
-            billing_month: p.arms_billing?.billing_month || extractBillingMonth(p.notes),
-        }));
+        return (data || []).map((p: any) => {
+            // Priority: [Month: YYYY-MM] tag in notes (set by recordPayment & KCB callback)
+            // This is the actual month the payment was recorded FOR, not just the first allocated bill
+            const notesMonth = extractBillingMonth(p.notes);
+            const billingJoinMonth = p.arms_billing?.billing_month || '';
+            return {
+                ...p,
+                billing_month: notesMonth || billingJoinMonth,
+            };
+        });
     } catch (err: any) {
         console.error('getTenantPayments error:', err.message);
         return [];
     }
 }
 
-// Helper — extract billing month from notes if direct join is unavailable
+// Helper — extract payment month from notes.
+// Priority: [Month: YYYY-MM] tag (set by recordPayment and KCB callback)
+// Fallback: first YYYY-MM pattern found (legacy)
 function extractBillingMonth(notes: string | null): string {
     if (!notes) return '';
+    // Look for explicit [Month: YYYY-MM] tag first (most accurate)
+    const tagged = notes.match(/\[Month:\s*(\d{4}-\d{2})\]/);
+    if (tagged) return tagged[1];
+    // Fallback: first date-like pattern
     const m = notes.match(/(\d{4}-\d{2})/);
     return m ? m[1] : '';
 }
