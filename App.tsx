@@ -52,7 +52,9 @@ import TenantSearchScreen from './src/screens/TenantSearchScreen';
 import LandlordPayScreen from './src/screens/LandlordPayScreen';
 import StaffProfileScreen from './src/screens/StaffProfileScreen';
 import ForceUpdateScreen from './src/screens/ForceUpdateScreen';
-import { TenantSession, StaffSession, TenantSearchResult } from './src/lib/supabase';
+import ChatScreen from './src/screens/ChatScreen';
+import AgreementScreen from './src/screens/AgreementScreen';
+import { TenantSession, StaffSession, TenantSearchResult, TenantAgreement, AgreementTemplate, getPendingAgreement, getAgreementTemplate } from './src/lib/supabase';
 import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
 const ARMS_API_BASE = 'https://arms-opal.vercel.app';
@@ -131,19 +133,68 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
 
 // ─── Main App Shell with bottom tabs ─────────────────────────
 function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
-    const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'profile'>('home');
+    const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
+    const [unreadAdmin, setUnreadAdmin] = useState(0);
+    const [pendingAgreement, setPendingAgreement] = useState<TenantAgreement | null>(null);
+    const [agreementTemplate, setAgreementTemplate] = useState<AgreementTemplate | null>(null);
+    const [checkingAgreement, setCheckingAgreement] = useState(true);
+
+    // Check for pending agreement on mount
+    useEffect(() => {
+        (async () => {
+            try {
+                const pending = await getPendingAgreement(session.tenant_id);
+                if (pending) {
+                    const tmpl = await getAgreementTemplate(session.location_id);
+                    setPendingAgreement(pending);
+                    setAgreementTemplate(tmpl);
+                }
+            } catch { /* silent */ }
+            setCheckingAgreement(false);
+        })();
+    }, [session.tenant_id, session.location_id]);
+
+    // Poll unread admin messages every 20s
+    useEffect(() => {
+        const check = async () => {
+            try {
+                const { getUnreadAdminMessages } = await import('./src/lib/supabase');
+                const count = await getUnreadAdminMessages(session.tenant_id);
+                setUnreadAdmin(count);
+            } catch { /* silent */ }
+        };
+        check();
+        const interval = setInterval(check, 20000);
+        return () => clearInterval(interval);
+    }, [session.tenant_id]);
 
     // Update activity timestamp on tab switches
     useEffect(() => { updateSessionActivity(); }, [activeTab]);
 
-    const handlePayComplete = () => {
-        setActiveTab('home');
-    };
+    const handlePayComplete = () => { setActiveTab('home'); };
+    const handleSessionUpdate = (updated: TenantSession) => { setCurrentSession(updated); };
 
-    const handleSessionUpdate = (updated: TenantSession) => {
-        setCurrentSession(updated);
-    };
+    // Block with agreement screen if pending
+    if (checkingAgreement) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
+                <ActivityIndicator size="large" color="#6366f1" />
+                <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Loading…</Text>
+            </View>
+        );
+    }
+
+    if (pendingAgreement) {
+        return (
+            <AgreementScreen
+                agreement={pendingAgreement}
+                template={agreementTemplate}
+                tenantName={currentSession.tenant_name}
+                onAccepted={() => setPendingAgreement(null)}
+            />
+        );
+    }
 
     const renderScreen = () => {
         switch (activeTab) {
@@ -157,6 +208,8 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                 );
             case 'history':
                 return <HistoryScreen session={currentSession} />;
+            case 'chat':
+                return <ChatScreen />;
             case 'profile':
                 return <ProfileScreen session={currentSession} onLogout={onLogout} />;
             default:
@@ -174,6 +227,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         { key: 'home' as const, emoji: '🏠', label: 'Home' },
         { key: 'pay' as const, emoji: '💳', label: 'Pay Rent' },
         { key: 'history' as const, emoji: '📜', label: 'History' },
+        { key: 'chat' as const, emoji: '💬', label: 'Messages', badge: unreadAdmin },
         { key: 'profile' as const, emoji: '👤', label: 'Profile' },
     ];
 
@@ -189,11 +243,23 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                         <View key={tab.key} style={styles.tabWrap}>
                             <View
                                 style={[styles.tab, isActive && styles.tabActive]}
-                                onTouchEnd={() => setActiveTab(tab.key)}
+                                onTouchEnd={() => {
+                                    setActiveTab(tab.key);
+                                    if (tab.key === 'chat') setUnreadAdmin(0);
+                                }}
                             >
-                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
-                                    {tab.emoji}
-                                </Text>
+                                <View style={{ position: 'relative' }}>
+                                    <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                        {tab.emoji}
+                                    </Text>
+                                    {(tab as any).badge > 0 && (
+                                        <View style={styles.tabBadge}>
+                                            <Text style={styles.tabBadgeText}>
+                                                {(tab as any).badge > 9 ? '9+' : (tab as any).badge}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                                     {tab.label}
                                 </Text>
@@ -429,4 +495,12 @@ const styles = StyleSheet.create({
         width: 4, height: 4, borderRadius: 2,
         backgroundColor: '#6366f1', marginTop: 3,
     },
+    tabBadge: {
+        position: 'absolute', top: -4, right: -8,
+        minWidth: 16, height: 16, borderRadius: 8,
+        backgroundColor: '#ef4444',
+        alignItems: 'center', justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 });

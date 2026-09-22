@@ -84,16 +84,15 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 mpesaOn = !!(d?.till_number || d?.shortcode || d?.consumer_key);
             }
 
-            // If neither is configured, enable both (fallback — let user try)
-            if (!kcbOn && !mpesaOn) { kcbOn = true; mpesaOn = true; }
-
+            // Do NOT fall back — only show methods that are actually configured
             setKcbAvailable(kcbOn);
             setMpesaAvailable(mpesaOn);
 
-            // Auto-select the available method
-            if (kcbOn && !mpesaOn)   setPayMethod('KCB');
+            // Auto-select the only available method; if both available default to MPesa
+            if (kcbOn && !mpesaOn)      setPayMethod('KCB');
             else if (mpesaOn && !kcbOn) setPayMethod('MPesa');
-            else setPayMethod('MPesa'); // default when both available
+            else if (mpesaOn && kcbOn)  setPayMethod('MPesa'); // both on — default MPesa
+            // if neither — leave current selection, UI will show both as "Not configured"
 
             console.log(`[PayMethod] KCB=${kcbOn} MPesa=${mpesaOn} tenant=${session.tenant_id}`);
         } catch (e) {
@@ -309,12 +308,43 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         }
     };
 
-    // Manual "Check Status" — for when tenant already paid but app is still waiting
+    // Manual "Check Status" — calls the right endpoint based on payment method
     const handleManualCheck = async () => {
         if (manualChecking) return;
         setManualChecking(true);
         try {
-            // 1) First check STK status API for the receipt (most reliable)
+            // ── KCB: force-confirm records payment even if callback never arrived ──
+            if (payMethod === 'KCB' && checkoutRef.current) {
+                const res = await fetch('https://arms-opal.vercel.app/api/kcb/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    body: JSON.stringify({
+                        checkoutRequestId: checkoutRef.current,
+                        tenantId:          session.tenant_id,
+                        amount:            Math.round(parseFloat(amount)),
+                    }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data?.success && data?.status === 'Completed') {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        const newBal = await refreshTenantBalance(session.tenant_id);
+                        setBalance(newBal);
+                        await updateSessionBalance(newBal);
+                        setReceipt(data.receipt || 'KCB');
+                        setPaidAmount(data.amount || Math.round(parseFloat(amount)));
+                        setStep('success');
+                        setProcessing(false);
+                        setManualChecking(false);
+                        return;
+                    }
+                }
+                Alert.alert('Still Processing', 'KCB payment not yet confirmed. Wait a few seconds and try again.');
+                setManualChecking(false);
+                return;
+            }
+
+            // ── M-Pesa: check STK status API ──
             if (checkoutRef.current) {
                 const res = await fetch(
                     `https://arms-opal.vercel.app/api/mpesa/stk-status?checkoutRequestId=${encodeURIComponent(checkoutRef.current)}`,
@@ -343,7 +373,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     }
                 }
             }
-            // 2) Fallback: check if balance changed
+            // Fallback: check if balance changed
             const newBal = await refreshTenantBalance(session.tenant_id);
             if (newBal !== balance) {
                 if (timerRef.current) clearInterval(timerRef.current);
@@ -354,16 +384,14 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 setStep('success');
                 setProcessing(false);
             } else {
-                Alert.alert(
-                    'Still Processing',
-                    'Payment not yet confirmed. If you entered your M-Pesa PIN, please wait a few more seconds.'
-                );
+                Alert.alert('Still Processing', 'Payment not yet confirmed. Wait a few more seconds and try again.');
             }
         } catch (_) {
             Alert.alert('Error', 'Could not check payment status. Please check History tab.');
         }
         setManualChecking(false);
     };
+
 
     const resetFlow = () => {
         setStep('choose');
@@ -409,14 +437,14 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                 <TouchableOpacity
                                     style={[
                                         s.methodBtn,
-                                        payMethod === 'MPesa' && s.methodBtnActive,
+                                        payMethod === 'MPesa' && mpesaAvailable && s.methodBtnActive,
                                         !mpesaAvailable && s.methodBtnDisabled,
                                     ]}
                                     onPress={() => mpesaAvailable && setPayMethod('MPesa')}
                                     activeOpacity={mpesaAvailable ? 0.8 : 1}
                                 >
                                     <Text style={s.methodBtnEmoji}>📱</Text>
-                                    <Text style={[s.methodBtnText, payMethod === 'MPesa' && s.methodBtnTextActive, !mpesaAvailable && s.methodBtnTextDisabled]}>
+                                    <Text style={[s.methodBtnText, payMethod === 'MPesa' && mpesaAvailable && s.methodBtnTextActive, !mpesaAvailable && s.methodBtnTextDisabled]}>
                                         M-Pesa
                                     </Text>
                                     {!mpesaAvailable && (
@@ -431,14 +459,14 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                 <TouchableOpacity
                                     style={[
                                         s.methodBtn,
-                                        payMethod === 'KCB' && s.methodBtnActiveKCB,
+                                        payMethod === 'KCB' && kcbAvailable && s.methodBtnActiveKCB,
                                         !kcbAvailable && s.methodBtnDisabled,
                                     ]}
                                     onPress={() => kcbAvailable && setPayMethod('KCB')}
                                     activeOpacity={kcbAvailable ? 0.8 : 1}
                                 >
                                     <Text style={s.methodBtnEmoji}>🏦</Text>
-                                    <Text style={[s.methodBtnText, payMethod === 'KCB' && s.methodBtnTextActive, !kcbAvailable && s.methodBtnTextDisabled]}>
+                                    <Text style={[s.methodBtnText, payMethod === 'KCB' && kcbAvailable && s.methodBtnTextActive, !kcbAvailable && s.methodBtnTextDisabled]}>
                                         KCB Buni
                                     </Text>
                                     {!kcbAvailable && (
@@ -449,10 +477,25 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                     )}
                                 </TouchableOpacity>
                             </View>
+
+                            {/* No payment method configured warning */}
+                            {!mpesaAvailable && !kcbAvailable && (
+                                <View style={{ backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginTop: 8, borderWidth: 1, borderColor: '#fca5a5' }}>
+                                    <Text style={{ color: '#b91c1c', fontWeight: '700', fontSize: 13, textAlign: 'center' }}>
+                                        ⚠️ No Payment Method Configured
+                                    </Text>
+                                    <Text style={{ color: '#dc2626', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+                                        Contact management to set up M-Pesa or KCB Buni for your unit.
+                                    </Text>
+                                </View>
+                            )}
+
                             <Text style={s.methodHint}>
-                                {payMethod === 'MPesa'
-                                    ? '✅ Safaricom M-Pesa STK push to your phone'
-                                    : '✅ KCB Buni — enter M-Pesa PIN when prompted'}
+                                {!mpesaAvailable && !kcbAvailable
+                                    ? '❌ No payment method is active for your unit'
+                                    : payMethod === 'MPesa'
+                                        ? '✅ Safaricom M-Pesa STK push to your phone'
+                                        : '✅ KCB Buni — enter M-Pesa PIN when prompted'}
                             </Text>
                         </>
                     )}

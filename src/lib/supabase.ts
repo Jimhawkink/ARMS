@@ -1286,3 +1286,80 @@ export function pollKCBResult(params: {
     return () => { done = true; clearInterval(pollInterval); clearTimeout(timer); };
 }
 
+
+// ============================================================
+// CHAT FUNCTIONS — Tenant <-> Admin Real-time Messaging
+// ============================================================
+export interface ChatMessage {
+    chat_id: number;
+    tenant_id: number;
+    sender: 'tenant' | 'admin';
+    message: string;
+    is_read: boolean;
+    created_at: string;
+}
+export async function sendChatMessage(tenantId: number, message: string): Promise<ChatMessage> {
+    const { data, error } = await supabase.from('arms_chats').insert([{
+        tenant_id: tenantId, sender: 'tenant', message: message.trim(),
+        is_read: false, created_at: new Date().toISOString(),
+    }]).select().single();
+    if (error) throw new Error(error.message);
+    return data as ChatMessage;
+}
+export async function getTenantChats(tenantId: number): Promise<ChatMessage[]> {
+    const { data, error } = await supabase.from('arms_chats').select('*')
+        .eq('tenant_id', tenantId).order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data || []) as ChatMessage[];
+}
+export function subscribeToChats(tenantId: number, onNewMessage: (msg: ChatMessage) => void) {
+    const channel = supabase.channel(`tenant_chat_${tenantId}`)
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'arms_chats', filter: `tenant_id=eq.${tenantId}` },
+            (payload: any) => { onNewMessage(payload.new as ChatMessage); })
+        .subscribe();
+    return () => { supabase.removeChannel(channel); };
+}
+export async function markAdminChatsRead(tenantId: number): Promise<void> {
+    await supabase.from('arms_chats').update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('tenant_id', tenantId).eq('sender', 'admin').eq('is_read', false);
+}
+export async function getUnreadAdminMessages(tenantId: number): Promise<number> {
+    const { count } = await supabase.from('arms_chats').select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).eq('sender', 'admin').eq('is_read', false);
+    return count || 0;
+}
+
+// ============================================================
+// AGREEMENT FUNCTIONS — Digital Lease Signing
+// ============================================================
+export interface TenantAgreement {
+    agreement_id: number; tenant_id: number; template_id: number | null;
+    lease_start_date: string | null; lease_end_date: string | null;
+    monthly_rent: number; deposit_amount: number; unit_name: string;
+    issued_by: string; issued_at: string; accepted: boolean;
+    signed_at: string | null; signature_text: string | null; agreement_snapshot: string | null;
+}
+export interface AgreementTemplate {
+    template_id: number; title: string; content: string;
+    admin_signature_url: string | null; admin_name: string; admin_title: string; version: string;
+}
+export async function getPendingAgreement(tenantId: number): Promise<TenantAgreement | null> {
+    const { data } = await supabase.from('arms_tenant_agreements').select('*')
+        .eq('tenant_id', tenantId).eq('accepted', false)
+        .order('created_at', { ascending: false }).limit(1);
+    return (data && data.length > 0) ? data[0] as TenantAgreement : null;
+}
+export async function getAgreementTemplate(locationId?: number): Promise<AgreementTemplate | null> {
+    let query = supabase.from('arms_agreement_templates').select('*').eq('is_active', true)
+        .order('created_at', { ascending: false }).limit(1);
+    if (locationId) query = (query as any).eq('location_id', locationId);
+    const { data } = await query;
+    return (data && data.length > 0) ? data[0] as AgreementTemplate : null;
+}
+export async function signAgreement(agreementId: number, signatureText: string, deviceInfo: string, snapshot: string): Promise<void> {
+    const { error } = await supabase.from('arms_tenant_agreements').update({
+        accepted: true, signed_at: new Date().toISOString(),
+        signature_text: signatureText, device_info: deviceInfo, agreement_snapshot: snapshot,
+    }).eq('agreement_id', agreementId);
+    if (error) throw new Error(error.message);
+}

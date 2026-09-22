@@ -5,7 +5,7 @@ import {
     StatusBar, SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loginTenantByPin, loginStaffByPin, checkTenantLicense, TenantSession, StaffSession } from '../lib/supabase';
+import { loginTenantByPin, loginStaffByPin, checkTenantLicense, getPendingAgreement, getAgreementTemplate, TenantSession, StaffSession } from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
     clearRateLimit, saveSession, saveStaffSession,
@@ -153,6 +153,17 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         setRevokeReason(licenseResult.reason);
                     } else {
                         onLoginSuccess(tenant);
+                        // Check pending agreement in background (non-blocking)
+                        getPendingAgreement(tenant.tenant_id).then(pending => {
+                            if (pending) {
+                                // Signal to App.tsx that there's a pending agreement
+                                // by storing it in AsyncStorage — App.tsx reads it on mount
+                                import('@react-native-async-storage/async-storage').then(({ default: AS }) => {
+                                    AS.setItem('pending_agreement', JSON.stringify(pending));
+                                });
+                            }
+                        }).catch(() => {});
+
                     }
                 } catch {
                     onLoginSuccess(tenant); // fail-open
