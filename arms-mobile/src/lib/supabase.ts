@@ -1349,17 +1349,35 @@ export async function getPendingAgreement(tenantId: number): Promise<TenantAgree
         .order('created_at', { ascending: false }).limit(1);
     return (data && data.length > 0) ? data[0] as TenantAgreement : null;
 }
+
 export async function getAgreementTemplate(locationId?: number): Promise<AgreementTemplate | null> {
-    let query = supabase.from('arms_agreement_templates').select('*').eq('is_active', true)
-        .order('created_at', { ascending: false }).limit(1);
-    if (locationId) query = (query as any).eq('location_id', locationId);
-    const { data } = await query;
+    // FIXED: Don't filter by location_id — just get the first active template
+    // (locationId filter caused "no content" when template had no location set)
+    const { data } = await supabase
+        .from('arms_agreement_templates')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1);
     return (data && data.length > 0) ? data[0] as AgreementTemplate : null;
 }
-export async function signAgreement(agreementId: number, signatureText: string, deviceInfo: string, snapshot: string): Promise<void> {
+
+export async function signAgreement(
+    agreementId: number,
+    signatureText: string,
+    deviceInfo: string,
+    snapshot: string,
+    signatureImageBase64?: string,
+): Promise<void> {
     const { error } = await supabase.from('arms_tenant_agreements').update({
-        accepted: true, signed_at: new Date().toISOString(),
-        signature_text: signatureText, device_info: deviceInfo, agreement_snapshot: snapshot,
+        accepted: true,
+        signed_at: new Date().toISOString(),
+        signature_text: signatureText,
+        device_info: deviceInfo,
+        agreement_snapshot: snapshot,
+        // Store base64 signature image in the snapshot if provided
+        ...(signatureImageBase64 ? { signature_text: signatureImageBase64 } : {}),
     }).eq('agreement_id', agreementId);
     if (error) throw new Error(error.message);
 }
+
