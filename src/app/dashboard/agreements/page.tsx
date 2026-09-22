@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
-import toast, { Toaster } from 'react-hot-toast';
 
-interface Template {
+import { useState, useEffect, useCallback, useRef } from 'react';
+import toast from 'react-hot-toast';
+
+interface AgreementTemplate {
     template_id: number;
-    location_id: number | null;
     title: string;
     content: string;
     admin_signature_url: string | null;
@@ -12,443 +12,594 @@ interface Template {
     admin_title: string;
     version: string;
     is_active: boolean;
+    created_at: string;
 }
 
-interface Agreement {
+interface TenantAgreement {
     agreement_id: number;
     tenant_id: number;
-    template_version: string;
-    lease_start_date: string;
-    lease_end_date: string;
+    tenant_name: string;
+    unit_name: string;
+    location_name: string;
+    lease_start_date: string | null;
+    lease_end_date: string | null;
     monthly_rent: number;
     deposit_amount: number;
-    unit_name: string;
-    issued_by: string;
-    issued_at: string;
     accepted: boolean;
     signed_at: string | null;
     signature_text: string | null;
-    arms_tenants: {
-        tenant_name: string;
-        phone: string;
-        arms_units: { unit_name: string } | null;
-        arms_locations: { location_name: string } | null;
-    } | null;
+    issued_by: string;
+    issued_at: string;
+    created_at: string;
 }
 
-const DEFAULT_CONTENT = `TENANCY AGREEMENT
+type ActiveView = 'dashboard' | 'editor' | 'preview' | 'agreements';
 
-This Tenancy Agreement ("Agreement") is entered into between the Landlord/Property Manager and the Tenant named herein.
+function fmt(n: number) { return `KES ${(n || 0).toLocaleString()}`; }
+function fmtDate(d: string | null) {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
-1. PREMISES
-The Landlord agrees to let and the Tenant agrees to take the premises described above for residential purposes only.
+const DEFAULT_CONTENT = `RESIDENTIAL TENANCY AGREEMENT
 
-2. TERM
-The tenancy shall commence on the date specified and continue on a month-to-month basis unless terminated by either party with 30 days written notice.
+This Tenancy Agreement is entered into between:
 
-3. RENT
-The Tenant agrees to pay the monthly rent as specified, payable on or before the 5th day of each month. Late payment attracts a penalty of 10% of the monthly rent.
+LANDLORD: {{admin_name}} (hereinafter "Landlord")
+TENANT: {{tenant_name}} (hereinafter "Tenant")
+PREMISES: Unit {{unit_name}}, {{location_name}}
 
-4. DEPOSIT
-A security deposit as specified is payable upon signing. This deposit shall be refunded within 30 days of vacating, less any deductions for damage beyond normal wear and tear.
+1. TERM OF TENANCY
+The tenancy shall commence on {{lease_start_date}} and continue on a month-to-month basis unless a fixed end date of {{lease_end_date}} has been specified, or until terminated in accordance with this Agreement.
 
-5. USE OF PREMISES
-The premises shall be used solely as a private residence. The Tenant shall not sublet or assign the premises without prior written consent.
+2. RENT
+The Tenant agrees to pay a monthly rent of {{monthly_rent}} (Kenya Shillings), due on or before the 5th day of each month. Payments shall be made via the designated M-Pesa paybill or such other method as agreed.
 
-6. MAINTENANCE
-The Tenant shall keep the premises clean and in good condition. The Tenant shall report any repairs needed promptly. Damage caused by the Tenant's negligence shall be repaired at the Tenant's expense.
+3. SECURITY DEPOSIT
+The Tenant shall pay a refundable security deposit of {{deposit_amount}} prior to or upon commencement of the tenancy. This deposit shall be refunded within 30 days of vacating the premises, less any deductions for damages beyond normal wear and tear.
 
-7. UTILITIES
-The Tenant is responsible for payment of water, electricity, and other utilities unless otherwise agreed.
+4. USE OF PREMISES
+The premises shall be used solely for residential purposes. The Tenant shall not sublet or assign this agreement without the prior written consent of the Landlord.
+
+5. UTILITIES & SERVICES
+The Tenant shall be responsible for payment of water, electricity, and any other utilities consumed at the premises unless otherwise agreed in writing.
+
+6. MAINTENANCE & REPAIRS
+The Tenant shall keep the premises in clean and good condition. Any damage caused by the Tenant shall be repaired at the Tenant's expense. The Tenant shall promptly report any maintenance issues to the Landlord.
+
+7. ACCESS
+The Landlord shall have the right to enter the premises at reasonable times and with reasonable notice (except in emergencies) for the purposes of inspection, maintenance, or repairs.
 
 8. TERMINATION
-Either party may terminate this agreement with 30 days written notice. The Landlord may terminate immediately for non-payment of rent, damage to property, or breach of any term of this agreement.
+Either party may terminate this agreement by providing one (1) calendar month's written notice. The Landlord may terminate this agreement immediately in the event of non-payment of rent or breach of any term of this agreement.
 
-9. GOVERNING LAW
-This agreement shall be governed by the laws of Kenya, including the Landlord and Tenant (Shops, Hotels and Catering Establishments) Act.
+9. HOUSE RULES
+The Tenant agrees to comply with all house rules established by the Landlord including noise regulations, waste disposal guidelines, and communal area usage policies.
 
-By accepting this agreement, the Tenant confirms they have read, understood, and agree to be bound by these terms.`;
+10. GOVERNING LAW
+This Agreement shall be governed by and construed in accordance with the laws of the Republic of Kenya, including the Landlord and Tenant (Shops, Hotels and Catering Establishments) Act and the Rent Restriction Act.
+
+By digitally signing this agreement on the mobile application, the Tenant confirms that they have read, understood, and agree to be bound by all terms and conditions set forth herein.`;
 
 export default function AgreementsPage() {
-    const [templates, setTemplates] = useState<Template[]>([]);
-    const [agreements, setAgreements] = useState<Agreement[]>([]);
+    const [view, setView] = useState<ActiveView>('dashboard');
+    const [template, setTemplate] = useState<AgreementTemplate | null>(null);
+    const [agreements, setAgreements] = useState<TenantAgreement[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<'agreements' | 'template'>('agreements');
-    const [editingTemplate, setEditingTemplate] = useState<Partial<Template>>({
-        title: 'Tenancy Agreement & Terms and Conditions',
+    const [saving, setSaving] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [sigPreview, setSigPreview] = useState<string | null>(null);
+    const [search, setSearch] = useState('');
+    const [filterStatus, setFilterStatus] = useState<'all' | 'signed' | 'pending'>('all');
+    const fileRef = useRef<HTMLInputElement>(null);
+
+    // Template form state
+    const [tForm, setTForm] = useState({
+        title: 'ARMS Residential Tenancy Agreement',
         content: DEFAULT_CONTENT,
         admin_name: '',
-        admin_title: 'Landlord / Property Manager',
-        version: '1.0',
+        admin_title: 'Property Manager',
+        version: 'v1.0',
     });
-    const [savingTemplate, setSavingTemplate] = useState(false);
-    const [uploadingSig, setUploadingSig] = useState(false);
-    const [filter, setFilter] = useState<'all' | 'signed' | 'unsigned'>('all');
-    const [search, setSearch] = useState('');
-    const [viewAgreement, setViewAgreement] = useState<Agreement | null>(null);
-    const sigInputRef = useRef<HTMLInputElement>(null);
 
-    useEffect(() => {
-        loadAll();
-    }, []);
-
-    async function loadAll() {
+    const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [tRes, aRes] = await Promise.all([
+            const [tmplRes, agmtRes] = await Promise.all([
                 fetch('/api/agreements/template'),
-                fetch('/api/agreements/sign?all=1'),
+                fetch('/api/agreements/sign'),
             ]);
-            const tData = await tRes.json();
-            const aData = await aRes.json();
-            setTemplates(tData.templates || []);
-            setAgreements(aData.agreements || []);
-            if (tData.templates?.length > 0) {
-                setEditingTemplate(tData.templates[0]);
+            if (tmplRes.ok) {
+                const d = await tmplRes.json();
+                if (d.template) {
+                    setTemplate(d.template);
+                    setSigPreview(d.template.admin_signature_url);
+                    setTForm({
+                        title: d.template.title,
+                        content: d.template.content,
+                        admin_name: d.template.admin_name,
+                        admin_title: d.template.admin_title,
+                        version: d.template.version,
+                    });
+                }
             }
-        } catch { toast.error('Failed to load'); }
+            if (agmtRes.ok) {
+                const d = await agmtRes.json();
+                setAgreements(d.agreements || []);
+            }
+        } catch { toast.error('Failed to load data'); }
         setLoading(false);
-    }
+    }, []);
 
-    async function saveTemplate() {
-        setSavingTemplate(true);
+    useEffect(() => { loadData(); }, [loadData]);
+
+    const saveTemplate = async () => {
+        if (!tForm.title.trim() || !tForm.content.trim()) { toast.error('Title and content are required'); return; }
+        setSaving(true);
         try {
-            const method = (editingTemplate as Template).template_id ? 'PATCH' : 'POST';
-            const url = (editingTemplate as Template).template_id
-                ? `/api/agreements/template?id=${(editingTemplate as Template).template_id}`
-                : '/api/agreements/template';
-            const res = await fetch(url, {
+            const method = template ? 'PUT' : 'POST';
+            const body = { ...tForm, ...(template ? { template_id: template.template_id } : {}) };
+            const res = await fetch('/api/agreements/template', {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(editingTemplate),
+                body: JSON.stringify(body),
             });
-            const data = await res.json();
-            if (data.error) throw new Error(data.error);
-            toast.success('Template saved!');
-            setEditingTemplate(data.template);
-            loadAll();
-        } catch (err: any) { toast.error(err.message); }
-        setSavingTemplate(false);
-    }
+            if (!res.ok) throw new Error((await res.json()).error);
+            toast.success('✅ Template saved successfully!');
+            await loadData();
+            setView('dashboard');
+        } catch (e: any) { toast.error(e.message || 'Save failed'); }
+        setSaving(false);
+    };
 
-    async function uploadSignature(file: File) {
-        setUploadingSig(true);
+    const uploadSignature = async (file: File) => {
+        if (!template) { toast.error('Save the template first before uploading a signature'); return; }
+        setUploading(true);
         try {
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                const base64 = e.target?.result as string;
-                const res = await fetch('/api/agreements/upload-signature', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ base64, filename: `sig_${Date.now()}.png` }),
-                });
-                const data = await res.json();
-                if (data.error) { toast.error(data.error); setUploadingSig(false); return; }
-                setEditingTemplate(prev => ({ ...prev, admin_signature_url: data.url }));
-                toast.success('Signature uploaded!');
-                setUploadingSig(false);
-            };
-            reader.readAsDataURL(file);
-        } catch (err: any) { toast.error(err.message); setUploadingSig(false); }
-    }
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('template_id', String(template.template_id));
+            const res = await fetch('/api/agreements/upload-signature', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error((await res.json()).error);
+            const d = await res.json();
+            setSigPreview(d.url);
+            toast.success('✅ Signature uploaded!');
+            loadData();
+        } catch (e: any) { toast.error(e.message || 'Upload failed'); }
+        setUploading(false);
+    };
 
     const filtered = agreements.filter(a => {
-        if (filter === 'signed' && !a.accepted) return false;
-        if (filter === 'unsigned' && a.accepted) return false;
-        const name = a.arms_tenants?.tenant_name || '';
-        return name.toLowerCase().includes(search.toLowerCase()) ||
-            (a.arms_tenants?.phone || '').includes(search);
+        const match = (a.tenant_name || '').toLowerCase().includes(search.toLowerCase()) ||
+            (a.unit_name || '').toLowerCase().includes(search.toLowerCase()) ||
+            (a.location_name || '').toLowerCase().includes(search.toLowerCase());
+        if (!match) return false;
+        if (filterStatus === 'signed') return a.accepted;
+        if (filterStatus === 'pending') return !a.accepted;
+        return true;
     });
 
     const signedCount = agreements.filter(a => a.accepted).length;
-    const unsignedCount = agreements.length - signedCount;
+    const pendingCount = agreements.filter(a => !a.accepted).length;
 
-    return (
-        <div className="min-h-screen bg-gray-50">
-            <Toaster position="top-right" />
+    // ── DASHBOARD VIEW ──
+    if (view === 'dashboard') return (
+        <div className="animate-fadeIn space-y-6 p-6 bg-gray-50 min-h-full">
 
             {/* Header */}
-            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-5">
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center text-2xl">📋</div>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                    <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
+                        📋 Tenancy Agreements
+                    </h1>
+                    <p className="text-sm text-gray-500 mt-1">Digital lease management · Legally traceable signatures</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => setView('agreements')}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
+                        📄 View All Agreements
+                    </button>
+                    <button onClick={() => setView('editor')}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white shadow-md hover:opacity-90 transition"
+                        style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                        ✏️ {template ? 'Edit Template' : 'Create Template'}
+                    </button>
+                </div>
+            </div>
+
+            {loading ? (
+                <div className="flex items-center justify-center py-20">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-100 flex items-center justify-center text-2xl animate-pulse">📋</div>
+                </div>
+            ) : (
+                <>
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {[
+                            { emoji: '📋', label: 'Total Issued', value: agreements.length, color: '#6366f1', bg: '#eef2ff' },
+                            { emoji: '✅', label: 'Signed', value: signedCount, color: '#059669', bg: '#f0fdf4' },
+                            { emoji: '⏳', label: 'Pending', value: pendingCount, color: '#d97706', bg: '#fffbeb' },
+                            { emoji: '📊', label: 'Sign Rate', value: agreements.length > 0 ? `${Math.round(signedCount / agreements.length * 100)}%` : '—', color: '#7c3aed', bg: '#faf5ff' },
+                        ].map(s => (
+                            <div key={s.label} className="rounded-2xl p-5 border"
+                                style={{ background: s.bg, borderColor: s.bg }}>
+                                <p className="text-2xl mb-1">{s.emoji}</p>
+                                <p className="text-2xl font-extrabold" style={{ color: s.color }}>{s.value}</p>
+                                <p className="text-xs font-semibold text-gray-500 mt-1">{s.label}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Template Status Card */}
+                    <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-4">
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl"
+                                    style={{ background: template ? '#f0fdf4' : '#fff7ed' }}>
+                                    {template ? '✅' : '📝'}
+                                </div>
+                                <div>
+                                    <p className="font-extrabold text-gray-900 text-base">
+                                        {template ? template.title : 'No Template Yet'}
+                                    </p>
+                                    {template ? (
+                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">{template.version}</span>
+                                            <span className="text-xs text-gray-400">by {template.admin_name}</span>
+                                            <span className="text-xs text-gray-400">· {fmtDate(template.created_at)}</span>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-gray-400 mt-1">Create a template to start issuing agreements to tenants</p>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {template && (
+                                    <button onClick={() => setView('preview')}
+                                        className="px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                                        👁 Preview
+                                    </button>
+                                )}
+                                <button onClick={() => setView('editor')}
+                                    className="px-3 py-2 rounded-xl text-xs font-bold text-white transition"
+                                    style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                                    {template ? '✏️ Edit' : '+ Create'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Admin Signature */}
+                        {template && (
+                            <div className="mt-5 pt-5 border-t border-gray-100">
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className="text-xs font-extrabold text-gray-500 uppercase tracking-wider">Admin Signature</p>
+                                    <button onClick={() => fileRef.current?.click()}
+                                        disabled={uploading}
+                                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition">
+                                        {uploading ? '⏳ Uploading…' : sigPreview ? '🔄 Change' : '⬆️ Upload Signature'}
+                                    </button>
+                                    <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadSignature(f); e.target.value = ''; }} />
+                                </div>
+                                {sigPreview ? (
+                                    <div className="flex items-center gap-4">
+                                        <img src={sigPreview} alt="Admin signature"
+                                            className="h-16 max-w-48 object-contain border border-gray-100 rounded-xl p-2 bg-gray-50" />
+                                        <div>
+                                            <p className="text-sm font-extrabold text-gray-800">{template.admin_name}</p>
+                                            <p className="text-xs text-gray-500">{template.admin_title}</p>
+                                            <p className="text-[10px] text-green-600 font-semibold mt-1">✓ Signature will appear on tenant agreements</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+                                        <span className="text-amber-500 text-xl">⚠️</span>
+                                        <div>
+                                            <p className="text-sm font-bold text-amber-800">No signature uploaded</p>
+                                            <p className="text-xs text-amber-600">Upload your signature so it appears on all tenant agreements</p>
+                                        </div>
+                                        <button onClick={() => fileRef.current?.click()}
+                                            className="ml-auto px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition">
+                                            Upload
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Recent Agreements preview */}
+                    {agreements.length > 0 && (
+                        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                                <h3 className="font-extrabold text-gray-800">Recent Agreements</h3>
+                                <button onClick={() => setView('agreements')}
+                                    className="text-xs font-bold text-indigo-500 hover:text-indigo-700 transition">
+                                    View all →
+                                </button>
+                            </div>
+                            {agreements.slice(0, 5).map(a => (
+                                <div key={a.agreement_id} className="flex items-center gap-4 px-5 py-3.5 border-b border-gray-50 hover:bg-gray-50 transition">
+                                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${a.accepted ? 'bg-green-100' : 'bg-amber-100'}`}>
+                                        {a.accepted ? '✅' : '⏳'}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-gray-800 truncate">{a.tenant_name}</p>
+                                        <p className="text-[11px] text-gray-400">{a.unit_name} · {a.location_name}</p>
+                                    </div>
+                                    <div className="text-right flex-shrink-0">
+                                        <p className={`text-xs font-extrabold ${a.accepted ? 'text-green-600' : 'text-amber-600'}`}>
+                                            {a.accepted ? '✓ Signed' : 'Pending'}
+                                        </p>
+                                        <p className="text-[11px] text-gray-400 mt-0.5">
+                                            {a.accepted ? fmtDate(a.signed_at) : `Issued ${fmtDate(a.created_at)}`}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </>
+            )}
+        </div>
+    );
+
+    // ── EDITOR VIEW ──
+    if (view === 'editor') return (
+        <div className="animate-fadeIn flex flex-col h-full bg-gray-50">
+            {/* Editor Header */}
+            <div className="flex-shrink-0 px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <button onClick={() => setView('dashboard')}
+                        className="w-9 h-9 rounded-xl border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 transition text-lg">
+                        ←
+                    </button>
                     <div>
-                        <h1 className="text-xl font-extrabold text-white">Tenancy Agreements</h1>
-                        <p className="text-indigo-200 text-sm">Digital lease management · Cutting-edge signing</p>
+                        <h2 className="font-extrabold text-gray-900">{template ? 'Edit Template' : 'Create Template'}</h2>
+                        <p className="text-xs text-gray-400">Changes apply to all future agreements</p>
                     </div>
                 </div>
-                {/* Stats */}
-                <div className="grid grid-cols-3 gap-3">
-                    {[
-                        { label: 'Total', value: agreements.length, color: 'bg-white/20' },
-                        { label: '✅ Signed', value: signedCount, color: 'bg-green-500/30' },
-                        { label: '⏳ Pending', value: unsignedCount, color: 'bg-amber-500/30' },
-                    ].map(s => (
-                        <div key={s.label} className={`${s.color} rounded-2xl px-4 py-2.5 text-center`}>
-                            <p className="text-2xl font-black text-white">{s.value}</p>
-                            <p className="text-[11px] text-white/80 font-semibold">{s.label}</p>
+                <div className="flex gap-2">
+                    <button onClick={() => setView('preview')}
+                        className="px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                        👁 Preview
+                    </button>
+                    <button onClick={saveTemplate} disabled={saving}
+                        className="px-5 py-2 rounded-xl text-sm font-bold text-white shadow hover:opacity-90 transition disabled:opacity-60"
+                        style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                        {saving ? '⏳ Saving…' : '💾 Save Template'}
+                    </button>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {/* Meta fields */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+                    <h3 className="text-xs font-extrabold text-gray-400 uppercase tracking-wider mb-4">Agreement Details</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2">
+                            <label className="text-xs font-bold text-gray-600 mb-1.5 block">Agreement Title</label>
+                            <input value={tForm.title} onChange={e => setTForm(p => ({ ...p, title: e.target.value }))}
+                                className="input-field w-full" placeholder="e.g. ARMS Residential Tenancy Agreement" />
                         </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 mb-1.5 block">Landlord / Manager Name</label>
+                            <input value={tForm.admin_name} onChange={e => setTForm(p => ({ ...p, admin_name: e.target.value }))}
+                                className="input-field w-full" placeholder="Your full name" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 mb-1.5 block">Title / Position</label>
+                            <input value={tForm.admin_title} onChange={e => setTForm(p => ({ ...p, admin_title: e.target.value }))}
+                                className="input-field w-full" placeholder="e.g. Property Manager" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 mb-1.5 block">Version</label>
+                            <input value={tForm.version} onChange={e => setTForm(p => ({ ...p, version: e.target.value }))}
+                                className="input-field w-full" placeholder="v1.0" />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Content editor */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-extrabold text-gray-400 uppercase tracking-wider">Agreement Content</h3>
+                        <button onClick={() => setTForm(p => ({ ...p, content: DEFAULT_CONTENT }))}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold transition">
+                            Reset to default
+                        </button>
+                    </div>
+                    <div className="mb-3 flex flex-wrap gap-1.5">
+                        {['{{tenant_name}}', '{{unit_name}}', '{{location_name}}', '{{lease_start_date}}', '{{lease_end_date}}', '{{monthly_rent}}', '{{deposit_amount}}', '{{admin_name}}'].map(tag => (
+                            <button key={tag} onClick={() => setTForm(p => ({ ...p, content: p.content + tag }))}
+                                className="text-[11px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-lg border border-indigo-100 font-mono hover:bg-indigo-100 transition">
+                                {tag}
+                            </button>
+                        ))}
+                    </div>
+                    <textarea
+                        value={tForm.content}
+                        onChange={e => setTForm(p => ({ ...p, content: e.target.value }))}
+                        rows={24}
+                        className="w-full font-mono text-xs text-gray-700 border border-gray-200 rounded-xl p-4 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 resize-none"
+                        placeholder="Type your agreement content here…"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-2">
+                        Use the tags above to insert dynamic fields. They are automatically replaced with actual tenant data when issuing.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+
+    // ── PREVIEW VIEW ──
+    if (view === 'preview') {
+        const previewContent = tForm.content
+            .replace(/{{tenant_name}}/g, 'John Mwangi')
+            .replace(/{{unit_name}}/g, 'A-101')
+            .replace(/{{location_name}}/g, 'Alpha Apartments')
+            .replace(/{{lease_start_date}}/g, '01 October 2026')
+            .replace(/{{lease_end_date}}/g, 'Month-to-Month')
+            .replace(/{{monthly_rent}}/g, 'KES 9,500')
+            .replace(/{{deposit_amount}}/g, 'KES 19,000')
+            .replace(/{{admin_name}}/g, tForm.admin_name || 'The Landlord');
+
+        return (
+            <div className="animate-fadeIn flex flex-col h-full bg-gray-100">
+                <div className="flex-shrink-0 px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setView('editor')} className="w-9 h-9 rounded-xl border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 transition text-lg">←</button>
+                        <div>
+                            <h2 className="font-extrabold text-gray-900">Agreement Preview</h2>
+                            <p className="text-xs text-gray-400">Showing with sample data</p>
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={() => setView('editor')} className="px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 text-gray-600 hover:bg-gray-50 transition">✏️ Back to Editor</button>
+                        <button onClick={saveTemplate} disabled={saving}
+                            className="px-5 py-2 rounded-xl text-sm font-bold text-white shadow hover:opacity-90 transition"
+                            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                            {saving ? '⏳ Saving…' : '💾 Save'}
+                        </button>
+                    </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                    <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden">
+                        {/* Doc header */}
+                        <div className="px-10 py-8 border-b-4 border-indigo-600" style={{ background: 'linear-gradient(135deg,#1e1b4b,#3730a3)' }}>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-indigo-200 text-xs font-bold uppercase tracking-widest mb-1">Alpha Solutions</p>
+                                    <h1 className="text-white text-2xl font-extrabold leading-tight">{tForm.title}</h1>
+                                    <p className="text-indigo-300 text-sm mt-2">{tForm.version}</p>
+                                </div>
+                                <div className="text-6xl opacity-20">📋</div>
+                            </div>
+                        </div>
+                        {/* Details strip */}
+                        <div className="px-10 py-5 bg-indigo-50 border-b border-indigo-100">
+                            <div className="grid grid-cols-3 gap-4">
+                                {[
+                                    { label: 'Monthly Rent', value: 'KES 9,500' },
+                                    { label: 'Security Deposit', value: 'KES 19,000' },
+                                    { label: 'Lease Start', value: '01 Oct 2026' },
+                                ].map(d => (
+                                    <div key={d.label}>
+                                        <p className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-wider">{d.label}</p>
+                                        <p className="text-sm font-extrabold text-indigo-900 mt-0.5">{d.value}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        {/* Body */}
+                        <div className="px-10 py-8">
+                            <pre className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-sans">{previewContent}</pre>
+                        </div>
+                        {/* Signatures */}
+                        <div className="px-10 pb-10">
+                            <div className="grid grid-cols-2 gap-8 pt-6 border-t-2 border-gray-100">
+                                <div>
+                                    <p className="text-[10px] font-extrabold text-indigo-500 uppercase tracking-widest mb-3">Landlord / Manager</p>
+                                    {sigPreview
+                                        ? <img src={sigPreview} alt="sig" className="h-12 mb-2 object-contain" />
+                                        : <div className="h-12 mb-2 border-b-2 border-gray-300" />}
+                                    <p className="text-sm font-extrabold text-gray-800">{tForm.admin_name || '—'}</p>
+                                    <p className="text-xs text-gray-400">{tForm.admin_title}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-extrabold text-indigo-500 uppercase tracking-widest mb-3">Tenant Digital Signature</p>
+                                    <div className="h-12 mb-2 border-b-2 border-gray-300 flex items-end pb-1">
+                                        <span className="text-gray-400 italic text-sm">John Mwangi</span>
+                                    </div>
+                                    <p className="text-sm font-extrabold text-gray-800">John Mwangi</p>
+                                    <p className="text-xs text-gray-400">Signed digitally via mobile app</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ── AGREEMENTS LIST VIEW ──
+    return (
+        <div className="animate-fadeIn flex flex-col h-full bg-gray-50">
+            {/* Header */}
+            <div className="flex-shrink-0 px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                    <button onClick={() => setView('dashboard')} className="w-9 h-9 rounded-xl border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 transition text-lg">←</button>
+                    <div>
+                        <h2 className="font-extrabold text-gray-900">All Agreements</h2>
+                        <p className="text-xs text-gray-400">{agreements.length} total · {signedCount} signed · {pendingCount} pending</p>
+                    </div>
+                </div>
+                <div className="flex gap-2 items-center">
+                    <input value={search} onChange={e => setSearch(e.target.value)}
+                        placeholder="Search tenant, unit, location…"
+                        className="input-field text-sm w-56" />
+                    {['all', 'signed', 'pending'].map(f => (
+                        <button key={f} onClick={() => setFilterStatus(f as any)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition capitalize ${filterStatus === f ? 'bg-indigo-600 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                            {f}
+                        </button>
                     ))}
                 </div>
             </div>
 
-            {/* Tabs */}
-            <div className="bg-white border-b border-gray-100 px-6 flex gap-1">
-                {(['agreements', 'template'] as const).map(tab => (
-                    <button key={tab} onClick={() => setActiveTab(tab)}
-                        className={`px-4 py-3 text-sm font-bold capitalize transition border-b-2 ${
-                            activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-                        }`}>
-                        {tab === 'agreements' ? '📋 All Agreements' : '✏️ Agreement Template'}
-                    </button>
-                ))}
-            </div>
-
-            <div className="p-6">
-                {/* === AGREEMENTS TAB === */}
-                {activeTab === 'agreements' && (
-                    <div className="space-y-4">
-                        {/* Filters */}
-                        <div className="flex flex-wrap gap-3 items-center">
-                            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-                                placeholder="Search tenant, phone…"
-                                className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400 bg-white w-64" />
-                            <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-                                {(['all', 'signed', 'unsigned'] as const).map(f => (
-                                    <button key={f} onClick={() => setFilter(f)}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition ${filter === f ? 'bg-white shadow text-indigo-700' : 'text-gray-500'}`}>
-                                        {f}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Table */}
-                        {loading ? (
-                            <div className="text-center py-12 text-gray-400">Loading agreements…</div>
-                        ) : filtered.length === 0 ? (
-                            <div className="flex flex-col items-center py-16 gap-3 text-gray-400">
-                                <span className="text-5xl">📋</span>
-                                <p className="font-semibold">No agreements yet</p>
-                                <p className="text-sm">Issue agreements from the Add/Update Tenant section</p>
-                            </div>
-                        ) : (
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                                <table className="w-full text-sm">
-                                    <thead>
-                                        <tr className="bg-gray-50 border-b border-gray-100">
-                                            {['Tenant', 'Unit / Location', 'Rent', 'Lease Period', 'Issued', 'Status', ''].map(h => (
-                                                <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">{h}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-50">
-                                        {filtered.map(a => (
-                                            <tr key={a.agreement_id} className="hover:bg-gray-50 transition">
-                                                <td className="px-4 py-3">
-                                                    <p className="font-bold text-gray-800">{a.arms_tenants?.tenant_name || '—'}</p>
-                                                    <p className="text-[11px] text-gray-400">{a.arms_tenants?.phone || '—'}</p>
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <p className="text-gray-700 font-semibold">{a.unit_name || a.arms_tenants?.arms_units?.unit_name || '—'}</p>
-                                                    <p className="text-[11px] text-gray-400">{a.arms_tenants?.arms_locations?.location_name || '—'}</p>
-                                                </td>
-                                                <td className="px-4 py-3 font-bold text-indigo-700">KES {(a.monthly_rent || 0).toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-xs text-gray-500">
-                                                    {a.lease_start_date ? `${a.lease_start_date} → ${a.lease_end_date || '∞'}` : '—'}
-                                                </td>
-                                                <td className="px-4 py-3 text-xs text-gray-500">
-                                                    {a.issued_at ? new Date(a.issued_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                                                    <br /><span className="text-gray-400">{a.issued_by}</span>
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    {a.accepted ? (
-                                                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-bold bg-green-100 text-green-700">
-                                                            ✅ Signed
-                                                        </span>
-                                                    ) : (
-                                                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-700">
-                                                            ⏳ Pending
-                                                        </span>
-                                                    )}
-                                                    {a.signed_at && (
-                                                        <p className="text-[10px] text-gray-400 mt-1">
-                                                            {new Date(a.signed_at).toLocaleDateString('en-KE')}
-                                                        </p>
-                                                    )}
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <button onClick={() => setViewAgreement(a)}
-                                                        className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition">
-                                                        View
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
+            <div className="flex-1 overflow-y-auto p-6">
+                {filtered.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                        <span className="text-5xl">📋</span>
+                        <p className="text-gray-500 font-bold">No agreements found</p>
                     </div>
-                )}
-
-                {/* === TEMPLATE TAB === */}
-                {activeTab === 'template' && (
-                    <div className="max-w-4xl mx-auto space-y-5">
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
-                            <h2 className="text-base font-extrabold text-gray-800">📝 Agreement Template Editor</h2>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Agreement Title</label>
-                                    <input type="text" value={editingTemplate.title || ''} onChange={e => setEditingTemplate(p => ({ ...p, title: e.target.value }))}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Version</label>
-                                    <input type="text" value={editingTemplate.version || '1.0'} onChange={e => setEditingTemplate(p => ({ ...p, version: e.target.value }))}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400" />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Agreement Content</label>
-                                <textarea value={editingTemplate.content || ''} onChange={e => setEditingTemplate(p => ({ ...p, content: e.target.value }))}
-                                    rows={20} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-mono text-gray-700 focus:outline-none focus:border-indigo-400 resize-y" />
-                                <p className="text-[11px] text-gray-400 mt-1">Tip: Use plain text. Tenant name, room, rent amount will be auto-filled.</p>
-                            </div>
-
-                            {/* Admin Signature Section */}
-                            <div className="border-t border-gray-100 pt-5">
-                                <h3 className="text-sm font-extrabold text-gray-700 mb-4">🖊️ Admin / Landlord Signature</h3>
-                                <div className="grid grid-cols-2 gap-4 mb-4">
-                                    <div>
-                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Landlord / Manager Name</label>
-                                        <input type="text" value={editingTemplate.admin_name || ''} onChange={e => setEditingTemplate(p => ({ ...p, admin_name: e.target.value }))}
-                                            placeholder="e.g. John Kamau" className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400" />
+                ) : (
+                    <div className="space-y-3">
+                        {filtered.map(a => (
+                            <div key={a.agreement_id}
+                                className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition overflow-hidden">
+                                <div className="flex items-start gap-4 p-5">
+                                    {/* Status icon */}
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 ${a.accepted ? 'bg-green-100' : 'bg-amber-100'}`}>
+                                        {a.accepted ? '✅' : '⏳'}
                                     </div>
-                                    <div>
-                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Title</label>
-                                        <input type="text" value={editingTemplate.admin_title || ''} onChange={e => setEditingTemplate(p => ({ ...p, admin_title: e.target.value }))}
-                                            placeholder="e.g. Property Manager" className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400" />
-                                    </div>
-                                </div>
-
-                                {/* Signature Upload */}
-                                <div className="flex items-start gap-4">
-                                    <div className="flex-1">
-                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Upload Your Signature</label>
-                                        <div
-                                            className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition"
-                                            onClick={() => sigInputRef.current?.click()}
-                                        >
-                                            {uploadingSig ? (
-                                                <p className="text-sm text-indigo-500 font-semibold">Uploading…</p>
-                                            ) : (
-                                                <>
-                                                    <p className="text-3xl mb-2">🖊️</p>
-                                                    <p className="text-sm font-semibold text-gray-600">Click to upload signature image</p>
-                                                    <p className="text-xs text-gray-400 mt-1">PNG, JPG — transparent background recommended</p>
-                                                </>
-                                            )}
-                                        </div>
-                                        <input ref={sigInputRef} type="file" accept="image/*" className="hidden"
-                                            onChange={e => { if (e.target.files?.[0]) uploadSignature(e.target.files[0]); }} />
-                                    </div>
-
-                                    {editingTemplate.admin_signature_url && (
-                                        <div className="flex-shrink-0">
-                                            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Current Signature</label>
-                                            <div className="border border-gray-200 rounded-2xl p-3 bg-white">
-                                                <img src={editingTemplate.admin_signature_url} alt="Admin signature"
-                                                    className="h-20 object-contain max-w-[200px]" />
-                                            </div>
-                                            <button onClick={() => setEditingTemplate(p => ({ ...p, admin_signature_url: undefined }))}
-                                                className="text-[11px] text-red-500 hover:text-red-700 mt-1 font-semibold">Remove</button>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <button onClick={saveTemplate} disabled={savingTemplate}
-                                className="w-full py-3 rounded-2xl text-sm font-bold text-white transition"
-                                style={{ background: savingTemplate ? '#e2e8f0' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: savingTemplate ? '#94a3b8' : 'white' }}>
-                                {savingTemplate ? 'Saving…' : '💾 Save Agreement Template'}
-                            </button>
-                        </div>
-
-                        {/* Preview */}
-                        {editingTemplate.content && (
-                            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-                                <h3 className="text-sm font-extrabold text-gray-700 mb-4">👁️ Agreement Preview</h3>
-                                <div className="border border-gray-200 rounded-xl p-6 bg-gray-50 space-y-4">
-                                    <h2 className="text-lg font-black text-center text-gray-900">{editingTemplate.title}</h2>
-                                    <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{editingTemplate.content}</pre>
-                                    {editingTemplate.admin_signature_url && (
-                                        <div className="border-t border-gray-200 pt-4 flex items-end justify-between">
+                                    {/* Info */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-start justify-between gap-3 flex-wrap">
                                             <div>
-                                                <p className="text-xs text-gray-500 mb-1">Landlord / Property Manager</p>
-                                                <img src={editingTemplate.admin_signature_url} alt="Signature" className="h-14 object-contain" />
-                                                <p className="text-xs font-bold text-gray-800 mt-1">{editingTemplate.admin_name}</p>
-                                                <p className="text-xs text-gray-500">{editingTemplate.admin_title}</p>
+                                                <p className="font-extrabold text-gray-900 text-base">{a.tenant_name}</p>
+                                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                    <span className="text-[11px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-semibold border border-indigo-100">🏠 {a.unit_name}</span>
+                                                    <span className="text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-semibold border border-amber-100">📍 {a.location_name}</span>
+                                                    {a.accepted && a.signature_text && (
+                                                        <span className="text-[11px] bg-green-50 text-green-700 px-2 py-0.5 rounded-full font-semibold border border-green-100">✍️ "{a.signature_text}"</span>
+                                                    )}
+                                                </div>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-xs text-gray-500 mb-1">Tenant Signature</p>
-                                                <div className="w-36 h-12 border-b-2 border-gray-400" />
-                                                <p className="text-xs text-gray-500 mt-1">Date: ___________</p>
-                                            </div>
+                                            <span className={`flex-shrink-0 text-xs font-extrabold px-3 py-1 rounded-full ${a.accepted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                {a.accepted ? '✓ SIGNED' : 'PENDING'}
+                                            </span>
                                         </div>
-                                    )}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 pt-3 border-t border-gray-50">
+                                            {[
+                                                { label: 'Monthly Rent', value: fmt(a.monthly_rent) },
+                                                { label: 'Deposit', value: fmt(a.deposit_amount) },
+                                                { label: 'Issued', value: fmtDate(a.created_at) },
+                                                { label: a.accepted ? 'Signed' : 'Expires', value: a.accepted ? fmtDate(a.signed_at) : '—' },
+                                            ].map(d => (
+                                                <div key={d.label}>
+                                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">{d.label}</p>
+                                                    <p className="text-sm font-extrabold text-gray-800 mt-0.5">{d.value}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        )}
+                        ))}
                     </div>
                 )}
             </div>
-
-            {/* View Agreement Modal */}
-            {viewAgreement && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}>
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                        <div className="sticky top-0 bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 rounded-t-3xl flex items-center justify-between">
-                            <h2 className="text-white font-extrabold">📋 Agreement Details</h2>
-                            <button onClick={() => setViewAgreement(null)} className="text-white/80 hover:text-white text-xl">✕</button>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                {[
-                                    { label: 'Tenant', value: viewAgreement.arms_tenants?.tenant_name },
-                                    { label: 'Phone', value: viewAgreement.arms_tenants?.phone },
-                                    { label: 'Unit', value: viewAgreement.unit_name || viewAgreement.arms_tenants?.arms_units?.unit_name },
-                                    { label: 'Location', value: viewAgreement.arms_tenants?.arms_locations?.location_name },
-                                    { label: 'Monthly Rent', value: `KES ${(viewAgreement.monthly_rent || 0).toLocaleString()}` },
-                                    { label: 'Deposit', value: `KES ${(viewAgreement.deposit_amount || 0).toLocaleString()}` },
-                                    { label: 'Lease Start', value: viewAgreement.lease_start_date },
-                                    { label: 'Lease End', value: viewAgreement.lease_end_date || 'Month-to-Month' },
-                                    { label: 'Issued By', value: viewAgreement.issued_by },
-                                    { label: 'Issued On', value: viewAgreement.issued_at ? new Date(viewAgreement.issued_at).toLocaleDateString('en-KE') : '—' },
-                                ].map(item => (
-                                    <div key={item.label}>
-                                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{item.label}</p>
-                                        <p className="text-sm font-semibold text-gray-800">{item.value || '—'}</p>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className={`rounded-2xl px-4 py-3 ${viewAgreement.accepted ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
-                                <p className={`text-sm font-bold ${viewAgreement.accepted ? 'text-green-700' : 'text-amber-700'}`}>
-                                    {viewAgreement.accepted ? '✅ Tenant has signed this agreement' : '⏳ Waiting for tenant signature'}
-                                </p>
-                                {viewAgreement.accepted && (
-                                    <div className="mt-2 space-y-1">
-                                        <p className="text-xs text-gray-600">Signed: {viewAgreement.signed_at ? new Date(viewAgreement.signed_at).toLocaleString('en-KE') : '—'}</p>
-                                        <p className="text-xs text-gray-600">Signature: <span className="font-bold italic">{viewAgreement.signature_text}</span></p>
-                                        {viewAgreement.device_info && <p className="text-[11px] text-gray-400">Device: {viewAgreement.device_info}</p>}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
