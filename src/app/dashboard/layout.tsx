@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLocations } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { canAccessRoute, parseStoredUser, parseStoredLicense, computeMachineFingerprint, type ARMSUser, type LicensePayload } from '@/lib/rbac';
 import toast from 'react-hot-toast';
 import {
@@ -115,6 +116,20 @@ function RoleBadge({ user }: { user: ARMSUser }) {
     );
 }
 
+// ── Supabase client for real-time notifications ───────────────
+const sbClient = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+interface ChatNotification {
+    chat_id: number;
+    tenant_id: number;
+    tenant_name: string;
+    message: string;
+    created_at: string;
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
@@ -128,6 +143,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [licenseChecked, setLicenseChecked] = useState(false);
     const licenseCheckDone = useRef(false);
     const [unreadChats, setUnreadChats] = useState(0);
+
+    // ── Global notification overlay state ────────────────────
+    const [notification, setNotification] = useState<ChatNotification | null>(null);
+    const notifDismissTimer = useRef<NodeJS.Timeout | null>(null);
 
     // Poll unread chat count every 15s
     const fetchUnreadChats = useCallback(async () => {
@@ -150,6 +169,56 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             setUnreadChats(0);
         }
     }, [pathname]);
+
+    // ── GLOBAL real-time notification subscription ────────────
+    // Fires on ANY dashboard page — blurs entire screen on new tenant message
+    useEffect(() => {
+        const channel = sbClient
+            .channel('arms_global_chat_notifications')
+            .on('postgres_changes' as any, {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'arms_chats',
+            }, async (payload: any) => {
+                const msg = payload.new;
+                if (msg.sender !== 'tenant') return; // Only show for tenant messages
+
+                // Bump unread count
+                setUnreadChats(prev => prev + 1);
+
+                // Don't show blur overlay if already viewing THIS tenant's thread
+                const isViewingThread = pathname?.startsWith(`/dashboard/chats/${msg.tenant_id}`);
+                if (isViewingThread) return;
+
+                // Fetch tenant name for the notification
+                let tenantName = `Tenant #${msg.tenant_id}`;
+                try {
+                    const res = await fetch(`/api/chats?tenantId=${msg.tenant_id}`);
+                    const data = await res.json();
+                    if (data.tenant?.tenant_name) tenantName = data.tenant.tenant_name;
+                } catch { /* use default name */ }
+
+                const notif: ChatNotification = {
+                    chat_id: msg.chat_id,
+                    tenant_id: msg.tenant_id,
+                    tenant_name: tenantName,
+                    message: msg.message,
+                    created_at: msg.created_at,
+                };
+
+                setNotification(notif);
+
+                // Auto-dismiss after 10 seconds
+                if (notifDismissTimer.current) clearTimeout(notifDismissTimer.current);
+                notifDismissTimer.current = setTimeout(() => setNotification(null), 10000);
+            })
+            .subscribe();
+
+        return () => {
+            sbClient.removeChannel(channel);
+            if (notifDismissTimer.current) clearTimeout(notifDismissTimer.current);
+        };
+    }, [pathname]); // re-subscribe when pathname changes so isViewingThread is fresh
 
     // ── RBAC + License guard ──────────────────────────────────
     useEffect(() => {
@@ -340,7 +409,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })();
 
     return (
-        <div className="flex min-h-screen" style={{ background: '#f0f2f5' }}>
+        <div className="flex min-h-screen relative" style={{ background: '#f0f2f5' }}>
             <style>{`
                 .sidebar-scroll::-webkit-scrollbar { width: 4px; }
                 .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -348,6 +417,131 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             `}</style>
 
+            {/* ════════════════════════════════════════════════════
+                GLOBAL NOTIFICATION BLUR OVERLAY
+                Appears on top of EVERYTHING on any dashboard page
+                when a tenant sends a new message
+            ════════════════════════════════════════════════════ */}
+            {notification && (
+                <div
+                    className="fixed inset-0 flex items-center justify-center z-[9999]"
+                    style={{
+                        backdropFilter: 'blur(18px)',
+                        WebkitBackdropFilter: 'blur(18px)',
+                        background: 'rgba(10,8,30,0.72)',
+                        animation: 'fadeIn 0.25s ease',
+                    }}
+                    onClick={() => setNotification(null)}
+                >
+                    <style>{`
+                        @keyframes fadeIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
+                        @keyframes pulse-ring { 0%,100%{opacity:1} 50%{opacity:0.4} }
+                    `}</style>
+                    <div
+                        className="mx-4 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+                        style={{
+                            border: '1.5px solid rgba(167,139,250,0.5)',
+                            background: 'linear-gradient(145deg,#1e1b4b,#2d1b69)',
+                            animation: 'fadeIn 0.3s ease',
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div className="px-5 py-4 flex items-center gap-3"
+                            style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed,#a855f7)' }}>
+                            {/* Animated ring */}
+                            <div className="relative flex-shrink-0">
+                                <div className="absolute inset-0 rounded-full opacity-60 animate-ping"
+                                    style={{ background: 'rgba(167,139,250,0.5)', animationDuration: '1.2s' }} />
+                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg relative z-10"
+                                    style={{ background: 'rgba(255,255,255,0.2)' }}>
+                                    {notification.tenant_name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase()}
+                                </div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-white font-extrabold text-sm truncate">{notification.tenant_name}</p>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"
+                                        style={{ animation: 'pulse-ring 1s ease infinite' }} />
+                                    <span className="text-green-300 text-xs font-bold">New message just now</span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setNotification(null)}
+                                className="w-8 h-8 rounded-full flex items-center justify-center text-white flex-shrink-0 transition hover:bg-white/20"
+                                style={{ background: 'rgba(255,255,255,0.15)', fontSize: 18 }}>
+                                ×
+                            </button>
+                        </div>
+
+                        {/* Message body */}
+                        <div className="px-5 py-5">
+                            <p className="text-xs font-extrabold uppercase tracking-widest mb-3" style={{ color: '#a5b4fc' }}>
+                                📨 Message Received
+                            </p>
+                            <div className="rounded-2xl px-4 py-3.5 mb-5"
+                                style={{
+                                    background: 'rgba(99,102,241,0.18)',
+                                    border: '1px solid rgba(167,139,250,0.3)',
+                                }}>
+                                <p className="text-white text-sm leading-relaxed" style={{ wordBreak: 'break-word' }}>
+                                    {notification.message.length > 200
+                                        ? notification.message.slice(0, 200) + '…'
+                                        : notification.message}
+                                </p>
+                                <p className="text-xs mt-2 text-right" style={{ color: '#818cf8' }}>
+                                    {new Date(notification.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                            </div>
+
+                            {/* Auto dismiss bar */}
+                            <div className="mb-4 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(99,102,241,0.2)' }}>
+                                <div className="h-full rounded-full"
+                                    style={{
+                                        background: 'linear-gradient(90deg,#6366f1,#a855f7)',
+                                        animation: 'shrink 10s linear forwards',
+                                    }} />
+                                <style>{`@keyframes shrink { from { width:100%; } to { width:0%; } }`}</style>
+                            </div>
+
+                            <div className="flex gap-2.5">
+                                <button
+                                    onClick={() => {
+                                        setNotification(null);
+                                        router.push(`/dashboard/chats/${notification.tenant_id}`);
+                                    }}
+                                    className="flex-1 py-3 rounded-2xl text-sm font-extrabold text-white transition active:scale-95"
+                                    style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 4px 16px rgba(99,102,241,0.45)' }}>
+                                    💬 Reply Now
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setNotification(null);
+                                        router.push('/dashboard/chats');
+                                    }}
+                                    className="px-4 py-3 rounded-2xl text-sm font-bold transition"
+                                    style={{
+                                        background: 'rgba(99,102,241,0.2)',
+                                        color: '#c4b5fd',
+                                        border: '1px solid rgba(167,139,250,0.35)',
+                                    }}>
+                                    Inbox
+                                </button>
+                                <button
+                                    onClick={() => setNotification(null)}
+                                    className="px-4 py-3 rounded-2xl text-sm font-bold transition"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.05)',
+                                        color: '#94a3b8',
+                                        border: '1px solid rgba(255,255,255,0.1)',
+                                    }}>
+                                    Later
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* ─── SIDEBAR ─── */}
             <aside className={`${collapsed ? 'w-[68px]' : 'w-[252px]'} flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50`}
                 style={{ background: '#ffffff', borderRight: '1px solid #e2e8f0' }}>
