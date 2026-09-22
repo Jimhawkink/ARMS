@@ -107,25 +107,35 @@ export default function AgreementsPage() {
         try {
             const [tmplRes, agmtRes] = await Promise.all([
                 fetch('/api/agreements/template'),
-                fetch('/api/agreements/sign'),
+                fetch('/api/agreements/sign?all=1'),   // FIX: was missing ?all=1
             ]);
             if (tmplRes.ok) {
                 const d = await tmplRes.json();
-                if (d.template) {
-                    setTemplate(d.template);
-                    setSigPreview(d.template.admin_signature_url);
+                // FIX: API returns { templates: [] } array — pick first active one
+                const tmpl = d.template || (d.templates && d.templates[0]) || null;
+                if (tmpl) {
+                    setTemplate(tmpl);
+                    setSigPreview(tmpl.admin_signature_url);
                     setTForm({
-                        title: d.template.title,
-                        content: d.template.content,
-                        admin_name: d.template.admin_name,
-                        admin_title: d.template.admin_title,
-                        version: d.template.version,
+                        title: tmpl.title,
+                        content: tmpl.content,
+                        admin_name: tmpl.admin_name,
+                        admin_title: tmpl.admin_title,
+                        version: tmpl.version,
                     });
                 }
             }
             if (agmtRes.ok) {
                 const d = await agmtRes.json();
-                setAgreements(d.agreements || []);
+                // Flatten nested joins from Supabase
+                const raw = d.agreements || [];
+                const normalized = raw.map((a: any) => ({
+                    ...a,
+                    tenant_name:   a.arms_tenants?.tenant_name || a.tenant_name || 'Unknown',
+                    unit_name:     a.arms_tenants?.arms_units?.unit_name || a.unit_name || '—',
+                    location_name: a.arms_tenants?.arms_locations?.location_name || a.location_name || '—',
+                }));
+                setAgreements(normalized);
             }
         } catch { toast.error('Failed to load data'); }
         setLoading(false);
@@ -137,20 +147,22 @@ export default function AgreementsPage() {
         if (!tForm.title.trim() || !tForm.content.trim()) { toast.error('Title and content are required'); return; }
         setSaving(true);
         try {
-            const method = template ? 'PUT' : 'POST';
+            // FIX: API has POST (create) and PATCH (update) — no PUT
+            const method = template ? 'PATCH' : 'POST';
             const body = { ...tForm, ...(template ? { template_id: template.template_id } : {}) };
             const res = await fetch('/api/agreements/template', {
                 method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            if (!res.ok) throw new Error((await res.json()).error);
+            if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
             toast.success('✅ Template saved successfully!');
             await loadData();
             setView('dashboard');
         } catch (e: any) { toast.error(e.message || 'Save failed'); }
         setSaving(false);
     };
+
 
     const uploadSignature = async (file: File) => {
         if (!template) { toast.error('Save the template first before uploading a signature'); return; }
