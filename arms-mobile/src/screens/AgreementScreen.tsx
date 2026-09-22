@@ -14,6 +14,7 @@ interface AgreementScreenProps {
     agreement: TenantAgreement;
     template: AgreementTemplate | null;
     tenantName: string;
+    locationName?: string;
     onAccepted: () => void;
 }
 
@@ -157,7 +158,7 @@ function SignaturePad({
 }
 
 // ── Main AgreementScreen ─────────────────────────────────────
-export default function AgreementScreen({ agreement, template, tenantName, onAccepted }: AgreementScreenProps) {
+export default function AgreementScreen({ agreement, template, tenantName, locationName, onAccepted }: AgreementScreenProps) {
     const [scrolledToBottom, setScrolledToBottom] = useState(false);
     const [signatureStrokes, setSignatureStrokes] = useState<Stroke[]>([]);
     const [signing, setSigning] = useState(false);
@@ -174,7 +175,7 @@ export default function AgreementScreen({ agreement, template, tenantName, onAcc
     const placeholderVals: Record<string, string> = {
         tenant_name:      tenantName || '',
         unit_name:        agreement.unit_name || '—',
-        location_name:    agreement.location_name || '',
+        location_name:    locationName || agreement.location_name || '—',
         lease_start_date: agreement.lease_start_date || '—',
         lease_end_date:   agreement.lease_end_date || 'Month-to-Month',
         monthly_rent:     `KES ${(agreement.monthly_rent || 0).toLocaleString()}`,

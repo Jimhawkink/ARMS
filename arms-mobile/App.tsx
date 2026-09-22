@@ -1,17 +1,17 @@
-﻿import React, { useState, useEffect, Component, ErrorInfo } from 'react';
+import React, { useState, useEffect, useRef, Component, ErrorInfo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox, TouchableOpacity, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 
-// ðŸš€ THIS APK'S VERSION - bump on every release ðŸš€
-const APP_VERSION = 'v4.0';
+// 🚀 THIS APK'S VERSION - bump on every release 🚀
+const APP_VERSION = 'v2.3';
 
-// â”€â”€â”€ CRASH DEBUGGER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
 class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean, error: string, stack: string}> {
     constructor(props: any) {
@@ -28,7 +28,7 @@ class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: bo
         if (this.state.hasError) {
             return (
                 <View style={{flex:1, backgroundColor:'#1a1a2e', padding:20, paddingTop:60}}>
-                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>âš ï¸ APP CRASH DEBUG</Text>
+                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>⚠️ APP CRASH DEBUG</Text>
                     <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Error:</Text>
                     <ScrollView style={{flex:1}}>
                         <Text style={{color:'#ffaaaa', fontSize:13, marginBottom:16}} selectable>{this.state.error}</Text>
@@ -67,7 +67,7 @@ type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-// â”€â”€ Staff Shell â€” Caretaker or Landlord â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Staff Shell — Caretaker or Landlord ──────────────────────────────
 // Caretaker: Search (read-only) + Profile
 // Landlord:  Search + Collect Rent (STK) + Profile
 function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
@@ -105,8 +105,8 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
             {/* Bottom tab bar */}
             <View style={styles.bottomBar}>
                 {[
-                    { key: 'search' as StaffTab, emoji: 'ðŸ”', label: 'Tenants' },
-                    { key: 'profile' as StaffTab, emoji: 'ðŸ‘¤', label: 'Profile' },
+                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
+                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
                 ].map(tab => {
                     const isActive = activeTab === tab.key;
                     return (
@@ -131,7 +131,7 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
     );
 }
 
-// â”€â”€â”€ Main App Shell with bottom tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Main App Shell with bottom tabs ─────────────────────────
 function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
     const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
@@ -139,6 +139,14 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     const [pendingAgreement, setPendingAgreement] = useState<TenantAgreement | null>(null);
     const [agreementTemplate, setAgreementTemplate] = useState<AgreementTemplate | null>(null);
     const [checkingAgreement, setCheckingAgreement] = useState(true);
+
+    // ── NEW MESSAGE notification overlay ─────────────────────
+    const [chatNotif, setChatNotif] = useState<{
+        message: string;
+        sender_name: string;
+        created_at: string;
+    } | null>(null);
+    const lastMsgIdRef = useRef<number>(0);
 
     // Check for pending agreement on mount
     useEffect(() => {
@@ -169,6 +177,46 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         return () => clearInterval(interval);
     }, [session.tenant_id]);
 
+    // ── NOTIFICATION OVERLAY: poll for new admin messages ────
+    // Shows full-screen overlay when admin sends a new message
+    useEffect(() => {
+        const checkNewMessages = async () => {
+            try {
+                const { supabase } = await import('./src/lib/supabase');
+                const { data } = await supabase
+                    .from('arms_chats')
+                    .select('chat_id, message, created_at')
+                    .eq('tenant_id', session.tenant_id)
+                    .eq('sender', 'admin')
+                    .eq('is_read', false)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                if (data && data.length > 0) {
+                    const newest = data[0];
+                    // Only show if it's a genuinely new message we haven't seen
+                    if (newest.chat_id !== lastMsgIdRef.current) {
+                        lastMsgIdRef.current = newest.chat_id;
+                        // Don't show overlay if tenant is already in chat tab
+                        if (activeTab !== 'chat') {
+                            setChatNotif({
+                                message: newest.message,
+                                sender_name: 'Management',
+                                created_at: newest.created_at,
+                            });
+                            // Auto-dismiss after 10 seconds
+                            setTimeout(() => setChatNotif(null), 10000);
+                        }
+                    }
+                }
+            } catch { /* silent */ }
+        };
+
+        checkNewMessages();
+        const interval = setInterval(checkNewMessages, 20000);
+        return () => clearInterval(interval);
+    }, [session.tenant_id, activeTab]);
+
     // Update activity timestamp on tab switches
     useEffect(() => { updateSessionActivity(); }, [activeTab]);
 
@@ -180,7 +228,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
                 <ActivityIndicator size="large" color="#6366f1" />
-                <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Loadingâ€¦</Text>
+                <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Loading…</Text>
             </View>
         );
     }
@@ -191,6 +239,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                 agreement={pendingAgreement}
                 template={agreementTemplate}
                 tenantName={currentSession.tenant_name}
+                locationName={currentSession.location_name}
                 onAccepted={() => setPendingAgreement(null)}
             />
         );
@@ -224,16 +273,87 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     };
 
     const tabs = [
-        { key: 'home' as const, emoji: 'ðŸ ', label: 'Home' },
-        { key: 'pay' as const, emoji: 'ðŸ’³', label: 'Pay Rent' },
-        { key: 'history' as const, emoji: 'ðŸ“œ', label: 'History' },
-        { key: 'chat' as const, emoji: 'ðŸ’¬', label: 'Messages', badge: unreadAdmin },
-        { key: 'profile' as const, emoji: 'ðŸ‘¤', label: 'Profile' },
+        { key: 'home' as const, emoji: '🏠', label: 'Home' },
+        { key: 'pay' as const, emoji: '💳', label: 'Pay Rent' },
+        { key: 'history' as const, emoji: '📜', label: 'History' },
+        { key: 'chat' as const, emoji: '💬', label: 'Messages', badge: unreadAdmin },
+        { key: 'profile' as const, emoji: '👤', label: 'Profile' },
     ];
 
     return (
         <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
             {renderScreen()}
+
+            {/* ════ GLOBAL NOTIFICATION OVERLAY ════
+                Appears on TOP OF EVERYTHING when admin
+                sends a new message — any tab, any screen */}
+            <Modal
+                visible={!!chatNotif}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setChatNotif(null)}
+            >
+                <View style={notifStyles.backdrop}>
+                    <View style={notifStyles.card}>
+                        {/* Header strip */}
+                        <LinearGradient
+                            colors={['#4f46e5', '#7c3aed', '#a855f7']}
+                            style={notifStyles.cardHeader}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        >
+                            <View style={notifStyles.avatarRing}>
+                                <View style={notifStyles.avatar}>
+                                    <Text style={notifStyles.avatarText}>🏠</Text>
+                                </View>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={notifStyles.headerTitle}>Management Message</Text>
+                                <Text style={notifStyles.headerSub}>
+                                    {chatNotif?.created_at
+                                        ? new Date(chatNotif.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                                        : 'Just now'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setChatNotif(null)} style={notifStyles.closeBtn}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>×</Text>
+                            </TouchableOpacity>
+                        </LinearGradient>
+
+                        {/* Message body */}
+                        <View style={notifStyles.cardBody}>
+                            <Text style={notifStyles.msgLabel}>📨 NEW MESSAGE</Text>
+                            <View style={notifStyles.msgBox}>
+                                <Text style={notifStyles.msgText} numberOfLines={6}>
+                                    {chatNotif?.message || ''}
+                                </Text>
+                            </View>
+
+                            {/* Progress bar — auto dismiss in 10s */}
+                            <View style={notifStyles.progressTrack}>
+                                <View style={notifStyles.progressBar} />
+                            </View>
+
+                            <View style={notifStyles.btnRow}>
+                                <TouchableOpacity
+                                    style={notifStyles.btnReply}
+                                    onPress={() => {
+                                        setChatNotif(null);
+                                        setActiveTab('chat');
+                                    }}
+                                >
+                                    <Text style={notifStyles.btnReplyText}>💬 Reply Now</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={notifStyles.btnLater}
+                                    onPress={() => setChatNotif(null)}
+                                >
+                                    <Text style={notifStyles.btnLaterText}>Later</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Bottom Tab Bar */}
             <View style={styles.bottomBar}>
@@ -273,7 +393,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     );
 }
 
-// â”€â”€â”€ Root App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Root App ────────────────────────────────────────────────
 function AppInner() {
     const [isLoading, setIsLoading] = useState(true);
     const [session, setSession] = useState<TenantSession | null>(null);
@@ -288,7 +408,7 @@ function AppInner() {
 
     const initApp = async () => {
         try {
-            // 1. VERSION CHECK â€” block outdated APKs immediately
+            // 1. VERSION CHECK — block outdated APKs immediately
             try {
                 const vRes = await fetch(
                     `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
@@ -299,11 +419,11 @@ function AppInner() {
                     if (vData.forceUpdate) {
                         setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
                         setIsLoading(false);
-                        return; // Stop init â€” show update screen
+                        return; // Stop init — show update screen
                     }
                 }
             } catch {
-                // Network error â†’ fail-open (don't block if server unreachable)
+                // Network error → fail-open (don't block if server unreachable)
             }
 
             // 2. Load cached license if any (for landlords/staff who need it)
@@ -361,7 +481,7 @@ function AppInner() {
             }
             return false;
         } catch {
-            // Network error â€” allow cached license if not expired
+            // Network error — allow cached license if not expired
             const expiry = new Date(lic.expiryDate);
             return expiry > new Date();
         }
@@ -386,7 +506,7 @@ function AppInner() {
         await clearStaffSession();
         setSession(null);
         setStaffSession(null);
-        // Re-run version check immediately on logout â€” blocks old APKs from reaching login
+        // Re-run version check immediately on logout — blocks old APKs from reaching login
         setIsLoading(true);
         await initApp();
     };
@@ -399,7 +519,7 @@ function AppInner() {
                     style={StyleSheet.absoluteFillObject}
                 />
                 <View style={styles.splashLogo}>
-                    <Text style={styles.splashEmoji}>ðŸ¢</Text>
+                    <Text style={styles.splashEmoji}>🏢</Text>
                 </View>
                 <Text style={styles.splashTitle}>ARMS</Text>
                 <Text style={styles.splashSub}>Tenant Portal</Text>
@@ -408,7 +528,7 @@ function AppInner() {
         );
     }
 
-    // â”€â”€ FORCE UPDATE â€” block outdated APKs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── FORCE UPDATE — block outdated APKs ────────────────────
     if (forceUpdate.required) {
         return (
             <ForceUpdateScreen
@@ -418,12 +538,12 @@ function AppInner() {
         );
     }
 
-    // â”€â”€ RENDER DECISION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Flow: PIN screen â†’ DB check â†’ if PIN found â†’ dashboard (no license needed)
-    //                             â†’ if PIN NOT found â†’ show license activation
-    // Tenants NEVER see the license screen â€” only unknown users do.
+    // ── RENDER DECISION ──────────────────────────────────────────
+    // Flow: PIN screen → DB check → if PIN found → dashboard (no license needed)
+    //                             → if PIN NOT found → show license activation
+    // Tenants NEVER see the license screen — only unknown users do.
 
-    // No session â†’ show Login (PIN entry) â€” license NOT required for tenants
+    // No session → show Login (PIN entry) — license NOT required for tenants
     // The LoginScreen itself calls checkTenantLicense after PIN match (fail-open)
 
     return (
@@ -447,7 +567,7 @@ function AppInner() {
     );
 }
 
-// â”€â”€â”€ Exported App with Error Boundary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Exported App with Error Boundary ────────────────────────
 export default function App() {
     return (
         <ErrorBoundary>
@@ -455,6 +575,94 @@ export default function App() {
         </ErrorBoundary>
     );
 }
+
+// ── Notification overlay styles ───────────────────────────────
+const { width: SW } = require('react-native').Dimensions.get('window');
+const notifStyles = require('react-native').StyleSheet.create({
+    backdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(10,8,30,0.82)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    card: {
+        width: SW - 40,
+        borderRadius: 24,
+        overflow: 'hidden',
+        backgroundColor: '#1e1b4b',
+        borderWidth: 1.5,
+        borderColor: 'rgba(167,139,250,0.5)',
+        shadowColor: '#6366f1',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.5,
+        shadowRadius: 24,
+        elevation: 20,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 12,
+    },
+    avatarRing: {
+        width: 46, height: 46, borderRadius: 23,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    avatar: {
+        width: 38, height: 38, borderRadius: 19,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    avatarText:  { fontSize: 20 },
+    headerTitle: { color: '#fff', fontSize: 14, fontWeight: '800' },
+    headerSub:   { color: 'rgba(196,181,253,0.85)', fontSize: 11, marginTop: 2 },
+    closeBtn: {
+        width: 32, height: 32, borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    cardBody: { padding: 18 },
+    msgLabel: {
+        fontSize: 10, fontWeight: '800', color: '#a5b4fc',
+        letterSpacing: 1.5, marginBottom: 10,
+    },
+    msgBox: {
+        backgroundColor: 'rgba(99,102,241,0.18)',
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
+        borderRadius: 14, padding: 14, marginBottom: 14,
+    },
+    msgText: { color: '#e2e8f0', fontSize: 14, lineHeight: 22 },
+    progressTrack: {
+        height: 3, backgroundColor: 'rgba(99,102,241,0.2)',
+        borderRadius: 2, marginBottom: 16, overflow: 'hidden',
+    },
+    progressBar: {
+        height: 3,
+        backgroundColor: '#818cf8',
+        borderRadius: 2,
+        width: '100%',
+    },
+    btnRow:      { flexDirection: 'row', gap: 10 },
+    btnReply: {
+        flex: 1, backgroundColor: '#6366f1',
+        borderRadius: 14, paddingVertical: 13,
+        alignItems: 'center',
+        shadowColor: '#6366f1', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4, shadowRadius: 8, elevation: 6,
+    },
+    btnReplyText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+    btnLater: {
+        paddingHorizontal: 18, paddingVertical: 13,
+        borderRadius: 14,
+        backgroundColor: 'rgba(99,102,241,0.15)',
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
+        alignItems: 'center',
+    },
+    btnLaterText: { color: '#c4b5fd', fontSize: 13, fontWeight: '700' },
+});
 
 const styles = StyleSheet.create({
     splash: {
