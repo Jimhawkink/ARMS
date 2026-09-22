@@ -19,6 +19,11 @@ interface AgreementScreenProps {
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PAD_W = SCREEN_W - 48;
+
+// ── Replace {{placeholder}} tags with real values ─────────────
+function fillPlaceholders(text: string, vals: Record<string, string>): string {
+    return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vals[key] || `{{${key}}}`);
+}
 const PAD_H = 160;
 
 function fmt(n: number) { return `KES ${(n || 0).toLocaleString()}`; }
@@ -165,35 +170,39 @@ export default function AgreementScreen({ agreement, template, tenantName, onAcc
         if (reached) setScrolledToBottom(true);
     };
 
-    // Get the content — first check agreement_snapshot, then template
-    const snapshotContent = (() => {
+    // Build placeholder values from agreement + template data
+    const placeholderVals: Record<string, string> = {
+        tenant_name:      tenantName || '',
+        unit_name:        agreement.unit_name || '—',
+        location_name:    agreement.location_name || '',
+        lease_start_date: agreement.lease_start_date || '—',
+        lease_end_date:   agreement.lease_end_date || 'Month-to-Month',
+        monthly_rent:     `KES ${(agreement.monthly_rent || 0).toLocaleString()}`,
+        deposit_amount:   `KES ${(agreement.deposit_amount || 0).toLocaleString()}`,
+        admin_name:       template?.admin_name || agreement.issued_by || 'Landlord',
+        admin_title:      template?.admin_title || 'Property Manager',
+        issued_by:        agreement.issued_by || 'Admin',
+    };
+
+    // Get the content — snapshot first, fallback to template, then fill placeholders
+    const rawContent = (() => {
         try {
-            if (!agreement.agreement_snapshot) return null;
-            const s = typeof agreement.agreement_snapshot === 'string'
-                ? JSON.parse(agreement.agreement_snapshot)
-                : agreement.agreement_snapshot;
-            return s?.content || null;
-        } catch { return null; }
+            if (agreement.agreement_snapshot) {
+                const s = typeof agreement.agreement_snapshot === 'string'
+                    ? JSON.parse(agreement.agreement_snapshot)
+                    : agreement.agreement_snapshot;
+                if (s?.content) return s.content as string;
+            }
+        } catch { /* ignore */ }
+        return template?.content || null;
     })();
 
-    const content = snapshotContent || template?.content || null;
-    const adminName = (() => {
-        try {
-            const s = typeof agreement.agreement_snapshot === 'string'
-                ? JSON.parse(agreement.agreement_snapshot || '{}')
-                : (agreement.agreement_snapshot || {});
-            return s?.admin_name || template?.admin_name || '—';
-        } catch { return template?.admin_name || '—'; }
-    })();
-    const adminTitle = (() => {
-        try {
-            const s = typeof agreement.agreement_snapshot === 'string'
-                ? JSON.parse(agreement.agreement_snapshot || '{}')
-                : (agreement.agreement_snapshot || {});
-            return s?.admin_title || template?.admin_title || '';
-        } catch { return template?.admin_title || ''; }
-    })();
+    const content = rawContent ? fillPlaceholders(rawContent, placeholderVals) : null;
+
+    const adminName  = fillPlaceholders(template?.admin_name  || agreement.issued_by || '—', placeholderVals);
+    const adminTitle = template?.admin_title || 'Property Manager';
     const adminSigUrl = template?.admin_signature_url;
+
 
     const hasSignature = activeTab === 'draw'
         ? signatureStrokes.length > 0
