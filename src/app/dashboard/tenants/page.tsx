@@ -513,18 +513,53 @@ export default function TenantsPage() {
                     setIssuingAgreement(true);
                     try {
                         const user = JSON.parse(localStorage.getItem('arms_user') || '{}');
+                        const unitName = units.find((u: any) => u.unit_id === form.unit_id)?.unit_name || '';
+
+                        // Fetch the active template first so mobile shows real content
+                        let templateId = null;
+                        let templateSnapshot = null;
+                        try {
+                            const tmplRes = await fetch('/api/agreements/template');
+                            if (tmplRes.ok) {
+                                const tmplData = await tmplRes.json();
+                                const tmpl = tmplData.template || (tmplData.templates && tmplData.templates[0]);
+                                if (tmpl) {
+                                    templateId = tmpl.template_id;
+                                    // Fill in placeholders in the template content
+                                    const filled = (tmpl.content || '').replace(/\{\{tenant_name\}\}/g, newTenant.tenant_name || '')
+                                        .replace(/\{\{unit_name\}\}/g, unitName)
+                                        .replace(/\{\{location_name\}\}/g, payload.location_name || '')
+                                        .replace(/\{\{lease_start_date\}\}/g, agreementForm.lease_start_date || '')
+                                        .replace(/\{\{lease_end_date\}\}/g, agreementForm.lease_end_date || '')
+                                        .replace(/\{\{monthly_rent\}\}/g, `KES ${parseFloat(form.monthly_rent || '0').toLocaleString()}`)
+                                        .replace(/\{\{deposit_amount\}\}/g, `KES ${parseFloat(agreementForm.deposit_amount || form.deposit_paid || '0').toLocaleString()}`)
+                                        .replace(/\{\{admin_name\}\}/g, tmpl.admin_name || user.name || 'Admin');
+                                    templateSnapshot = {
+                                        content:    filled,
+                                        title:      tmpl.title,
+                                        admin_name: tmpl.admin_name || user.name || 'Admin',
+                                        admin_title: tmpl.admin_title || 'Property Manager',
+                                        admin_signature_url: tmpl.admin_signature_url || null,
+                                        version:    tmpl.version,
+                                    };
+                                }
+                            }
+                        } catch { /* template fetch failed, issue without content */ }
+
                         await fetch('/api/agreements/sign', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                tenant_id: newTenant.tenant_id,
-                                location_id: payload.location_id,
+                                tenant_id:        newTenant.tenant_id,
+                                template_id:      templateId,
+                                location_id:      payload.location_id,
                                 lease_start_date: agreementForm.lease_start_date,
-                                lease_end_date: agreementForm.lease_end_date || null,
-                                monthly_rent: parseFloat(form.monthly_rent || '0'),
-                                deposit_amount: parseFloat(agreementForm.deposit_amount || form.deposit_paid || '0'),
-                                unit_name: units.find((u: any) => u.unit_id === form.unit_id)?.unit_name || '',
-                                issued_by: user.name || 'Admin',
+                                lease_end_date:   agreementForm.lease_end_date || null,
+                                monthly_rent:     parseFloat(form.monthly_rent || '0'),
+                                deposit_amount:   parseFloat(agreementForm.deposit_amount || form.deposit_paid || '0'),
+                                unit_name:        unitName,
+                                issued_by:        user.name || 'Admin',
+                                agreement_snapshot: templateSnapshot,
                             }),
                         });
                         toast.success('📋 Agreement issued — tenant will sign on mobile app');
@@ -532,6 +567,7 @@ export default function TenantsPage() {
                     setIssuingAgreement(false);
                     setAgreementForm({ issue: false, lease_start_date: today, lease_end_date: '', deposit_amount: '' });
                 }
+
             }
             setSaving(false);
             topProgress.done();
