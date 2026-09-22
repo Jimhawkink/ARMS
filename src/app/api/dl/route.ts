@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
 // APK served directly from Vercel â€” no Google account required, URL always hidden
-const APK_VERSION = 'v4.1';
+const APK_VERSION = 'v4.2';
 const APK_FILENAME = `ARMSTenantApp-${APK_VERSION}.apk`;
 
 export async function GET(req: NextRequest) {
@@ -11,4 +11,5 @@ export async function GET(req: NextRequest) {
     response.headers.set('Content-Disposition', `attachment; filename="${APK_FILENAME}"`);
     return response;
 }
+
 
