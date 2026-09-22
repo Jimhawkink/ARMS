@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Component, ErrorInfo } from 'react';
+﻿import React, { useState, useEffect, Component, ErrorInfo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -8,10 +8,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 
-// 🚀 THIS APK'S VERSION - bump on every release 🚀
-const APP_VERSION = 'v2.3';
+// ðŸš€ THIS APK'S VERSION - bump on every release ðŸš€
+const APP_VERSION = 'v4.0';
 
-// ─── CRASH DEBUGGER ──────────────────────────────────────────
+// â”€â”€â”€ CRASH DEBUGGER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // This will catch ANY error and show it on screen
 class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean, error: string, stack: string}> {
     constructor(props: any) {
@@ -28,7 +28,7 @@ class ErrorBoundary extends Component<{children: React.ReactNode}, {hasError: bo
         if (this.state.hasError) {
             return (
                 <View style={{flex:1, backgroundColor:'#1a1a2e', padding:20, paddingTop:60}}>
-                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>⚠️ APP CRASH DEBUG</Text>
+                    <Text style={{color:'#ff4444', fontSize:22, fontWeight:'900', marginBottom:16}}>âš ï¸ APP CRASH DEBUG</Text>
                     <Text style={{color:'#ff8888', fontSize:14, fontWeight:'700', marginBottom:8}}>Error:</Text>
                     <ScrollView style={{flex:1}}>
                         <Text style={{color:'#ffaaaa', fontSize:13, marginBottom:16}} selectable>{this.state.error}</Text>
@@ -67,7 +67,7 @@ type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-// ── Staff Shell — Caretaker or Landlord ──────────────────────────────
+// â”€â”€ Staff Shell â€” Caretaker or Landlord â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Caretaker: Search (read-only) + Profile
 // Landlord:  Search + Collect Rent (STK) + Profile
 function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
@@ -105,8 +105,8 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
             {/* Bottom tab bar */}
             <View style={styles.bottomBar}>
                 {[
-                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
-                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
+                    { key: 'search' as StaffTab, emoji: 'ðŸ”', label: 'Tenants' },
+                    { key: 'profile' as StaffTab, emoji: 'ðŸ‘¤', label: 'Profile' },
                 ].map(tab => {
                     const isActive = activeTab === tab.key;
                     return (
@@ -131,7 +131,7 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
     );
 }
 
-// ─── Main App Shell with bottom tabs ─────────────────────────
+// â”€â”€â”€ Main App Shell with bottom tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
     const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
@@ -180,7 +180,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
                 <ActivityIndicator size="large" color="#6366f1" />
-                <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Loading…</Text>
+                <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Loadingâ€¦</Text>
             </View>
         );
     }
@@ -224,11 +224,11 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     };
 
     const tabs = [
-        { key: 'home' as const, emoji: '🏠', label: 'Home' },
-        { key: 'pay' as const, emoji: '💳', label: 'Pay Rent' },
-        { key: 'history' as const, emoji: '📜', label: 'History' },
-        { key: 'chat' as const, emoji: '💬', label: 'Messages', badge: unreadAdmin },
-        { key: 'profile' as const, emoji: '👤', label: 'Profile' },
+        { key: 'home' as const, emoji: 'ðŸ ', label: 'Home' },
+        { key: 'pay' as const, emoji: 'ðŸ’³', label: 'Pay Rent' },
+        { key: 'history' as const, emoji: 'ðŸ“œ', label: 'History' },
+        { key: 'chat' as const, emoji: 'ðŸ’¬', label: 'Messages', badge: unreadAdmin },
+        { key: 'profile' as const, emoji: 'ðŸ‘¤', label: 'Profile' },
     ];
 
     return (
@@ -273,7 +273,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     );
 }
 
-// ─── Root App ────────────────────────────────────────────────
+// â”€â”€â”€ Root App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function AppInner() {
     const [isLoading, setIsLoading] = useState(true);
     const [session, setSession] = useState<TenantSession | null>(null);
@@ -288,7 +288,7 @@ function AppInner() {
 
     const initApp = async () => {
         try {
-            // 1. VERSION CHECK — block outdated APKs immediately
+            // 1. VERSION CHECK â€” block outdated APKs immediately
             try {
                 const vRes = await fetch(
                     `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
@@ -299,11 +299,11 @@ function AppInner() {
                     if (vData.forceUpdate) {
                         setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
                         setIsLoading(false);
-                        return; // Stop init — show update screen
+                        return; // Stop init â€” show update screen
                     }
                 }
             } catch {
-                // Network error → fail-open (don't block if server unreachable)
+                // Network error â†’ fail-open (don't block if server unreachable)
             }
 
             // 2. Load cached license if any (for landlords/staff who need it)
@@ -361,7 +361,7 @@ function AppInner() {
             }
             return false;
         } catch {
-            // Network error — allow cached license if not expired
+            // Network error â€” allow cached license if not expired
             const expiry = new Date(lic.expiryDate);
             return expiry > new Date();
         }
@@ -386,7 +386,7 @@ function AppInner() {
         await clearStaffSession();
         setSession(null);
         setStaffSession(null);
-        // Re-run version check immediately on logout — blocks old APKs from reaching login
+        // Re-run version check immediately on logout â€” blocks old APKs from reaching login
         setIsLoading(true);
         await initApp();
     };
@@ -399,7 +399,7 @@ function AppInner() {
                     style={StyleSheet.absoluteFillObject}
                 />
                 <View style={styles.splashLogo}>
-                    <Text style={styles.splashEmoji}>🏢</Text>
+                    <Text style={styles.splashEmoji}>ðŸ¢</Text>
                 </View>
                 <Text style={styles.splashTitle}>ARMS</Text>
                 <Text style={styles.splashSub}>Tenant Portal</Text>
@@ -408,7 +408,7 @@ function AppInner() {
         );
     }
 
-    // ── FORCE UPDATE — block outdated APKs ────────────────────
+    // â”€â”€ FORCE UPDATE â€” block outdated APKs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (forceUpdate.required) {
         return (
             <ForceUpdateScreen
@@ -418,12 +418,12 @@ function AppInner() {
         );
     }
 
-    // ── RENDER DECISION ──────────────────────────────────────────
-    // Flow: PIN screen → DB check → if PIN found → dashboard (no license needed)
-    //                             → if PIN NOT found → show license activation
-    // Tenants NEVER see the license screen — only unknown users do.
+    // â”€â”€ RENDER DECISION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Flow: PIN screen â†’ DB check â†’ if PIN found â†’ dashboard (no license needed)
+    //                             â†’ if PIN NOT found â†’ show license activation
+    // Tenants NEVER see the license screen â€” only unknown users do.
 
-    // No session → show Login (PIN entry) — license NOT required for tenants
+    // No session â†’ show Login (PIN entry) â€” license NOT required for tenants
     // The LoginScreen itself calls checkTenantLicense after PIN match (fail-open)
 
     return (
@@ -447,7 +447,7 @@ function AppInner() {
     );
 }
 
-// ─── Exported App with Error Boundary ────────────────────────
+// â”€â”€â”€ Exported App with Error Boundary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function App() {
     return (
         <ErrorBoundary>

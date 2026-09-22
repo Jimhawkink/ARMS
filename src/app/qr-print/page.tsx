@@ -1,7 +1,7 @@
-'use client';
+﻿'use client';
 import { useEffect } from 'react';
 
-// QR points to hidden server-side redirect — APK URL never exposed
+// QR points to hidden server-side redirect â€” APK URL never exposed
 const QR = (size: number) =>
     `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=https%3A%2F%2Farms-opal.vercel.app%2Fapi%2Fdl&color=000000&bgcolor=ffffff&margin=2&qzone=1&format=png&ecc=H`;
 
@@ -18,7 +18,7 @@ export default function QRPrintPage() {
                 * { margin:0; padding:0; box-sizing:border-box; }
                 body { font-family:'Inter',sans-serif; background:#1a1a2e; display:flex; flex-direction:column; align-items:center; gap:48px; padding:40px 20px; }
 
-                /* ════ PRINT STYLES — forces design to print on white paper ════ */
+                /* â•â•â•â• PRINT STYLES â€” forces design to print on white paper â•â•â•â• */
                 @media print {
                     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
                     body { background: white !important; padding: 0 !important; gap: 20px !important; }
@@ -61,9 +61,9 @@ export default function QRPrintPage() {
                     text-transform:uppercase; text-align:center;
                 }
 
-                /* ════════════════════════════════════
+                /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
                    CARD BASE
-                ════════════════════════════════════ */
+                â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
                 .card {
                     position:relative; overflow:hidden;
                     display:flex; flex-direction:column; align-items:center;
@@ -77,24 +77,24 @@ export default function QRPrintPage() {
                 .photo-card { width:10cm; height:15cm; border-radius:12px; padding:16px 14px 12px; gap:8px; }
                 .a5-card    { width:14.8cm; height:21cm; border-radius:14px; padding:22px 20px 16px; gap:12px; }
 
-                /* ── SVG Laser Watermark ── */
+                /* â”€â”€ SVG Laser Watermark â”€â”€ */
                 .wm-svg {
                     position:absolute; inset:0; width:100%; height:100%;
                     pointer-events:none; z-index:0; opacity:0.045;
                 }
 
-                /* ── Glowing edge line ── */
+                /* â”€â”€ Glowing edge line â”€â”€ */
                 .glow-line {
                     width:100%; height:2px; z-index:1;
                     background:linear-gradient(90deg,transparent 0%,#3b82f6 30%,#8b5cf6 70%,transparent 100%);
                     border-radius:2px; box-shadow:0 0 8px rgba(59,130,246,0.6);
                 }
 
-                /* ── Header ── */
+                /* â”€â”€ Header â”€â”€ */
                 .header { width:100%; z-index:1; }
                 .logo-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
 
-                /* ── ULTRA PREMIUM ARMS LOGO ── */
+                /* â”€â”€ ULTRA PREMIUM ARMS LOGO â”€â”€ */
                 .logo-hex {
                     height:38px; border-radius:10px; padding:0 12px;
                     background: linear-gradient(135deg,#0a0f1e 0%,#1a1a2e 100%);
@@ -150,7 +150,7 @@ export default function QRPrintPage() {
                 .sub-title { font-size:9px; color:rgba(255,255,255,0.45); text-align:center; }
                 .a5-card .sub-title { font-size:11px; }
 
-                /* ── QR Code Block ── */
+                /* â”€â”€ QR Code Block â”€â”€ */
                 .qr-outer {
                     position:relative; z-index:1;
                     padding:3px;
@@ -169,7 +169,7 @@ export default function QRPrintPage() {
 
                 .qr-img { width:100%; height:100%; display:block; border-radius:4px; image-rendering:crisp-edges; }
 
-                /* Center logo — kept small (<10% of QR) to not break scanning */
+                /* Center logo â€” kept small (<10% of QR) to not break scanning */
                 .qr-logo {
                     position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
                     background:linear-gradient(135deg,#3b82f6,#6366f1);
@@ -205,7 +205,7 @@ export default function QRPrintPage() {
                 .sm-bl { bottom:-5px; left:-5px; border-width:0 0 3px 3px; }
                 .sm-br { bottom:-5px; right:-5px; border-width:0 3px 3px 0; }
 
-                /* ── Steps ── */
+                /* â”€â”€ Steps â”€â”€ */
                 .steps { width:100%; z-index:1; display:flex; flex-direction:column; gap:5px; }
                 .step {
                     display:flex; align-items:center; gap:9px;
@@ -224,9 +224,9 @@ export default function QRPrintPage() {
                 .a5-card .step-num { width:22px; height:22px; font-size:11px; }
                 .a5-card .step-txt { font-size:11px; }
 
-                /* URL strip removed — link hidden for security */
+                /* URL strip removed â€” link hidden for security */
 
-                /* —— Payment Mode Notice —— */
+                /* â€”â€” Payment Mode Notice â€”â€” */
                 .pay-mode {
                     width:100%; z-index:1;
                     background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(59,130,246,0.1));
@@ -247,7 +247,7 @@ export default function QRPrintPage() {
                 .a5-card .pay-mode { font-size:10px; padding:8px 14px; border-radius:10px; }
                 .a5-card .pay-mode strong { font-size:11px; }
 
-                /* —— Notice Banner —— */
+                /* â€”â€” Notice Banner â€”â€” */
                 .notice-banner {
                     width:100%; z-index:1;
                     background: linear-gradient(135deg, rgba(245,158,11,0.18), rgba(251,191,36,0.08));
@@ -268,7 +268,7 @@ export default function QRPrintPage() {
                 .a5-card .notice-banner { font-size:9.5px; padding:8px 12px; }
                 .a5-card .notice-banner .notice-title { font-size:10.5px; }
 
-                /* ── Footer seal ── */
+                /* â”€â”€ Footer seal â”€â”€ */
                 .footer {
                     width:100%; z-index:1; border-top:1px solid rgba(255,255,255,0.07);
                     padding-top:7px; display:flex; align-items:center; justify-content:space-between;
@@ -288,9 +288,9 @@ export default function QRPrintPage() {
                 .a5-card .seal-circle { width:22px; height:22px; font-size:7px; }
                 .a5-card .size-tag { font-size:9px; }
 
-                /* ════════════════════════════════════
+                /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
                    PRINT
-                ════════════════════════════════════ */
+                â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
                 @media print {
                     body { background:white; padding:0; gap:0; }
                     .print-btn,.size-label { display:none!important; }
@@ -301,21 +301,21 @@ export default function QRPrintPage() {
                 }
             `}</style>
 
-            <button className="print-btn" onClick={() => window.print()}>🖨️ Print Both Sizes</button>
+            <button className="print-btn" onClick={() => window.print()}>ðŸ–¨ï¸ Print Both Sizes</button>
 
             {(['photo', 'a5'] as const).map(size => {
                 const isPhoto = size === 'photo';
                 const qrPx = isPhoto ? 900 : 1200;
                 return (
                     <div key={size}>
-                        <p className="size-label">{isPhoto ? '📸 PHOTO SIZE — 4×6 inch / 10×15 cm' : '📄 A5 SIZE — 148×210 mm'}</p>
+                        <p className="size-label">{isPhoto ? 'ðŸ“¸ PHOTO SIZE â€” 4Ã—6 inch / 10Ã—15 cm' : 'ðŸ“„ A5 SIZE â€” 148Ã—210 mm'}</p>
                         <div className={`card ${isPhoto ? 'photo-card' : 'a5-card'}`}>
 
                             {/* SVG Laser watermark */}
                             <svg className="wm-svg" xmlns="http://www.w3.org/2000/svg">
                                 <defs>
                                     <pattern id={`wm-${size}`} x="0" y="0" width="160" height="40" patternTransform="rotate(-35)" patternUnits="userSpaceOnUse">
-                                        <text x="0" y="28" fontFamily="Orbitron,sans-serif" fontWeight="900" fontSize="13" fill="white" letterSpacing="6">ARMS ✦ ALPHA SOLUTIONS ✦ OFFICIAL</text>
+                                        <text x="0" y="28" fontFamily="Orbitron,sans-serif" fontWeight="900" fontSize="13" fill="white" letterSpacing="6">ARMS âœ¦ ALPHA SOLUTIONS âœ¦ OFFICIAL</text>
                                     </pattern>
                                 </defs>
                                 <rect width="100%" height="100%" fill={`url(#wm-${size})`} />
@@ -337,12 +337,12 @@ export default function QRPrintPage() {
                                         VERIFIED
                                     </div>
                                 </div>
-                                <div className="main-title">📱 ARMS Mobile App</div>
-                                <div className="sub-title">Scan to download — Pay rent instantly</div>
-                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.3.0</strong></div>
+                                <div className="main-title">ðŸ“± ARMS Mobile App</div>
+                                <div className="sub-title">Scan to download â€” Pay rent instantly</div>
+                                <div className="pay-mode">ðŸ’³ Payment Mode: <strong>ARMS TENANT MOBILE APK VER.4.0</strong></div>
                                 <div className="notice-banner">
-                                    <div className="notice-title">⚠️ IMPORTANT NOTICE</div>
-                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK Ver.3.0</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
+                                    <div className="notice-title">âš ï¸ IMPORTANT NOTICE</div>
+                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK VER.4.0</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
                                 </div>
                             </div>
 
@@ -363,7 +363,7 @@ export default function QRPrintPage() {
                             <div className="steps">
                                 {[
                                     ['1','Open your camera app and point at the QR code'],
-                                    ['2','Download & install ARMS Mobile APK v3.0'],
+                                    ['2','Download & install ARMS Mobile APK v4.0'],
                                     ['3','Enter your phone number & 6-digit PIN to login'],
                                 ].map(([n, t]) => (
                                     <div className="step" key={n}>
@@ -377,9 +377,9 @@ export default function QRPrintPage() {
                             <div className="footer">
                                 <div className="seal">
                                     <div className="seal-circle">AS</div>
-                                    🔒 Official download — No Google account required
+                                    ðŸ”’ Official download â€” No Google account required
                                 </div>
-                                <div className="size-tag">{isPhoto ? '4×6in/10×15cm' : 'A5/148×210mm'}</div>
+                                <div className="size-tag">{isPhoto ? '4Ã—6in/10Ã—15cm' : 'A5/148Ã—210mm'}</div>
                             </div>
                         </div>
                     </div>
@@ -388,3 +388,4 @@ export default function QRPrintPage() {
         </>
     );
 }
+

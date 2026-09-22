@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useState, useEffect } from 'react';
 
 const APK_URL = 'https://drive.google.com/uc?export=download&confirm=t&id=15nMgjE8XZH3PPRp3jykI9hwwDMqRrNQe';
@@ -67,17 +67,17 @@ export default function DownloadPage() {
                 <div style={{ textAlign: 'center', animation: 'fadeInUp 0.6s ease both' }}>
                     {/* App Icon */}
                     <div style={{ width: '100px', height: '100px', borderRadius: '28px', background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)', margin: '0 auto 28px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 30px 60px rgba(59,130,246,0.4)', fontSize: '44px' }}>
-                        🏠
+                        ðŸ 
                     </div>
 
                     <h1 style={{ color: '#fff', fontSize: 'clamp(28px, 5vw, 48px)', fontWeight: 900, margin: '0 0 16px', lineHeight: 1.1 }}>
                         {APP_NAME}
                     </h1>
                     <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '18px', margin: '0 0 12px', lineHeight: 1.6 }}>
-                        Your rent, billing & payments — all in one place
+                        Your rent, billing & payments â€” all in one place
                     </p>
                     <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px', margin: '0 0 48px' }}>
-                        By {COMPANY} • Android • {APK_SIZE} • Free for tenants
+                        By {COMPANY} â€¢ Android â€¢ {APK_SIZE} â€¢ Free for tenants
                     </p>
 
                     {/* Download Button */}
@@ -96,7 +96,7 @@ export default function DownloadPage() {
                     >
                         {downloading ? (
                             <div style={{ width: '22px', height: '22px', border: '3px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                        ) : '⬇️'}
+                        ) : 'â¬‡ï¸'}
                         {downloading ? 'Starting Download...' : `Download v${APK_VERSION} APK`}
                     </button>
 
@@ -108,7 +108,7 @@ export default function DownloadPage() {
                             onClick={handleCopy}
                             style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '4px 10px', color: copied ? '#22c55e' : 'rgba(255,255,255,0.6)', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
                         >
-                            {copied ? '✓ Copied' : 'Copy'}
+                            {copied ? 'âœ“ Copied' : 'Copy'}
                         </button>
                     </div>
                 </div>
@@ -119,14 +119,14 @@ export default function DownloadPage() {
                     {/* Install Steps */}
                     <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '20px', padding: '28px', animation: 'fadeInUp 0.6s 0.1s both' }}>
                         <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, margin: '0 0 24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span style={{ fontSize: '22px' }}>📲</span> How to Install
+                            <span style={{ fontSize: '22px' }}>ðŸ“²</span> How to Install
                         </h2>
                         {[
-                            { n: '1', icon: '⬇️', title: 'Download the APK', desc: 'Tap the download button above' },
-                            { n: '2', icon: '⚙️', title: 'Allow Unknown Sources', desc: 'Go to Settings → Security → Enable "Install from Unknown Sources"' },
-                            { n: '3', icon: '📂', title: 'Open the file', desc: 'Find the APK in your Downloads folder and tap it' },
-                            { n: '4', icon: '✅', title: 'Install & Open', desc: 'Tap Install, then open the ARMS app' },
-                            { n: '5', icon: '🔑', title: 'Enter your PIN', desc: 'Login with the 6-digit PIN given by your caretaker' },
+                            { n: '1', icon: 'â¬‡ï¸', title: 'Download the APK', desc: 'Tap the download button above' },
+                            { n: '2', icon: 'âš™ï¸', title: 'Allow Unknown Sources', desc: 'Go to Settings â†’ Security â†’ Enable "Install from Unknown Sources"' },
+                            { n: '3', icon: 'ðŸ“‚', title: 'Open the file', desc: 'Find the APK in your Downloads folder and tap it' },
+                            { n: '4', icon: 'âœ…', title: 'Install & Open', desc: 'Tap Install, then open the ARMS app' },
+                            { n: '5', icon: 'ðŸ”‘', title: 'Enter your PIN', desc: 'Login with the 6-digit PIN given by your caretaker' },
                         ].map(s => (
                             <div key={s.n} className="step-card" style={{ display: 'flex', gap: '14px', marginBottom: '18px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
                                 <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #3b82f6, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>{s.icon}</div>
@@ -144,7 +144,7 @@ export default function DownloadPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                         <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '20px', padding: '28px', textAlign: 'center', animation: 'fadeInUp 0.6s 0.2s both' }}>
                             <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, margin: '0 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                                <span>📷</span> Scan to Download
+                                <span>ðŸ“·</span> Scan to Download
                             </h2>
                             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 24px' }}>Point your phone camera at the QR code</p>
                             <div style={{ background: '#fff', borderRadius: '16px', padding: '16px', display: 'inline-block', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
@@ -163,13 +163,13 @@ export default function DownloadPage() {
 
                         {/* App Features */}
                         <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '20px', padding: '24px', animation: 'fadeInUp 0.6s 0.3s both' }}>
-                            <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 700, margin: '0 0 16px' }}>✨ What you can do</h2>
+                            <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 700, margin: '0 0 16px' }}>âœ¨ What you can do</h2>
                             {[
-                                ['💳', 'View billing & rent statements'],
-                                ['📊', 'Check payment history'],
-                                ['📱', 'Pay rent via M-Pesa STK Push'],
-                                ['📄', 'Download monthly statements'],
-                                ['🔔', 'View outstanding balance'],
+                                ['ðŸ’³', 'View billing & rent statements'],
+                                ['ðŸ“Š', 'Check payment history'],
+                                ['ðŸ“±', 'Pay rent via M-Pesa STK Push'],
+                                ['ðŸ“„', 'Download monthly statements'],
+                                ['ðŸ””', 'View outstanding balance'],
                             ].map(([icon, text]) => (
                                 <div key={text} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                                     <span style={{ fontSize: '16px' }}>{icon}</span>
@@ -183,10 +183,11 @@ export default function DownloadPage() {
                 {/* Footer note */}
                 <div style={{ textAlign: 'center', padding: '24px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                     <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '12px', margin: 0 }}>
-                        🔒 Secure access — only registered tenants can log in • {COMPANY} © {new Date().getFullYear()}
+                        ðŸ”’ Secure access â€” only registered tenants can log in â€¢ {COMPANY} Â© {new Date().getFullYear()}
                     </p>
                 </div>
             </main>
         </div>
     );
 }
+
