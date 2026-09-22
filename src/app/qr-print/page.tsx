@@ -339,10 +339,10 @@ export default function QRPrintPage() {
                                 </div>
                                 <div className="main-title">ðŸ“± ARMS Mobile App</div>
                                 <div className="sub-title">Scan to download â€” Pay rent instantly</div>
-                                <div className="pay-mode">ðŸ’³ Payment Mode: <strong>ARMS TENANT MOBILE APK VER.4.0</strong></div>
+                                <div className="pay-mode">ðŸ’³ Payment Mode: <strong>ARMS TENANT MOBILE APK VER.4.1</strong></div>
                                 <div className="notice-banner">
                                     <div className="notice-title">âš ï¸ IMPORTANT NOTICE</div>
-                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK VER.4.0</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
+                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK VER.4.1</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
                                 </div>
                             </div>
 
@@ -363,7 +363,7 @@ export default function QRPrintPage() {
                             <div className="steps">
                                 {[
                                     ['1','Open your camera app and point at the QR code'],
-                                    ['2','Download & install ARMS Mobile APK v4.0'],
+                                    ['2','Download & install ARMS Mobile APK v4.1'],
                                     ['3','Enter your phone number & 6-digit PIN to login'],
                                 ].map(([n, t]) => (
                                     <div className="step" key={n}>
@@ -388,4 +388,5 @@ export default function QRPrintPage() {
         </>
     );
 }
+
 
