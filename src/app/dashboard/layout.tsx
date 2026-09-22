@@ -2,7 +2,7 @@
 // The dashboard shell layout is a client component (uses hooks), so per-page
 // metadata is handled by child layouts.
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLocations } from '@/lib/supabase';
 import { canAccessRoute, parseStoredUser, parseStoredLicense, computeMachineFingerprint, type ARMSUser, type LicensePayload } from '@/lib/rbac';
@@ -43,6 +43,8 @@ const menuGroups = [
     {
         label: 'Communication', icon: FiSend, name: 'comms', collapsible: true,
         items: [
+            { href: '/dashboard/chats', label: 'Tenant Chat', icon: FiMessageSquare, requiredPerm: null },
+            { href: '/dashboard/agreements', label: 'Agreements', icon: FiFileText, requiredPerm: 'can_manage_tenants' },
             { href: '/dashboard/sms', label: 'Messaging Hub', icon: FiMessageSquare, requiredPerm: 'can_send_sms' },
             { href: '/dashboard/demand-letters', label: 'Demand Letters', icon: FiFileText, requiredPerm: 'can_issue_demand_letters' },
         ],
@@ -124,7 +126,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [showLocDropdown, setShowLocDropdown] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
     const [licenseChecked, setLicenseChecked] = useState(false);
-    const licenseCheckDone = useRef(false); // prevent double-check on re-renders
+    const licenseCheckDone = useRef(false);
+    const [unreadChats, setUnreadChats] = useState(0);
+
+    // Poll unread chat count every 15s
+    const fetchUnreadChats = useCallback(async () => {
+        try {
+            const res = await fetch('/api/chats');
+            const data = await res.json();
+            setUnreadChats(data.unread_count || 0);
+        } catch { /* silent */ }
+    }, []);
+
+    useEffect(() => {
+        fetchUnreadChats();
+        const interval = setInterval(fetchUnreadChats, 15000);
+        return () => clearInterval(interval);
+    }, [fetchUnreadChats]);
+
+    // Reset unread count when on chats page
+    useEffect(() => {
+        if (pathname?.startsWith('/dashboard/chats')) {
+            setUnreadChats(0);
+        }
+    }, [pathname]);
 
     // ── RBAC + License guard ──────────────────────────────────
     useEffect(() => {
@@ -424,16 +449,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 </button>
                                 <div className={`overflow-hidden transition-all duration-200 ease-in-out ${isExpanded && !collapsed ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                                     <div className="ml-[22px] pl-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100">
-                                        {visibleItems.map(item => {
+                                            {visibleItems.map(item => {
                                             const ItemIcon = item.icon;
                                             const active = isActive(item.href);
                                             const isSuperAdminItem = item.requiredPerm === 'super_admin_only';
+                                            const isChatItem = item.href === '/dashboard/chats';
                                             return (
                                                 <button key={item.href} onClick={() => router.push(item.href)}
                                                     className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-md text-[12.5px] transition-all
                                                         ${active ? 'text-blue-700 bg-blue-50 font-semibold border-l-2 border-blue-500 -ml-[3px] pl-[11px]' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
                                                     <ItemIcon size={14} className={active ? 'text-blue-600' : 'text-gray-400'} />
                                                     <span>{item.label}</span>
+                                                    {isChatItem && unreadChats > 0 && (
+                                                        <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white" style={{ background: '#ef4444' }}>
+                                                            {unreadChats > 99 ? '99+' : unreadChats}
+                                                        </span>
+                                                    )}
                                                     {isSuperAdminItem && <FiLock size={10} className="ml-auto text-amber-400" title="Super Admin only" />}
                                                 </button>
                                             );
@@ -483,6 +514,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2">
                             <span className="text-lg">{greeting.emoji}</span>
+                        {/* Floating chat button in topbar */}
+                        <button
+                            onClick={() => router.push('/dashboard/chats')}
+                            className="relative p-2 rounded-xl transition-all hover:bg-indigo-50"
+                            title="Tenant Messages"
+                            style={{ color: unreadChats > 0 ? '#6366f1' : '#94a3b8' }}
+                        >
+                            <FiMessageSquare size={20} />
+                            {unreadChats > 0 && (
+                                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-black text-white flex items-center justify-center" style={{ background: '#ef4444' }}>
+                                    {unreadChats > 9 ? '9+' : unreadChats}
+                                </span>
+                            )}
+                        </button>
                             <span className="text-sm font-bold text-gray-800" style={{ fontFamily: 'Outfit, sans-serif' }}>{greeting.text}</span>
                         </div>
                         <div className="w-px h-4 bg-gray-200" />

@@ -118,6 +118,14 @@ export default function TenantsPage() {
         password_hash: '',
         is_on_vacation: false, initial_payment: '',
     });
+    // Agreement state
+    const [agreementForm, setAgreementForm] = useState({
+        issue: false,
+        lease_start_date: today,
+        lease_end_date: '',
+        deposit_amount: '',
+    });
+    const [issuingAgreement, setIssuingAgreement] = useState(false);
 
     // ── Auto-derive PIN from last 6 digits of phone ───────────────────────────
     const derivePinFromPhone = (phone: string): string => {
@@ -498,8 +506,32 @@ export default function TenantsPage() {
                         unit_id: au.unit_id, rent: parseFloat(au.rent) || 0,
                     })),
                 };
-                await addTenant(addPayload);
+                const newTenant = await addTenant(addPayload);
                 toast.success(`✅ Tenant registered with ${totalRoomCount} room${totalRoomCount > 1 ? 's' : ''}! Bills auto-generated.`);
+                // Issue agreement if requested
+                if (agreementForm.issue && newTenant?.tenant_id) {
+                    setIssuingAgreement(true);
+                    try {
+                        const user = JSON.parse(localStorage.getItem('arms_user') || '{}');
+                        await fetch('/api/agreements/sign', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                tenant_id: newTenant.tenant_id,
+                                location_id: payload.location_id,
+                                lease_start_date: agreementForm.lease_start_date,
+                                lease_end_date: agreementForm.lease_end_date || null,
+                                monthly_rent: parseFloat(form.monthly_rent || '0'),
+                                deposit_amount: parseFloat(agreementForm.deposit_amount || form.deposit_paid || '0'),
+                                unit_name: units.find((u: any) => u.unit_id === form.unit_id)?.unit_name || '',
+                                issued_by: user.name || 'Admin',
+                            }),
+                        });
+                        toast.success('📋 Agreement issued — tenant will sign on mobile app');
+                    } catch { toast.error('Agreement issue failed — try from Agreements page'); }
+                    setIssuingAgreement(false);
+                    setAgreementForm({ issue: false, lease_start_date: today, lease_end_date: '', deposit_amount: '' });
+                }
             }
             setSaving(false);
             topProgress.done();
@@ -1470,13 +1502,75 @@ export default function TenantsPage() {
                             </div>
                         </div>
 
+                        {/* ── Digital Agreement Section ── */}
+                        <div className="mx-6 mb-4 rounded-2xl border-2 overflow-hidden" style={{ borderColor: agreementForm.issue ? '#6366f1' : '#e2e8f0' }}>
+                            <button
+                                type="button"
+                                onClick={() => setAgreementForm(p => ({ ...p, issue: !p.issue }))}
+                                className="w-full flex items-center justify-between px-5 py-3.5 transition"
+                                style={{ background: agreementForm.issue ? 'linear-gradient(135deg,#eef2ff,#f5f3ff)' : '#fafafa' }}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xl">📋</span>
+                                    <div className="text-left">
+                                        <p className="text-sm font-extrabold text-gray-800">
+                                            {editItem ? 'Issue / Update Tenancy Agreement' : 'Issue Tenancy Agreement'}
+                                        </p>
+                                        <p className="text-[11px] text-gray-500">Tenant will sign on mobile app · Legally traceable</p>
+                                    </div>
+                                </div>
+                                <div className={`w-11 h-6 rounded-full transition-all flex items-center px-0.5 ${ agreementForm.issue ? 'bg-indigo-600' : 'bg-gray-200' }`}>
+                                    <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${ agreementForm.issue ? 'translate-x-5' : '' }`} />
+                                </div>
+                            </button>
+
+                            {agreementForm.issue && (
+                                <div className="px-5 pb-5 pt-3 space-y-4 bg-white">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">📅 Lease Start Date</label>
+                                            <input type="date" value={agreementForm.lease_start_date}
+                                                onChange={e => setAgreementForm(p => ({ ...p, lease_start_date: e.target.value }))}
+                                                className="input-field" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">📅 Lease End Date <span className="text-gray-400 font-normal">(optional)</span></label>
+                                            <input type="date" value={agreementForm.lease_end_date}
+                                                onChange={e => setAgreementForm(p => ({ ...p, lease_end_date: e.target.value }))}
+                                                className="input-field" placeholder="Leave blank for month-to-month" />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">💰 Monthly Rent (KES)</label>
+                                            <input type="number" value={form.monthly_rent} disabled
+                                                className="input-field bg-gray-50 text-gray-500 cursor-not-allowed" />
+                                            <p className="text-[10px] text-gray-400 mt-1">Auto-filled from Rent field above</p>
+                                        </div>
+                                        <div>
+                                            <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">🏦 Deposit Amount (KES)</label>
+                                            <input type="number" value={agreementForm.deposit_amount}
+                                                onChange={e => setAgreementForm(p => ({ ...p, deposit_amount: e.target.value }))}
+                                                className="input-field" placeholder="e.g. 9400" />
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-indigo-50 border border-indigo-100">
+                                        <span className="text-indigo-500 mt-0.5">ℹ️</span>
+                                        <p className="text-[11px] text-indigo-700">
+                                            Agreement will be issued immediately. The tenant will see it on their mobile app and must scroll to the bottom and type their name to accept.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         <div className="p-6 border-t border-gray-100 flex gap-3 justify-end bg-gray-50/50">
                             <button onClick={() => setShowModal(false)} className="btn-outline flex items-center gap-2"><FiX size={14} /> Cancel</button>
-                            <button onClick={handleSave} id="tenants-save-btn" disabled={saving}
+                            <button onClick={handleSave} id="tenants-save-btn" disabled={saving || issuingAgreement}
                                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition shadow-md hover:opacity-90 disabled:opacity-60"
                                 style={{ background: editItem ? 'linear-gradient(135deg,#4f46e5,#7c3aed)' : 'linear-gradient(135deg,#059669,#0d9488)' }}>
                                 <FiSave size={14} />
-                                {editItem ? '💾 Update Tenant' : '✅ Register & Auto-Generate Bills'}
+                                {issuingAgreement ? '📋 Issuing Agreement…' : editItem ? '💾 Update Tenant' : '✅ Register & Auto-Generate Bills'}
                             </button>
                         </div>
                     </div>
