@@ -25,32 +25,32 @@ export async function GET(req: NextRequest) {
             if (!agreements || agreements.length === 0)
                 return NextResponse.json({ agreements: [] });
 
-            // Fetch tenant info separately for all tenant_ids
+            // Fetch tenant info separately — plain query, no FK joins needed
             const tenantIds = [...new Set(agreements.map((a: any) => a.tenant_id))];
             const { data: tenants } = await supabase
                 .from('arms_tenants')
-                .select('tenant_id, tenant_name, phone, arms_units(unit_name), arms_locations(location_name)')
+                .select('tenant_id, tenant_name, phone')
                 .in('tenant_id', tenantIds);
 
             const tenantMap: Record<number, any> = {};
-            (tenants || []).forEach((t: any) => {
-                tenantMap[t.tenant_id] = t;
-            });
+            (tenants || []).forEach((t: any) => { tenantMap[t.tenant_id] = t; });
 
-            // Merge tenant info into agreements
+            // Merge — FIX: was (t.tenant_name || a.unit_name) ? `Tenant #${id}` : 'Unknown'
+            // operator precedence caused it to always return Tenant #ID when unit_name was set
             const merged = agreements.map((a: any) => {
                 const t = tenantMap[a.tenant_id] || {};
                 return {
                     ...a,
-                    tenant_name:   t.tenant_name   || a.unit_name ? `Tenant #${a.tenant_id}` : 'Unknown',
+                    tenant_name:   t.tenant_name   || `Tenant #${a.tenant_id}`,
                     phone:         t.phone          || '',
-                    unit_name:     t.arms_units?.unit_name        || a.unit_name    || '—',
-                    location_name: t.arms_locations?.location_name || a.location_name || '—',
+                    unit_name:     a.unit_name      || '—',
+                    location_name: a.location_name  || '—',
                 };
             });
 
             return NextResponse.json({ agreements: merged });
         }
+
 
         // ── TENANT: their own agreement ────────────────────────
         if (!tenantId) return NextResponse.json({ error: 'tenantId or all required' }, { status: 400 });
