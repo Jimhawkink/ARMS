@@ -79,15 +79,11 @@ export default function ChatThreadPage() {
 
     const loadData = useCallback(async () => {
         try {
-            const [threadRes, inboxRes] = await Promise.all([
-                fetch(`/api/chats?tenantId=${tenantId}`),
-                fetch('/api/chats?inbox=1'),
-            ]);
-            const threadData = await threadRes.json();
-            const inboxData = await inboxRes.json();
-            setMessages(threadData.messages || []);
-            const t = (inboxData.inbox || []).find((x: any) => x.tenant_id === tenantId);
-            if (t) setTenantInfo(t);
+            // Single API call — tenant info now returned directly from thread endpoint
+            const res = await fetch(`/api/chats?tenantId=${tenantId}`);
+            const data = await res.json();
+            setMessages(data.messages || []);
+            if (data.tenant) setTenantInfo(data.tenant);
         } catch { /* silent */ }
         finally { setLoading(false); }
     }, [tenantId]);
