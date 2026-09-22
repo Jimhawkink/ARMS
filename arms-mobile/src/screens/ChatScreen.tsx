@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, FlatList,
     KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
-    Alert, RefreshControl, Animated, Keyboard,
+    Alert, RefreshControl, Animated, Keyboard, ImageBackground,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -229,6 +229,14 @@ export default function ChatScreen() {
         }
     };
 
+    // ── Tick component: ✓ grey=sent, ✓✓ grey=delivered, ✓✓ blue=read ──
+    const renderTicks = (isRead: boolean) => (
+        <View style={styles.tickRow}>
+            <Text style={[styles.tick, isRead ? styles.tickBlue : styles.tickGrey]}>✓</Text>
+            <Text style={[styles.tick, styles.tickOverlap, isRead ? styles.tickBlue : styles.tickGrey]}>✓</Text>
+        </View>
+    );
+
     // ── Render message bubble ─────────────────────────────────
     const renderItem = ({ item, index }: { item: ChatMsg; index: number }) => {
         const prev = messages[index - 1];
@@ -251,7 +259,6 @@ export default function ChatScreen() {
                 <View style={[styles.msgRow, isMe ? styles.msgRowRight : styles.msgRowLeft,
                     prevSameSender && styles.msgRowCompact]}>
 
-                    {/* Admin avatar */}
                     {!isMe && !prevSameSender && (
                         <View style={styles.adminAvatar}>
                             <Text style={styles.adminAvatarText}>🏢</Text>
@@ -259,7 +266,6 @@ export default function ChatScreen() {
                     )}
                     {!isMe && prevSameSender && <View style={styles.avatarSpacer} />}
 
-                    {/* Bubble */}
                     <View style={[
                         styles.bubble,
                         isMe ? styles.bubbleMe : styles.bubbleAdmin,
@@ -275,11 +281,7 @@ export default function ChatScreen() {
                             <Text style={[styles.timeText, isMe ? styles.timeMe : styles.timeAdmin]}>
                                 {formatTime(item.created_at)}
                             </Text>
-                            {isMe && (
-                                <Text style={styles.readTick}>
-                                    {item.is_read ? ' ✓✓' : ' ✓'}
-                                </Text>
-                            )}
+                            {isMe && renderTicks(item.is_read)}
                         </View>
                     </View>
                 </View>
@@ -353,57 +355,98 @@ export default function ChatScreen() {
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
 
-                {/* Messages list */}
-                {loading ? (
-                    <View style={styles.centerFlex}>
-                        <ActivityIndicator size="large" color="#6366f1" />
-                        <Text style={styles.loadingText}>Loading messages…</Text>
-                    </View>
-                ) : (
-                    <FlatList
-                        ref={flatListRef}
-                        data={messages}
-                        renderItem={renderItem}
-                        keyExtractor={item => String(item.chat_id)}
-                        style={styles.msgList}
-                        contentContainerStyle={[
-                            styles.msgListContent,
-                            messages.length === 0 && styles.msgListEmpty,
-                        ]}
-                        refreshControl={
-                            <RefreshControl
-                                refreshing={refreshing}
-                                onRefresh={() => session && loadMessages(session, true)}
-                                tintColor="#6366f1"
-                            />
-                        }
-                        onContentSizeChange={() =>
-                            messages.length > 0 && flatListRef.current?.scrollToEnd({ animated: false })
-                        }
-                        ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Text style={styles.emptyEmoji}>💬</Text>
-                                <Text style={styles.emptyTitle}>No messages yet</Text>
-                                <Text style={styles.emptySub}>
-                                    Send your first message to the property management team.
-                                    {'\n'}We will respond as soon as possible.
-                                </Text>
-                                <View style={styles.emptyHints}>
-                                    {[
-                                        '🔧 Report maintenance issues',
-                                        '💳 Enquire about payments',
-                                        '📋 Ask about your lease',
-                                        '🚨 Report emergencies',
-                                    ].map(hint => (
-                                        <View key={hint} style={styles.emptyHintRow}>
-                                            <Text style={styles.emptyHintText}>{hint}</Text>
-                                        </View>
-                                    ))}
-                                </View>
-                            </View>
-                        }
+                {/* ── Chat area with WhatsApp-style wallpaper ── */}
+                <View style={{ flex: 1 }}>
+                    {/* Deep purple gradient wallpaper */}
+                    <LinearGradient
+                        colors={['#0f0a2e', '#1a0f4e', '#16123a', '#1e1556', '#0f0a2e']}
+                        locations={[0, 0.3, 0.5, 0.75, 1]}
+                        style={StyleSheet.absoluteFill}
                     />
-                )}
+                    {/* Decorative pattern overlay */}
+                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                        {/* Circles */}
+                        {[
+                            { top: '8%', left: '5%', size: 80, opacity: 0.06 },
+                            { top: '20%', right: '3%', size: 50, opacity: 0.05 },
+                            { top: '40%', left: '15%', size: 30, opacity: 0.07 },
+                            { top: '55%', right: '10%', size: 90, opacity: 0.04 },
+                            { top: '75%', left: '8%', size: 60, opacity: 0.06 },
+                            { top: '85%', right: '20%', size: 40, opacity: 0.05 },
+                        ].map((c, i) => (
+                            <View key={i} style={{
+                                position: 'absolute',
+                                top: c.top as any, left: (c as any).left, right: (c as any).right,
+                                width: c.size, height: c.size, borderRadius: c.size / 2,
+                                borderWidth: 1.5, borderColor: `rgba(167,139,250,${c.opacity * 3})`,
+                                backgroundColor: `rgba(99,102,241,${c.opacity})`,
+                            }} />
+                        ))}
+                        {/* Dot grid */}
+                        {Array.from({ length: 25 }).map((_, i) => (
+                            <View key={`d${i}`} style={{
+                                position: 'absolute',
+                                top: `${(i % 5) * 22 + 5}%` as any,
+                                left: `${Math.floor(i / 5) * 22 + 3}%` as any,
+                                width: 3, height: 3, borderRadius: 1.5,
+                                backgroundColor: 'rgba(167,139,250,0.18)',
+                            }} />
+                        ))}
+                    </View>
+
+                    {loading ? (
+                        <View style={styles.centerFlex}>
+                            <ActivityIndicator size="large" color="#a5b4fc" />
+                            <Text style={[styles.loadingText, { color: '#a5b4fc' }]}>Loading messages…</Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            ref={flatListRef}
+                            data={messages}
+                            renderItem={renderItem}
+                            keyExtractor={item => String(item.chat_id)}
+                            style={{ flex: 1 }}
+                            contentContainerStyle={[
+                                styles.msgListContent,
+                                messages.length === 0 && styles.msgListEmpty,
+                            ]}
+                            refreshControl={
+                                <RefreshControl
+                                    refreshing={refreshing}
+                                    onRefresh={() => session && loadMessages(session, true)}
+                                    tintColor="#a5b4fc"
+                                />
+                            }
+                            onContentSizeChange={() =>
+                                messages.length > 0 && flatListRef.current?.scrollToEnd({ animated: false })
+                            }
+                            ListEmptyComponent={
+                                <View style={styles.emptyContainer}>
+                                    <View style={styles.emptyIconBg}>
+                                        <Text style={styles.emptyEmoji}>💬</Text>
+                                    </View>
+                                    <Text style={styles.emptyTitle}>No messages yet</Text>
+                                    <Text style={styles.emptySub}>
+                                        Send your first message to the property management team.
+                                        {'\n'}We respond as soon as possible.
+                                    </Text>
+                                    <View style={styles.emptyHints}>
+                                        {[
+                                            '🔧 Report maintenance issues',
+                                            '💳 Enquire about payments',
+                                            '📋 Ask about your lease',
+                                            '🚨 Report emergencies',
+                                        ].map(hint => (
+                                            <View key={hint} style={styles.emptyHintRow}>
+                                                <Text style={styles.emptyHintText}>{hint}</Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                </View>
+                            }
+                        />
+                    )}
+                </View>
 
                 {/* Input row */}
                 <View style={styles.inputContainer}>
@@ -444,13 +487,13 @@ export default function ChatScreen() {
 
 // ── Styles ────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-    container:        { flex: 1, backgroundColor: '#f1f5f9' },
-    centerScreen:     { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9', padding: 24 },
+    container:        { flex: 1, backgroundColor: '#0f0a2e' },
+    centerScreen:     { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f0a2e', padding: 24 },
     centerFlex:       { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
-    loadingText:      { fontSize: 14, color: '#94a3b8', marginTop: 12, fontWeight: '600' },
+    loadingText:      { fontSize: 14, color: '#a5b4fc', marginTop: 12, fontWeight: '600' },
     errorEmoji:       { fontSize: 48, marginBottom: 12 },
-    errorTitle:       { fontSize: 18, fontWeight: '800', color: '#334155', marginBottom: 8 },
-    errorMsg:         { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+    errorTitle:       { fontSize: 18, fontWeight: '800', color: '#e2e8f0', marginBottom: 8 },
+    errorMsg:         { fontSize: 13, color: '#94a3b8', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
     retryBtn:         { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 16, backgroundColor: '#6366f1' },
     retryBtnText:     { color: '#fff', fontWeight: '800', fontSize: 14 },
 
@@ -479,24 +522,24 @@ const styles = StyleSheet.create({
 
     // Tenant strip
     tenantStrip: {
-        backgroundColor: '#ede9fe', paddingHorizontal: 16, paddingVertical: 7,
-        borderBottomWidth: 1, borderBottomColor: '#ddd6fe',
+        backgroundColor: 'rgba(99,102,241,0.25)', paddingHorizontal: 16, paddingVertical: 7,
+        borderBottomWidth: 1, borderBottomColor: 'rgba(167,139,250,0.3)',
     },
-    tenantStripText: { fontSize: 11, color: '#6d28d9', fontWeight: '700' },
+    tenantStripText: { fontSize: 11, color: '#c4b5fd', fontWeight: '700' },
 
     // Messages
-    msgList:          { flex: 1 },
     msgListContent:   { paddingHorizontal: 12, paddingVertical: 16, paddingBottom: 8 },
     msgListEmpty:     { flexGrow: 1, justifyContent: 'center' },
 
     // Date separator
     dateSeparatorRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16, gap: 8 },
-    dateSeparatorLine: { flex: 1, height: 1, backgroundColor: '#cbd5e1' },
+    dateSeparatorLine: { flex: 1, height: 1, backgroundColor: 'rgba(167,139,250,0.25)' },
     dateBadge: {
-        backgroundColor: '#e2e8f0', borderRadius: 10,
+        backgroundColor: 'rgba(99,102,241,0.4)', borderRadius: 10,
         paddingHorizontal: 12, paddingVertical: 4,
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
     },
-    dateBadgeText:    { fontSize: 11, color: '#64748b', fontWeight: '700' },
+    dateBadgeText:    { fontSize: 11, color: '#c4b5fd', fontWeight: '700' },
 
     // Message rows
     msgRow:           { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 6 },
@@ -506,9 +549,11 @@ const styles = StyleSheet.create({
 
     // Avatars
     adminAvatar: {
-        width: 34, height: 34, borderRadius: 12, backgroundColor: '#ede9fe',
+        width: 34, height: 34, borderRadius: 12,
+        backgroundColor: 'rgba(99,102,241,0.4)',
         alignItems: 'center', justifyContent: 'center',
         marginRight: 8, marginBottom: 2, flexShrink: 0,
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.4)',
     },
     adminAvatarText:  { fontSize: 16 },
     avatarSpacer:     { width: 42, flexShrink: 0 },
@@ -521,68 +566,81 @@ const styles = StyleSheet.create({
     bubbleMe: {
         backgroundColor: '#6366f1',
         borderBottomRightRadius: 5,
-        shadowColor: '#6366f1', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3,
-        shadowRadius: 6, elevation: 4,
+        shadowColor: '#6366f1', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.5,
+        shadowRadius: 8, elevation: 6,
     },
     bubbleMeGrouped:     { borderBottomRightRadius: 20, borderTopRightRadius: 5 },
     bubbleAdmin: {
-        backgroundColor: '#fff',
+        backgroundColor: 'rgba(30, 27, 75, 0.92)',
         borderBottomLeftRadius: 5,
-        shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08,
-        shadowRadius: 4, elevation: 2,
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.25)',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3,
+        shadowRadius: 6, elevation: 4,
     },
     bubbleAdminGrouped:  { borderBottomLeftRadius: 20, borderTopLeftRadius: 5 },
 
-    senderName:       { fontSize: 10, fontWeight: '800', color: '#7c3aed', marginBottom: 4 },
+    senderName:       { fontSize: 10, fontWeight: '800', color: '#a5b4fc', marginBottom: 4 },
     msgText:          { fontSize: 14, lineHeight: 21 },
     msgTextMe:        { color: '#fff' },
-    msgTextAdmin:     { color: '#1e293b' },
-    timRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 5 },
+    msgTextAdmin:     { color: '#e2e8f0' },
+    timRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 5, gap: 3 },
     timeText:         { fontSize: 10, fontWeight: '500' },
-    timeMe:           { color: 'rgba(255,255,255,0.65)' },
-    timeAdmin:        { color: '#94a3b8' },
-    readTick:         { fontSize: 10, color: 'rgba(255,255,255,0.65)' },
+    timeMe:           { color: 'rgba(255,255,255,0.6)' },
+    timeAdmin:        { color: 'rgba(167,139,250,0.7)' },
+
+    // Double tick styles — WhatsApp style
+    tickRow:          { flexDirection: 'row', alignItems: 'center', marginLeft: 2 },
+    tick:             { fontSize: 11, fontWeight: '700', lineHeight: 13 },
+    tickOverlap:      { marginLeft: -5 },       // overlap to make double tick
+    tickGrey:         { color: 'rgba(255,255,255,0.5)' },   // ✓ sent (not yet read)
+    tickBlue:         { color: '#60a5fa' },                 // ✓✓ read — bright blue
 
     // Empty state
     emptyContainer:   { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 24 },
-    emptyEmoji:       { fontSize: 64, marginBottom: 16 },
-    emptyTitle:       { fontSize: 20, fontWeight: '800', color: '#334155', marginBottom: 10 },
-    emptySub:         { fontSize: 14, color: '#64748b', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+    emptyIconBg: {
+        width: 90, height: 90, borderRadius: 28,
+        backgroundColor: 'rgba(99,102,241,0.3)',
+        borderWidth: 1.5, borderColor: 'rgba(167,139,250,0.4)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+    },
+    emptyEmoji:       { fontSize: 44 },
+    emptyTitle:       { fontSize: 20, fontWeight: '800', color: '#e2e8f0', marginBottom: 10 },
+    emptySub:         { fontSize: 14, color: '#94a3b8', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
     emptyHints:       { width: '100%', gap: 8 },
     emptyHintRow: {
-        backgroundColor: '#f8fafc', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10,
-        borderWidth: 1, borderColor: '#e2e8f0',
+        backgroundColor: 'rgba(30,27,75,0.7)', borderRadius: 12,
+        paddingHorizontal: 16, paddingVertical: 10,
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.25)',
     },
-    emptyHintText:    { fontSize: 13, color: '#475569', fontWeight: '600' },
+    emptyHintText:    { fontSize: 13, color: '#c4b5fd', fontWeight: '600' },
 
     // Input
     inputContainer: {
         flexDirection: 'row', alignItems: 'flex-end', gap: 10,
         paddingHorizontal: 12, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 10 : 12,
-        backgroundColor: '#fff',
-        borderTopWidth: 1, borderTopColor: '#e2e8f0',
-        shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.05,
-        shadowRadius: 6, elevation: 6,
+        backgroundColor: 'rgba(15,10,46,0.97)',
+        borderTopWidth: 1, borderTopColor: 'rgba(99,102,241,0.35)',
     },
     inputWrapper:     { flex: 1, position: 'relative' },
     input: {
         minHeight: 46, maxHeight: 130,
-        borderRadius: 24, backgroundColor: '#f8fafc',
-        borderWidth: 1.5, borderColor: '#e2e8f0',
+        borderRadius: 24, backgroundColor: 'rgba(30,27,75,0.95)',
+        borderWidth: 1.5, borderColor: 'rgba(99,102,241,0.5)',
         paddingHorizontal: 18, paddingVertical: 12,
-        fontSize: 14, color: '#1e293b', lineHeight: 20,
+        fontSize: 14, color: '#e2e8f0', lineHeight: 20,
     },
     charCount: {
         position: 'absolute', bottom: 6, right: 12,
-        fontSize: 9, color: '#94a3b8', fontWeight: '600',
+        fontSize: 9, color: '#6366f1', fontWeight: '600',
     },
     sendBtn: {
         width: 46, height: 46, borderRadius: 23,
         backgroundColor: '#6366f1',
         alignItems: 'center', justifyContent: 'center',
         shadowColor: '#6366f1', shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.4, shadowRadius: 6, elevation: 6,
+        shadowOpacity: 0.5, shadowRadius: 8, elevation: 8,
     },
-    sendBtnDisabled:  { backgroundColor: '#e2e8f0', shadowOpacity: 0 },
+    sendBtnDisabled:  { backgroundColor: 'rgba(99,102,241,0.3)', shadowOpacity: 0 },
     sendIcon:         { color: '#fff', fontSize: 18, marginLeft: 2 },
 });
+

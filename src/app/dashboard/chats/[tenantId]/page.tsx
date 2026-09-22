@@ -17,15 +17,12 @@ interface ChatMessage {
     is_read: boolean;
     created_at: string;
 }
-
 interface TenantInfo {
     tenant_id: number;
     tenant_name: string;
     phone: string;
     unit_name: string;
     location_name: string;
-    unread_count: number;
-    last_message_at: string;
 }
 
 const CANNED = [
@@ -38,8 +35,7 @@ const CANNED = [
 ];
 
 function formatMsgTime(dt: string) {
-    const d = new Date(dt);
-    return d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
+    return new Date(dt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
 }
 function formatDateGroup(dt: string) {
     const d = new Date(dt);
@@ -53,21 +49,31 @@ function sameDay(a: string, b: string) {
     return new Date(a).toDateString() === new Date(b).toDateString();
 }
 
+// Double blue tick component for web
+function Ticks({ isRead }: { isRead: boolean }) {
+    return (
+        <span className="inline-flex items-center ml-1" style={{ fontSize: 11, letterSpacing: -3, lineHeight: 1 }}>
+            <span style={{ color: isRead ? '#60a5fa' : 'rgba(255,255,255,0.5)', fontWeight: 700 }}>✓</span>
+            <span style={{ color: isRead ? '#60a5fa' : 'rgba(255,255,255,0.5)', fontWeight: 700 }}>✓</span>
+        </span>
+    );
+}
+
 export default function ChatThreadPage() {
     const params = useParams();
     const router = useRouter();
     const tenantId = parseInt(params.tenantId as string);
 
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messages, setMessages]     = useState<ChatMessage[]>([]);
     const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
-    const [reply, setReply] = useState('');
-    const [sending, setSending] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [reply, setReply]           = useState('');
+    const [sending, setSending]       = useState(false);
+    const [loading, setLoading]       = useState(true);
     const [showCanned, setShowCanned] = useState(false);
-    const [typingIndicator, setTypingIndicator] = useState(false);
-    const bottomRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLTextAreaElement>(null);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    // Blur notification overlay — fires when a NEW tenant message arrives while thread is open
+    const [newMsgAlert, setNewMsgAlert] = useState<ChatMessage | null>(null);
+    const bottomRef  = useRef<HTMLDivElement>(null);
+    const inputRef   = useRef<HTMLTextAreaElement>(null);
 
     const scrollToBottom = useCallback((smooth = true) => {
         bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
@@ -79,7 +85,6 @@ export default function ChatThreadPage() {
 
     const loadData = useCallback(async () => {
         try {
-            // Single API call — tenant info now returned directly from thread endpoint
             const res = await fetch(`/api/chats?tenantId=${tenantId}`);
             const data = await res.json();
             setMessages(data.messages || []);
@@ -93,7 +98,7 @@ export default function ChatThreadPage() {
         markRead();
 
         const channel = supabase
-            .channel(`chat_thread_premium_${tenantId}`)
+            .channel(`chat_thread_v3_${tenantId}`)
             .on('postgres_changes' as any, {
                 event: 'INSERT', schema: 'public', table: 'arms_chats',
                 filter: `tenant_id=eq.${tenantId}`,
@@ -103,8 +108,23 @@ export default function ChatThreadPage() {
                     if (prev.find(m => m.chat_id === newMsg.chat_id)) return prev;
                     return [...prev, newMsg];
                 });
-                if (newMsg.sender === 'tenant') markRead();
-                setTimeout(() => scrollToBottom(), 100);
+                // Show blur overlay for NEW tenant messages
+                if (newMsg.sender === 'tenant') {
+                    setNewMsgAlert(newMsg);
+                    // Auto-dismiss after 8s if admin doesn't click
+                    setTimeout(() => setNewMsgAlert(null), 8000);
+                } else {
+                    markRead();
+                }
+                setTimeout(() => scrollToBottom(), 120);
+            })
+            // Also track READ updates from tenant side
+            .on('postgres_changes' as any, {
+                event: 'UPDATE', schema: 'public', table: 'arms_chats',
+                filter: `tenant_id=eq.${tenantId}`,
+            }, (payload: any) => {
+                const updated = payload.new as ChatMessage;
+                setMessages(prev => prev.map(m => m.chat_id === updated.chat_id ? updated : m));
             })
             .subscribe();
 
@@ -112,7 +132,7 @@ export default function ChatThreadPage() {
     }, [tenantId, loadData, markRead, scrollToBottom]);
 
     useEffect(() => {
-        if (!loading) setTimeout(() => scrollToBottom(false), 50);
+        if (!loading) setTimeout(() => scrollToBottom(false), 60);
     }, [loading, scrollToBottom]);
 
     const sendReply = async (msg?: string) => {
@@ -121,7 +141,6 @@ export default function ChatThreadPage() {
         setSending(true);
         setShowCanned(false);
 
-        // Optimistic UI
         const optimistic: ChatMessage = {
             chat_id: Date.now(),
             tenant_id: tenantId,
@@ -132,7 +151,7 @@ export default function ChatThreadPage() {
         };
         setMessages(prev => [...prev, optimistic]);
         setReply('');
-        setTimeout(() => scrollToBottom(), 100);
+        setTimeout(() => scrollToBottom(), 80);
 
         try {
             const res = await fetch('/api/chats', {
@@ -149,174 +168,274 @@ export default function ChatThreadPage() {
         setSending(false);
     };
 
+    const dismissAlert = () => {
+        setNewMsgAlert(null);
+        markRead();
+        scrollToBottom();
+        inputRef.current?.focus();
+    };
+
     const initials = tenantInfo?.tenant_name?.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-    const totalMsgs = messages.length;
-    const tenantMsgs = messages.filter(m => m.sender === 'tenant').length;
 
     return (
-        <div className="flex flex-col h-screen bg-gray-50" style={{ maxHeight: '100vh' }}>
+        <div className="flex flex-col h-screen relative" style={{ maxHeight: '100vh', background: '#0f0a2e' }}>
+
+            {/* ── BLUR NOTIFICATION OVERLAY ── fires on new tenant message ── */}
+            {newMsgAlert && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center"
+                    style={{ backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', background: 'rgba(15,10,46,0.75)' }}>
+                    <div className="mx-4 rounded-3xl overflow-hidden shadow-2xl max-w-sm w-full"
+                        style={{ border: '1.5px solid rgba(167,139,250,0.4)', background: 'linear-gradient(135deg,#1e1b4b,#2d1b69)' }}>
+                        {/* Header */}
+                        <div className="px-5 py-4 flex items-center gap-3"
+                            style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)' }}>
+                            <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg flex-shrink-0"
+                                style={{ background: 'rgba(255,255,255,0.2)' }}>
+                                {initials}
+                            </div>
+                            <div>
+                                <p className="text-white font-extrabold text-sm">{tenantInfo?.tenant_name || 'Tenant'}</p>
+                                <p className="text-indigo-200 text-xs">{tenantInfo?.unit_name} · {tenantInfo?.location_name}</p>
+                            </div>
+                            <span className="ml-auto flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-green-400 animate-ping" />
+                                <span className="text-xs text-green-300 font-bold">New Message</span>
+                            </span>
+                        </div>
+                        {/* Message */}
+                        <div className="px-5 py-5">
+                            <p className="text-xs font-extrabold text-indigo-300 uppercase tracking-widest mb-3">📨 Just received</p>
+                            <div className="rounded-2xl px-4 py-3 mb-4"
+                                style={{ background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(167,139,250,0.3)' }}>
+                                <p className="text-white text-sm leading-relaxed">
+                                    {newMsgAlert.message}
+                                </p>
+                                <p className="text-indigo-300 text-xs mt-2 text-right">{formatMsgTime(newMsgAlert.created_at)}</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={dismissAlert}
+                                    className="flex-1 py-3 rounded-2xl text-sm font-extrabold text-white transition"
+                                    style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                                    💬 Reply Now
+                                </button>
+                                <button onClick={() => setNewMsgAlert(null)}
+                                    className="px-4 py-3 rounded-2xl text-sm font-bold transition"
+                                    style={{ background: 'rgba(99,102,241,0.25)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.3)' }}>
+                                    Later
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ── Header ── */}
-            <div className="flex-shrink-0 shadow-md z-10"
-                style={{ background: 'linear-gradient(135deg,#6366f1 0%,#7c3aed 60%,#a855f7 100%)' }}>
-
-                {/* Top bar */}
+            <div className="flex-shrink-0 shadow-xl z-10"
+                style={{ background: 'linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#a855f7 100%)' }}>
                 <div className="flex items-center gap-3 px-4 py-3.5">
                     <button onClick={() => router.push('/dashboard/chats')}
-                        className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/35 flex items-center justify-center text-white transition text-xl font-bold flex-shrink-0"
-                        title="Back to inbox">
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xl font-bold transition flex-shrink-0"
+                        style={{ background: 'rgba(255,255,255,0.2)' }}>
                         ←
                     </button>
-
-                    {/* Avatar */}
                     <div className="relative flex-shrink-0">
-                        <div className="w-11 h-11 rounded-2xl bg-white/25 flex items-center justify-center text-white font-extrabold text-lg shadow-inner">
+                        <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg"
+                            style={{ background: 'rgba(255,255,255,0.25)' }}>
                             {initials}
                         </div>
                         <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-white" />
                     </div>
-
-                    {/* Info */}
                     <div className="flex-1 min-w-0">
                         <p className="text-white font-extrabold text-base leading-tight truncate">
                             {tenantInfo?.tenant_name || `Tenant #${tenantId}`}
                         </p>
-                        <p className="text-indigo-200 text-[11px] mt-0.5">
-                            {totalMsgs} messages · {tenantMsgs} from tenant
+                        <p className="text-indigo-200 text-xs mt-0.5">
+                            {messages.length} messages · {messages.filter(m => m.sender === 'tenant').length} from tenant
                         </p>
                     </div>
-
-                    {/* Actions */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                         <a href={`tel:${tenantInfo?.phone}`}
-                            className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/35 flex items-center justify-center text-white transition text-base"
-                            title={`Call ${tenantInfo?.phone}`}>
+                            className="w-9 h-9 rounded-xl flex items-center justify-center text-white transition"
+                            style={{ background: 'rgba(255,255,255,0.2)' }} title="Call tenant">
                             📞
                         </a>
                         <button onClick={loadData}
-                            className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/35 flex items-center justify-center text-white transition text-base"
-                            title="Refresh">
+                            className="w-9 h-9 rounded-xl flex items-center justify-center text-white transition"
+                            style={{ background: 'rgba(255,255,255,0.2)' }} title="Refresh">
                             ↺
                         </button>
                     </div>
                 </div>
-
-                {/* Tenant detail strip */}
                 {tenantInfo && (
                     <div className="flex items-center gap-2 px-4 pb-3 flex-wrap">
-                        <span className="inline-flex items-center gap-1 text-[11px] bg-white/15 text-white px-2.5 py-1 rounded-full font-semibold border border-white/20">
-                            📱 {tenantInfo.phone}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[11px] bg-white/15 text-white px-2.5 py-1 rounded-full font-semibold border border-white/20">
-                            🏠 {tenantInfo.unit_name}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[11px] bg-white/15 text-white px-2.5 py-1 rounded-full font-semibold border border-white/20">
-                            📍 {tenantInfo.location_name}
-                        </span>
+                        {[
+                            { icon: '📱', label: tenantInfo.phone },
+                            { icon: '🏠', label: tenantInfo.unit_name },
+                            { icon: '📍', label: tenantInfo.location_name },
+                        ].map(chip => (
+                            <span key={chip.label} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold"
+                                style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)', border: '1px solid rgba(255,255,255,0.2)' }}>
+                                {chip.icon} {chip.label}
+                            </span>
+                        ))}
                     </div>
                 )}
             </div>
 
-            {/* ── Messages ── */}
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1"
-                style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #e0e7ff 1px, transparent 0)', backgroundSize: '24px 24px' }}>
+            {/* ── Messages area with deep purple wallpaper ── */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1 relative"
+                style={{
+                    background: 'linear-gradient(160deg, #0f0a2e 0%, #1a0f4e 25%, #16123a 50%, #1e1556 75%, #0f0a2e 100%)',
+                }}>
+                {/* Decorative wallpaper pattern */}
+                <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+                    {/* Glowing circles */}
+                    {[
+                        { top: '5%',  left: '8%',  size: 120, opacity: 0.06 },
+                        { top: '22%', right: '5%', size: 80,  opacity: 0.05 },
+                        { top: '42%', left: '3%',  size: 60,  opacity: 0.07 },
+                        { top: '60%', right: '8%', size: 140, opacity: 0.04 },
+                        { top: '78%', left: '12%', size: 90,  opacity: 0.06 },
+                    ].map((c, i) => (
+                        <div key={i} className="absolute rounded-full"
+                            style={{
+                                top: c.top, left: (c as any).left, right: (c as any).right,
+                                width: c.size, height: c.size,
+                                border: `1.5px solid rgba(167,139,250,${c.opacity * 4})`,
+                                background: `rgba(99,102,241,${c.opacity})`,
+                            }} />
+                    ))}
+                    {/* Dot grid */}
+                    <div className="absolute inset-0" style={{
+                        backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(167,139,250,0.15) 1px, transparent 0)',
+                        backgroundSize: '28px 28px',
+                    }} />
+                </div>
 
-                {loading ? (
-                    <div className="flex flex-col items-center justify-center h-full gap-4">
-                        <div className="w-14 h-14 rounded-3xl bg-indigo-100 flex items-center justify-center text-3xl animate-pulse">💬</div>
-                        <p className="text-sm text-gray-400 font-semibold">Loading conversation…</p>
-                    </div>
-                ) : messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full gap-3">
-                        <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-4xl">💬</div>
-                        <p className="text-gray-600 font-bold text-base">No messages yet</p>
-                        <p className="text-gray-400 text-sm text-center max-w-xs">
-                            When {tenantInfo?.tenant_name?.split(' ')[0] || 'the tenant'} sends a message from the mobile app, it will appear here instantly.
-                        </p>
-                        <button onClick={() => inputRef.current?.focus()}
-                            className="mt-2 px-4 py-2 rounded-xl text-sm font-bold text-white shadow"
-                            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
-                            Send First Message
-                        </button>
-                    </div>
-                ) : (
-                    messages.map((msg, idx) => {
-                        const isAdmin = msg.sender === 'admin';
-                        const prev = messages[idx - 1];
-                        const showDate = !prev || !sameDay(prev.created_at, msg.created_at);
-                        const showSender = !prev || prev.sender !== msg.sender || showDate;
+                {/* Messages */}
+                <div className="relative z-10">
+                    {loading ? (
+                        <div className="flex flex-col items-center justify-center py-20 gap-3">
+                            <div className="w-14 h-14 rounded-3xl flex items-center justify-center text-3xl animate-pulse"
+                                style={{ background: 'rgba(99,102,241,0.3)', border: '1px solid rgba(167,139,250,0.4)' }}>
+                                💬
+                            </div>
+                            <p className="text-sm font-semibold" style={{ color: '#a5b4fc' }}>Loading conversation…</p>
+                        </div>
+                    ) : messages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-20 gap-3">
+                            <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl"
+                                style={{ background: 'rgba(99,102,241,0.3)', border: '1.5px solid rgba(167,139,250,0.4)' }}>
+                                💬
+                            </div>
+                            <p className="font-extrabold text-base" style={{ color: '#e2e8f0' }}>No messages yet</p>
+                            <p className="text-sm text-center max-w-xs" style={{ color: '#94a3b8' }}>
+                                Send the first message to {tenantInfo?.tenant_name?.split(' ')[0] || 'the tenant'}
+                            </p>
+                            <button onClick={() => inputRef.current?.focus()}
+                                className="mt-2 px-5 py-2.5 rounded-xl text-sm font-extrabold text-white shadow-lg"
+                                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                                Start Conversation ↓
+                            </button>
+                        </div>
+                    ) : (
+                        messages.map((msg, idx) => {
+                            const isAdmin = msg.sender === 'admin';
+                            const prev = messages[idx - 1];
+                            const showDate = !prev || !sameDay(prev.created_at, msg.created_at);
+                            const showSender = !prev || prev.sender !== msg.sender || showDate;
 
-                        return (
-                            <div key={msg.chat_id}>
-                                {/* Date separator */}
-                                {showDate && (
-                                    <div className="flex items-center gap-3 my-5">
-                                        <div className="flex-1 h-px bg-indigo-100" />
-                                        <span className="text-[11px] text-indigo-400 font-bold bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-                                            {formatDateGroup(msg.created_at)}
-                                        </span>
-                                        <div className="flex-1 h-px bg-indigo-100" />
-                                    </div>
-                                )}
-
-                                <div className={`flex items-end gap-2 mb-1 ${isAdmin ? 'flex-row-reverse' : 'flex-row'}`}>
-                                    {/* Avatar dot */}
-                                    {!isAdmin && showSender && (
-                                        <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-extrabold flex-shrink-0 mb-0.5">
-                                            {initials}
+                            return (
+                                <div key={msg.chat_id}>
+                                    {showDate && (
+                                        <div className="flex items-center gap-3 my-5">
+                                            <div className="flex-1 h-px" style={{ background: 'rgba(167,139,250,0.2)' }} />
+                                            <span className="text-xs font-bold px-3 py-1 rounded-full"
+                                                style={{
+                                                    color: '#c4b5fd',
+                                                    background: 'rgba(99,102,241,0.35)',
+                                                    border: '1px solid rgba(167,139,250,0.3)',
+                                                }}>
+                                                {formatDateGroup(msg.created_at)}
+                                            </span>
+                                            <div className="flex-1 h-px" style={{ background: 'rgba(167,139,250,0.2)' }} />
                                         </div>
                                     )}
-                                    {!isAdmin && !showSender && <div className="w-7 flex-shrink-0" />}
 
-                                    {/* Bubble */}
-                                    <div className={`group max-w-[72%] ${isAdmin ? 'items-end' : 'items-start'} flex flex-col`}>
-                                        {showSender && !isAdmin && (
-                                            <p className="text-[10px] font-extrabold text-indigo-500 mb-1 ml-1">
-                                                {tenantInfo?.tenant_name?.split(' ')[0] || 'Tenant'}
-                                            </p>
+                                    <div className={`flex items-end gap-2 mb-1 ${isAdmin ? 'flex-row-reverse' : 'flex-row'}`}>
+                                        {/* Avatar */}
+                                        {!isAdmin && showSender && (
+                                            <div className="w-7 h-7 rounded-xl flex items-center justify-center text-white text-xs font-extrabold flex-shrink-0 mb-0.5"
+                                                style={{ background: 'rgba(99,102,241,0.6)', border: '1px solid rgba(167,139,250,0.4)' }}>
+                                                {initials}
+                                            </div>
                                         )}
-                                        <div className={`relative px-4 py-2.5 shadow-sm ${
-                                            isAdmin
-                                                ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-2xl rounded-br-sm'
-                                                : 'bg-white text-gray-800 rounded-2xl rounded-bl-sm border border-gray-100'
-                                        }`}>
-                                            <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.message}</p>
-                                            <div className={`flex items-center gap-1 mt-1 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
-                                                <span className={`text-[10px] ${isAdmin ? 'text-indigo-200' : 'text-gray-400'}`}>
-                                                    {formatMsgTime(msg.created_at)}
-                                                </span>
-                                                {isAdmin && (
-                                                    <span className="text-[10px] text-indigo-200">
-                                                        {msg.is_read ? '✓✓' : '✓'}
+                                        {!isAdmin && !showSender && <div className="w-7 flex-shrink-0" />}
+
+                                        {/* Bubble */}
+                                        <div className={`group max-w-[72%] flex flex-col ${isAdmin ? 'items-end' : 'items-start'}`}>
+                                            {showSender && !isAdmin && (
+                                                <p className="text-xs font-extrabold mb-1 ml-1" style={{ color: '#a5b4fc' }}>
+                                                    {tenantInfo?.tenant_name?.split(' ')[0] || 'Tenant'}
+                                                </p>
+                                            )}
+                                            <div className={`relative px-4 py-2.5 shadow-lg ${
+                                                isAdmin
+                                                    ? 'rounded-2xl rounded-br-sm text-white'
+                                                    : 'rounded-2xl rounded-bl-sm'
+                                            }`}
+                                                style={isAdmin ? {
+                                                    background: 'linear-gradient(135deg,#4f46e5,#7c3aed)',
+                                                    boxShadow: '0 4px 16px rgba(99,102,241,0.45)',
+                                                } : {
+                                                    background: 'rgba(30,27,75,0.9)',
+                                                    border: '1px solid rgba(167,139,250,0.25)',
+                                                    boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+                                                }}>
+                                                <p className="text-sm leading-relaxed whitespace-pre-wrap"
+                                                    style={{ color: isAdmin ? '#fff' : '#e2e8f0' }}>
+                                                    {msg.message}
+                                                </p>
+                                                <div className={`flex items-center gap-1 mt-1.5 ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                                                    <span className="text-xs" style={{ color: isAdmin ? 'rgba(255,255,255,0.55)' : 'rgba(167,139,250,0.6)' }}>
+                                                        {formatMsgTime(msg.created_at)}
                                                     </span>
-                                                )}
+                                                    {/* Double blue ticks for admin messages */}
+                                                    {isAdmin && <Ticks isRead={msg.is_read} />}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
 
-                                    {/* Admin avatar */}
-                                    {isAdmin && showSender && (
-                                        <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white text-xs font-extrabold flex-shrink-0 mb-0.5">
-                                            A
-                                        </div>
-                                    )}
-                                    {isAdmin && !showSender && <div className="w-7 flex-shrink-0" />}
+                                        {isAdmin && showSender && (
+                                            <div className="w-7 h-7 rounded-xl flex items-center justify-center text-white text-xs font-extrabold flex-shrink-0 mb-0.5"
+                                                style={{ background: 'linear-gradient(135deg,#10b981,#059669)' }}>
+                                                A
+                                            </div>
+                                        )}
+                                        {isAdmin && !showSender && <div className="w-7 flex-shrink-0" />}
+                                    </div>
                                 </div>
-                            </div>
-                        );
-                    })
-                )}
-                <div ref={bottomRef} className="h-2" />
+                            );
+                        })
+                    )}
+                    <div ref={bottomRef} className="h-2" />
+                </div>
             </div>
 
-            {/* ── Canned Responses ── */}
+            {/* ── Canned responses ── */}
             {showCanned && (
-                <div className="flex-shrink-0 bg-white border-t border-indigo-100 px-4 py-3 max-h-52 overflow-y-auto">
-                    <p className="text-[11px] font-extrabold text-indigo-500 uppercase tracking-wider mb-2">Quick Responses</p>
+                <div className="flex-shrink-0 border-t px-4 py-3 max-h-52 overflow-y-auto"
+                    style={{ background: 'rgba(15,10,46,0.98)', borderColor: 'rgba(99,102,241,0.35)' }}>
+                    <p className="text-xs font-extrabold uppercase tracking-wider mb-2" style={{ color: '#a5b4fc' }}>⚡ Quick Responses</p>
                     <div className="grid grid-cols-1 gap-1.5">
                         {CANNED.map((c, i) => (
                             <button key={i} onClick={() => { setReply(c); setShowCanned(false); inputRef.current?.focus(); }}
-                                className="text-left text-xs text-gray-600 px-3 py-2 rounded-xl bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 border border-gray-100 hover:border-indigo-200 transition font-medium">
+                                className="text-left text-xs px-3 py-2 rounded-xl transition font-medium"
+                                style={{
+                                    color: '#c4b5fd',
+                                    background: 'rgba(99,102,241,0.2)',
+                                    border: '1px solid rgba(167,139,250,0.25)',
+                                }}>
                                 {c}
                             </button>
                         ))}
@@ -325,14 +444,23 @@ export default function ChatThreadPage() {
             )}
 
             {/* ── Reply Box ── */}
-            <div className="flex-shrink-0 bg-white border-t border-gray-100 px-3 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
-                {/* Canned + typing indicator row */}
+            <div className="flex-shrink-0 px-3 py-3"
+                style={{
+                    background: 'rgba(15,10,46,0.97)',
+                    borderTop: '1px solid rgba(99,102,241,0.35)',
+                    boxShadow: '0 -4px 20px rgba(0,0,0,0.4)',
+                }}>
                 <div className="flex items-center justify-between mb-2 px-1">
                     <button onClick={() => setShowCanned(v => !v)}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition ${showCanned ? 'bg-indigo-100 text-indigo-700' : 'text-gray-400 hover:text-indigo-500 hover:bg-indigo-50'}`}>
+                        className="text-xs font-bold px-2.5 py-1 rounded-lg transition"
+                        style={{
+                            background: showCanned ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.15)',
+                            color: '#a5b4fc',
+                            border: '1px solid rgba(167,139,250,0.3)',
+                        }}>
                         ⚡ Quick Replies
                     </button>
-                    <span className="text-[10px] text-gray-300">Enter to send · Shift+Enter new line</span>
+                    <span className="text-xs" style={{ color: 'rgba(167,139,250,0.5)' }}>Enter to send · Shift+Enter new line</span>
                 </div>
 
                 <div className="flex items-end gap-2">
@@ -344,8 +472,13 @@ export default function ChatThreadPage() {
                             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
                             rows={1}
                             placeholder={`Reply to ${tenantInfo?.tenant_name?.split(' ')[0] || 'tenant'}…`}
-                            className="w-full resize-none px-4 py-3 rounded-2xl bg-gray-50 border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition"
-                            style={{ minHeight: 46, maxHeight: 140 }}
+                            className="w-full resize-none px-4 py-3 rounded-2xl text-sm transition focus:outline-none"
+                            style={{
+                                minHeight: 46, maxHeight: 140,
+                                background: 'rgba(30,27,75,0.95)',
+                                border: '1.5px solid rgba(99,102,241,0.5)',
+                                color: '#e2e8f0',
+                            }}
                             onInput={e => {
                                 const el = e.currentTarget;
                                 el.style.height = 'auto';
@@ -354,24 +487,23 @@ export default function ChatThreadPage() {
                         />
                         {reply.length > 0 && (
                             <button onClick={() => setReply('')}
-                                className="absolute right-3 top-3 text-gray-300 hover:text-gray-500 text-lg transition">
-                                ×
-                            </button>
+                                className="absolute right-3 top-3 text-lg transition"
+                                style={{ color: 'rgba(167,139,250,0.5)' }}>×</button>
                         )}
                     </div>
 
                     <button
                         onClick={() => sendReply()}
                         disabled={!reply.trim() || sending}
-                        className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 shadow"
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 shadow-lg"
                         style={{
                             background: (!reply.trim() || sending)
-                                ? '#e2e8f0'
+                                ? 'rgba(99,102,241,0.25)'
                                 : 'linear-gradient(135deg,#6366f1,#8b5cf6)',
-                        }}
-                        title="Send message">
+                            boxShadow: (!reply.trim() || sending) ? 'none' : '0 4px 16px rgba(99,102,241,0.5)',
+                        }}>
                         {sending ? (
-                            <svg className="w-4 h-4 animate-spin text-indigo-400" fill="none" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4 animate-spin" style={{ color: '#a5b4fc' }} fill="none" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                             </svg>
