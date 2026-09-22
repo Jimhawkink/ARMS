@@ -128,7 +128,27 @@ export async function loginTenantByPin(pin: string): Promise<TenantSession | nul
 }
 
 // ============================================================
+// VACATION HELPERS (matches web app logic exactly)
+// ============================================================
+
+const VACATION_MONTHS = ['05', '06', '07', '08']; // May, Jun, Jul, Aug
+
+function isVacationMonth(month: string): boolean {
+    const mm = month.slice(5, 7);
+    return VACATION_MONTHS.includes(mm);
+}
+
+function getEffectiveRent(monthlyRent: number, month: string, isOnVacation: boolean): number {
+    if (isOnVacation && isVacationMonth(month)) {
+        return Math.round(monthlyRent * 0.5 * 100) / 100;
+    }
+    return monthlyRent;
+}
+
+// ============================================================
 // BILLING — Get tenant's billing records (unpaid + all)
+// Generates virtual "Unbilled" entries for months with no DB record,
+// matching the web app behaviour exactly.
 // ============================================================
 
 export async function getTenantBilling(tenantId: number): Promise<BillingRecord[]> {
@@ -147,22 +167,112 @@ export async function getTenantBilling(tenantId: number): Promise<BillingRecord[
     }
 }
 
+// Returns all unpaid bills (DB records) + virtual unbilled months
 export async function getUnpaidBilling(tenantId: number): Promise<BillingRecord[]> {
     try {
-        const { data, error } = await supabase
+        // Fetch tenant info (rent, move-in, vacation status)
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('monthly_rent, move_in_date, is_on_vacation')
+            .eq('tenant_id', tenantId)
+            .single();
+
+        const monthlyRent = tenant?.monthly_rent || 0;
+        const isOnVacation = !!(tenant as any)?.is_on_vacation;
+        const moveIn = tenant?.move_in_date || null;
+
+        // Fetch all existing billing records
+        const { data: allBills, error } = await supabase
             .from('arms_billing')
             .select('*')
             .eq('tenant_id', tenantId)
-            .neq('status', 'Paid')
-            .order('billing_date', { ascending: true }); // oldest first
+            .order('billing_date', { ascending: true });
 
         if (error) throw error;
-        return data || [];
+
+        const existingSet = new Set((allBills || []).map((b: any) => b.billing_month));
+
+        // Use LOCAL date arithmetic — avoids UTC timezone shift bug (EAT = UTC+3)
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonthNum = now.getMonth() + 1;
+        const currentMonth = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+        const earliestMonth = moveIn ? moveIn.slice(0, 7) : currentMonth;
+
+        // Generate virtual "Unbilled" entries for months missing in DB
+        const virtualBills: BillingRecord[] = [];
+        let [sy, sm] = earliestMonth.split('-').map(Number);
+
+        // Integer arithmetic — no Date timezone issues
+        while (sy < currentYear || (sy === currentYear && sm <= currentMonthNum)) {
+            const m = `${sy}-${String(sm).padStart(2, '0')}`;
+            if (!existingSet.has(m)) {
+                const effectiveRent = getEffectiveRent(monthlyRent, m, isOnVacation);
+                virtualBills.push({
+                    billing_id: null,
+                    tenant_id: tenantId,
+                    billing_month: m,
+                    billing_date: `${m}-01`,
+                    due_date: `${m}-05`,
+                    rent_amount: effectiveRent,
+                    amount_paid: 0,
+                    balance: effectiveRent,
+                    status: 'Unbilled',
+                    _virtual: true,
+                });
+            }
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
+        }
+
+        // Filter existing to only unpaid/partial, then combine with virtual
+        const unpaidExisting = (allBills || []).filter((b: any) => b.status !== 'Paid' && (b.balance || 0) > 0);
+        const combined = [...unpaidExisting, ...virtualBills];
+        combined.sort((a, b) => a.billing_month.localeCompare(b.billing_month));
+
+        return combined;
     } catch (err: any) {
         console.error('getUnpaidBilling error:', err.message);
         return [];
     }
 }
+
+// Get the TRUE total balance = sum of all unpaid (real + virtual) bills
+export async function getTrueTotalBalance(tenantId: number): Promise<{ total: number; effectiveRent: number }> {
+    try {
+        const unpaid = await getUnpaidBilling(tenantId);
+        let total = unpaid.reduce((s, b) => s + (b.balance || 0), 0);
+
+        // Effective rent for THIS month
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('monthly_rent, is_on_vacation')
+            .eq('tenant_id', tenantId)
+            .single();
+        const monthlyRent = tenant?.monthly_rent || 0;
+        const isOnVacation = !!(tenant as any)?.is_on_vacation;
+        // Use local date — avoids UTC timezone shift (EAT = UTC+3)
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const effectiveRent = getEffectiveRent(monthlyRent, currentMonth, isOnVacation);
+
+        // Subtract unallocated payments (billing_id IS NULL) — these are MPesa
+        // payments not linked to any billing record (e.g. payments on unbilled months)
+        const { data: unallocated } = await supabase
+            .from('arms_payments')
+            .select('amount')
+            .eq('tenant_id', tenantId)
+            .is('billing_id', null);
+        const unallocSum = (unallocated || []).reduce((s: number, p: any) => s + (p.amount || 0), 0);
+        total = Math.max(0, Math.round((total - unallocSum) * 100) / 100);
+
+        return { total, effectiveRent };
+    } catch {
+        return { total: 0, effectiveRent: 0 };
+    }
+}
+
+
 
 // ============================================================
 // PAYMENTS — Get tenant's payment history
@@ -178,41 +288,56 @@ export async function getTenantPayments(tenantId: number): Promise<PaymentRecord
 
         if (error) throw error;
 
-        return (data || []).map((p: any) => ({
-            ...p,
-            billing_month: p.arms_billing?.billing_month || extractBillingMonth(p.notes),
-        }));
+        return (data || []).map((p: any) => {
+            // Priority: [Month: YYYY-MM] tag in notes (set by recordPayment & KCB callback)
+            // This is the actual month the payment was recorded FOR, not just the first allocated bill
+            const notesMonth = extractBillingMonth(p.notes);
+            const billingJoinMonth = p.arms_billing?.billing_month || '';
+            return {
+                ...p,
+                billing_month: notesMonth || billingJoinMonth,
+            };
+        });
     } catch (err: any) {
         console.error('getTenantPayments error:', err.message);
         return [];
     }
 }
 
-// Helper — extract billing month from notes if direct join is unavailable
+// Helper — extract payment month from notes.
+// Priority: [Month: YYYY-MM] tag (set by recordPayment and KCB callback)
+// Fallback: first YYYY-MM pattern found (legacy)
 function extractBillingMonth(notes: string | null): string {
     if (!notes) return '';
+    // Look for explicit [Month: YYYY-MM] tag first (most accurate)
+    const tagged = notes.match(/\[Month:\s*(\d{4}-\d{2})\]/);
+    if (tagged) return tagged[1];
+    // Fallback: first date-like pattern
     const m = notes.match(/(\d{4}-\d{2})/);
     return m ? m[1] : '';
 }
 
 // ============================================================
-// TENANT BALANCE — Refresh balance from DB
+// TENANT BALANCE — Refresh true total balance (real + virtual bills)
 // ============================================================
 
 export async function refreshTenantBalance(tenantId: number): Promise<number> {
     try {
-        const { data, error } = await supabase
-            .from('arms_tenants')
-            .select('balance')
-            .eq('tenant_id', tenantId)
-            .single();
-        if (error || !data) return 0;
-        return data.balance || 0;
+        const { total } = await getTrueTotalBalance(tenantId);
+        return total;
     } catch {
-        return 0;
+        try {
+            const { data } = await supabase
+                .from('arms_tenants')
+                .select('balance')
+                .eq('tenant_id', tenantId)
+                .single();
+            return data?.balance || 0;
+        } catch {
+            return 0;
+        }
     }
 }
-
 // ============================================================
 // GET LATEST PAYMENT — Fetch most recent completed payment for tenant
 // Used to recover M-Pesa receipt + amount after STK timeout
@@ -453,7 +578,7 @@ export function pollSTKResult(params: {
             }
         } catch (_) { /* ignore polling errors, keep trying */ }
 
-        if (pollCount >= 35) { // 70s max polling (2s × 35)
+        if (pollCount >= 10) { // 20s max polling (2s × 10)
             clearInterval(pollInterval);
         }
     }, 2000);
@@ -733,7 +858,10 @@ export async function checkTenantLicense(
 
         const res = await fetch(`${ARMS_API_URL}/license/tenant-check`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-App-Version': 'v2.2', // version gate — old APKs without this header are blocked
+            },
             body: JSON.stringify({ tenantId, phone }),
             signal: controller.signal,
         });
@@ -945,6 +1073,7 @@ export async function getTenantStatement(tenantId: number): Promise<{
 
         const entries: StatementEntry[] = [];
 
+        // ── Real billing records (Partial / Unpaid / Paid) ───────────────
         for (const b of (billingRes.data || [])) {
             entries.push({
                 type: 'billing',
@@ -958,6 +1087,26 @@ export async function getTenantStatement(tenantId: number): Promise<{
             });
         }
 
+        // ── Virtual Unbilled months (months with no DB record yet) ────────
+        // This makes Total Charged include ALL owed rent, same as tenant dashboard
+        const billedMonths = new Set((billingRes.data || []).map((b: any) => b.billing_month));
+        const unpaidAll = await getUnpaidBilling(tenantId);
+        for (const vb of unpaidAll) {
+            if ((vb as any)._virtual && !billedMonths.has(vb.billing_month)) {
+                entries.push({
+                    type: 'billing',
+                    date: vb.billing_date,
+                    description: `Rent — ${formatMonth(vb.billing_month)} (Unbilled)`,
+                    debit: vb.rent_amount || 0,
+                    credit: 0,
+                    balance: 0,
+                    status: 'Unbilled',
+                    month: vb.billing_month,
+                });
+            }
+        }
+
+        // ── Payments ──────────────────────────────────────────────────────
         for (const p of (paymentsRes.data || [])) {
             const bMonth = (p as any).arms_billing?.billing_month || extractBillingMonth(p.notes);
             entries.push({
@@ -976,12 +1125,13 @@ export async function getTenantStatement(tenantId: number): Promise<{
         // Sort chronologically
         entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Compute running balance
+        // Compute running balance — every payment correctly deducted
         let running = 0;
         for (const e of entries) {
             running = running + e.debit - e.credit;
             e.balance = running;
         }
+
 
         const t = tenantRes.data as any;
         const tenant: TenantSearchResult | null = t ? {
@@ -998,9 +1148,218 @@ export async function getTenantStatement(tenantId: number): Promise<{
             move_in_date: t.move_in_date || '',
         } : null;
 
+        // Use TRUE total balance (includes virtual unbilled months) + effective rent (vacation-adjusted)
+        // This matches what the tenant dashboard shows
+        let trueBalance = tenant?.balance || 0;
+        if (tenant) {
+            try {
+                const { total, effectiveRent } = await getTrueTotalBalance(tenantId);
+                trueBalance = total;
+                // Show effective rent (vacation-adjusted), not raw DB monthly_rent
+                tenant.monthly_rent = effectiveRent || tenant.monthly_rent;
+            } catch { /* keep DB values as fallback */ }
+        }
+        if (tenant) tenant.balance = trueBalance;
+
         return { tenant, entries };
     } catch (err: any) {
         console.error('getTenantStatement error:', err.message);
         return { tenant: null, entries: [] };
     }
+}
+
+// ============================================================
+// KCB BUNI STK PUSH — Initiate KCB payment
+// Added alongside M-Pesa — does NOT replace or affect it.
+// Routes through ARMS web app API (Vercel) which holds credentials.
+// ============================================================
+
+export async function initiateKCBPush(params: {
+    payerPhone:  string;
+    amount:      number;
+    tenantId:    number;
+    description: string;
+}): Promise<{ checkoutRequestId: string | null; error: string | null }> {
+    try {
+        const normalized = normalizePhone(params.payerPhone);
+        if (!normalized) {
+            return { checkoutRequestId: null, error: 'Invalid phone number. Use format: 0712345678' };
+        }
+
+        const response = await fetch(`${ARMS_API_URL}/kcb/stk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                phone:       normalized,
+                amount:      Math.round(params.amount),
+                tenantId:    params.tenantId,
+                description: params.description || 'Rent Payment',
+            }),
+        });
+
+        const result = await response.json();
+        console.log('[KCB ARMS Mobile] STK response:', result);
+
+        if (!response.ok || result.error) {
+            return { checkoutRequestId: null, error: result.error || 'KCB STK Push failed' };
+        }
+
+        return { checkoutRequestId: result.checkoutRequestId || null, error: null };
+    } catch (err: any) {
+        console.error('initiateKCBPush error:', err.message);
+        return { checkoutRequestId: null, error: 'Network error — please check your connection' };
+    }
+}
+
+// ============================================================
+// KCB BUNI — Poll payment status every 5 seconds
+// Multi-fallback: checkoutRequestId → invoiceNumber → tenantId (most recent within 10min)
+// ============================================================
+
+export function pollKCBResult(params: {
+    checkoutRequestId: string;
+    tenantId?:         number;
+    invoiceNumber?:    string;
+    timeoutMs:         number;
+    onConfirmed:  (receipt: string, amount: number) => void;
+    onFailed:     (reason: string, resultCode?: string) => void;
+    onTimeout:    () => void;
+}): () => void {
+    let done = false;
+    const finish = () => { if (done) return false; done = true; return true; };
+
+    // Build URL with all available IDs — server does multi-fallback lookup
+    const buildUrl = () => {
+        let url = `${ARMS_API_URL}/kcb/status?checkoutRequestId=${encodeURIComponent(params.checkoutRequestId)}`;
+        if (params.tenantId)      url += `&tenantId=${params.tenantId}`;
+        if (params.invoiceNumber) url += `&invoiceNumber=${encodeURIComponent(params.invoiceNumber)}`;
+        return url;
+    };
+
+    const handleData = (data: any): boolean => {
+        const status = (data?.status || '').toLowerCase();
+        if (status === 'completed') {
+            clearInterval(pollInterval);
+            clearTimeout(timer);
+            if (finish()) params.onConfirmed(data.receipt || '', data.amount || 0);
+            return true;
+        } else if (status === 'failed' || status === 'cancelled') {
+            clearInterval(pollInterval);
+            clearTimeout(timer);
+            if (finish()) {
+                const code = String(data.resultCode || '');
+                let msg = 'KCB payment failed. Money was NOT deducted.';
+                if (code === '1032')      msg = 'Payment cancelled. Money was NOT deducted.';
+                else if (code === '1')    msg = 'Insufficient M-Pesa balance. Please top up and try again.';
+                else if (code === '2001') msg = 'Wrong M-Pesa PIN entered. Money was NOT deducted.';
+                else if (data.resultDesc) msg = data.resultDesc;
+                params.onFailed(msg, code);
+            }
+            return true;
+        }
+        return false;
+    };
+
+    const pollInterval = setInterval(async () => {
+        if (done) { clearInterval(pollInterval); return; }
+        try {
+            const res = await fetch(buildUrl(), { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) return;
+            const data = await res.json();
+            handleData(data);
+        } catch { /* keep polling on network error */ }
+    }, 5000);
+
+    const timer = setTimeout(async () => {
+        clearInterval(pollInterval);
+        if (done) return;
+        try {
+            const res = await fetch(buildUrl(), { headers: { 'Accept': 'application/json' } });
+            if (res.ok) {
+                const data = await res.json();
+                if (handleData(data)) return;
+            }
+        } catch { /* ignore */ }
+        if (finish()) params.onTimeout();
+    }, params.timeoutMs);
+
+    return () => { done = true; clearInterval(pollInterval); clearTimeout(timer); };
+}
+
+
+// ============================================================
+// CHAT FUNCTIONS — Tenant <-> Admin Real-time Messaging
+// ============================================================
+export interface ChatMessage {
+    chat_id: number;
+    tenant_id: number;
+    sender: 'tenant' | 'admin';
+    message: string;
+    is_read: boolean;
+    created_at: string;
+}
+export async function sendChatMessage(tenantId: number, message: string): Promise<ChatMessage> {
+    const { data, error } = await supabase.from('arms_chats').insert([{
+        tenant_id: tenantId, sender: 'tenant', message: message.trim(),
+        is_read: false, created_at: new Date().toISOString(),
+    }]).select().single();
+    if (error) throw new Error(error.message);
+    return data as ChatMessage;
+}
+export async function getTenantChats(tenantId: number): Promise<ChatMessage[]> {
+    const { data, error } = await supabase.from('arms_chats').select('*')
+        .eq('tenant_id', tenantId).order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data || []) as ChatMessage[];
+}
+export function subscribeToChats(tenantId: number, onNewMessage: (msg: ChatMessage) => void) {
+    const channel = supabase.channel(`tenant_chat_${tenantId}`)
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'arms_chats', filter: `tenant_id=eq.${tenantId}` },
+            (payload: any) => { onNewMessage(payload.new as ChatMessage); })
+        .subscribe();
+    return () => { supabase.removeChannel(channel); };
+}
+export async function markAdminChatsRead(tenantId: number): Promise<void> {
+    await supabase.from('arms_chats').update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('tenant_id', tenantId).eq('sender', 'admin').eq('is_read', false);
+}
+export async function getUnreadAdminMessages(tenantId: number): Promise<number> {
+    const { count } = await supabase.from('arms_chats').select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).eq('sender', 'admin').eq('is_read', false);
+    return count || 0;
+}
+
+// ============================================================
+// AGREEMENT FUNCTIONS — Digital Lease Signing
+// ============================================================
+export interface TenantAgreement {
+    agreement_id: number; tenant_id: number; template_id: number | null;
+    lease_start_date: string | null; lease_end_date: string | null;
+    monthly_rent: number; deposit_amount: number; unit_name: string;
+    issued_by: string; issued_at: string; accepted: boolean;
+    signed_at: string | null; signature_text: string | null; agreement_snapshot: string | null;
+}
+export interface AgreementTemplate {
+    template_id: number; title: string; content: string;
+    admin_signature_url: string | null; admin_name: string; admin_title: string; version: string;
+}
+export async function getPendingAgreement(tenantId: number): Promise<TenantAgreement | null> {
+    const { data } = await supabase.from('arms_tenant_agreements').select('*')
+        .eq('tenant_id', tenantId).eq('accepted', false)
+        .order('created_at', { ascending: false }).limit(1);
+    return (data && data.length > 0) ? data[0] as TenantAgreement : null;
+}
+export async function getAgreementTemplate(locationId?: number): Promise<AgreementTemplate | null> {
+    let query = supabase.from('arms_agreement_templates').select('*').eq('is_active', true)
+        .order('created_at', { ascending: false }).limit(1);
+    if (locationId) query = (query as any).eq('location_id', locationId);
+    const { data } = await query;
+    return (data && data.length > 0) ? data[0] as AgreementTemplate : null;
+}
+export async function signAgreement(agreementId: number, signatureText: string, deviceInfo: string, snapshot: string): Promise<void> {
+    const { error } = await supabase.from('arms_tenant_agreements').update({
+        accepted: true, signed_at: new Date().toISOString(),
+        signature_text: signatureText, device_info: deviceInfo, agreement_snapshot: snapshot,
+    }).eq('agreement_id', agreementId);
+    if (error) throw new Error(error.message);
 }
