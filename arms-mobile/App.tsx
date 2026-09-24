@@ -54,6 +54,7 @@ import StaffProfileScreen from './src/screens/StaffProfileScreen';
 import ForceUpdateScreen from './src/screens/ForceUpdateScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import AgreementScreen from './src/screens/AgreementScreen';
+import StaffChatScreen from './src/screens/StaffChatScreen';
 import { TenantSession, StaffSession, TenantSearchResult, TenantAgreement, AgreementTemplate, getPendingAgreement, getAgreementTemplate } from './src/lib/supabase';
 import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
@@ -68,14 +69,30 @@ type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 // ── Staff Shell — Caretaker or Landlord ──────────────────────────────
-// Caretaker: Search (read-only) + Profile
-// Landlord:  Search + Collect Rent (STK) + Profile
+// Caretaker: Tenants + Chat + Profile
+// Landlord:  Tenants + Chat + Collect Rent (STK) + Profile
 function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
-    type StaffTab = 'search' | 'profile';
+    type StaffTab = 'search' | 'chat' | 'profile';
     const [activeTab, setActiveTab] = useState<StaffTab>('search');
     const [collectTenant, setCollectTenant] = useState<TenantSearchResult | null>(null);
+    const [unreadCount, setUnreadCount] = useState(0);
 
     useEffect(() => { updateStaffSessionActivity(); }, [activeTab]);
+
+    // Poll total unread for badge on chat tab
+    useEffect(() => {
+        const check = async () => {
+            try {
+                const res = await fetch('https://arms-opal.vercel.app/api/chats?inbox=1');
+                const data = await res.json();
+                const total = (data.inbox || []).reduce((s: number, t: any) => s + (t.unread_count || 0), 0);
+                setUnreadCount(total);
+            } catch { /* silent */ }
+        };
+        check();
+        const iv = setInterval(check, 20000);
+        return () => clearInterval(iv);
+    }, []);
 
     const isLandlord = staff.role === 'landlord';
 
@@ -91,33 +108,57 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
         );
     }
 
+    const renderTab = () => {
+        switch (activeTab) {
+            case 'search':
+                return (
+                    <TenantSearchScreen
+                        staff={staff}
+                        onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
+                    />
+                );
+            case 'chat':
+                return <StaffChatScreen staff={staff} />;
+            case 'profile':
+                return <StaffProfileScreen staff={staff} onLogout={onLogout} />;
+        }
+    };
+
+    const tabs: { key: StaffTab; emoji: string; label: string; badge?: number }[] = [
+        { key: 'search',  emoji: '🔍', label: 'Tenants' },
+        { key: 'chat',    emoji: '💬', label: 'Messages', badge: unreadCount },
+        { key: 'profile', emoji: '👤', label: 'Profile' },
+    ];
+
     return (
         <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
-            {activeTab === 'search' ? (
-                <TenantSearchScreen
-                    staff={staff}
-                    onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
-                />
-            ) : (
-                <StaffProfileScreen staff={staff} onLogout={onLogout} />
-            )}
+            {renderTab()}
 
             {/* Bottom tab bar */}
             <View style={styles.bottomBar}>
-                {[
-                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
-                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
-                ].map(tab => {
+                {tabs.map(tab => {
                     const isActive = activeTab === tab.key;
                     return (
                         <View key={tab.key} style={styles.tabWrap}>
                             <View
                                 style={[styles.tab, isActive && styles.tabActive]}
-                                onTouchEnd={() => setActiveTab(tab.key)}
+                                onTouchEnd={() => {
+                                    setActiveTab(tab.key);
+                                    if (tab.key === 'chat') setUnreadCount(0);
+                                }}
                             >
-                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
-                                    {tab.emoji}
-                                </Text>
+                                <View style={{ position: 'relative' }}>
+                                    <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                        {tab.emoji}
+                                    </Text>
+                                    {(tab.badge || 0) > 0 && (
+                                        <View style={styles.tabBadge}>
+                                            <Text style={styles.tabBadgeText}>
+                                                {(tab.badge || 0) > 9 ? '9+' : tab.badge}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                                     {tab.label}
                                 </Text>
