@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
@@ -18,14 +18,25 @@ export async function POST(req: NextRequest) {
             .eq("checkout_request_id", checkoutRequestId)
             .maybeSingle();
 
-        // If already Completed, return immediately
+        // If already Completed in STK table, check if payment was actually recorded
         if (stkReq?.status === "Completed") {
-            return NextResponse.json({
-                success: true, status: "Completed",
-                receipt: stkReq.mpesa_receipt || `KCB-${checkoutRequestId}`,
-                amount:  stkReq.amount_paid   || stkReq.amount || txnAmount,
-                source:  "already_confirmed",
-            });
+            // Check if payment exists by EITHER the real receipt OR the checkoutRequestId
+            const { data: existsByCheckout } = await supabase
+                .from("arms_payments")
+                .select("payment_id, mpesa_receipt, amount")
+                .eq("reference_no", checkoutRequestId)
+                .maybeSingle();
+
+            if (existsByCheckout) {
+                // Already recorded — return success with real receipt
+                return NextResponse.json({
+                    success: true, status: "Completed",
+                    receipt: existsByCheckout.mpesa_receipt || stkReq.mpesa_receipt || `KCB-${checkoutRequestId}`,
+                    amount:  existsByCheckout.amount || stkReq.amount_paid || stkReq.amount || txnAmount,
+                    source:  "already_confirmed",
+                });
+            }
+            // Callback may have run but DB insert failed — fall through to record it
         }
 
         // Use receipt from DB or generate one from checkoutRequestId
@@ -41,11 +52,16 @@ export async function POST(req: NextRequest) {
         }
         // NOTE: if stkReq is null (insert failed earlier), we still proceed below
 
-        // 3. Duplicate guard — check arms_payments for this receipt
-        const { data: existingPay } = await supabase
+        // 3. DUAL Duplicate guard — check by BOTH receipt AND checkoutRequestId
+        //    This prevents double-recording when callback arrives at the same time
+        const { data: existsByReceipt } = await supabase
             .from("arms_payments").select("payment_id")
             .eq("mpesa_receipt", receipt).maybeSingle();
-        if (existingPay) {
+        const { data: existsByRef } = await supabase
+            .from("arms_payments").select("payment_id")
+            .eq("reference_no", checkoutRequestId).maybeSingle();
+
+        if (existsByReceipt || existsByRef) {
             return NextResponse.json({ success: true, status: "Completed", receipt, amount: txnAmount, source: "duplicate_skipped" });
         }
 

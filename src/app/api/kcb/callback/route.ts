@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // ARMS - KCB Buni Async Callback Handler
 // POST /api/kcb/callback
 // Ultra Grade: Full bill generation + FIFO + correct month tags
@@ -130,15 +130,22 @@ export async function POST(req: NextRequest) {
             return kcbResponse();
         }
 
-        // 4. Deduplication
-        const { data: existingPay } = await supabase
+        // 4. Deduplication — check BOTH receipt AND checkoutRequestId
+        //    KCB may call the callback twice; also prevents race with /confirm endpoint
+        const { data: existingByReceipt } = await supabase
             .from("arms_payments")
             .select("payment_id")
             .eq("mpesa_receipt", finalReceipt)
             .maybeSingle();
 
-        if (existingPay) {
-            console.log("[KCB Callback ARMS] Already recorded:", finalReceipt);
+        const { data: existingByRef } = await supabase
+            .from("arms_payments")
+            .select("payment_id")
+            .eq("reference_no", checkoutRequestId)
+            .maybeSingle();
+
+        if (existingByReceipt || existingByRef) {
+            console.log("[KCB Callback ARMS] Already recorded (receipt or ref match):", finalReceipt, checkoutRequestId);
             return kcbResponse();
         }
 
