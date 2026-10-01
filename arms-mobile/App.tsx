@@ -10,7 +10,7 @@ import * as Crypto from 'expo-crypto';
 import { setupNotifications, pushNotification } from './src/lib/notifications';
 
 // 🚀 THIS APK'S VERSION - bump on every release 🚀
-const APP_VERSION = 'v2.3';
+const APP_VERSION = 'v4.7';
 
 // ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
@@ -607,7 +607,7 @@ function AppInner() {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-App-Version': 'v2.3' 
+                    'X-App-Version': 'v4.7' 
                 },
                 body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
             });
