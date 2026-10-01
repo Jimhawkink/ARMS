@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 
 // ── Single source of truth for APK version displayed on this page ──
 const APK_VERSION = 'v4.7'; // bump this every release
+const DOWNLOAD_URL = 'https://arms-opal.vercel.app/api/dl';
 
 // QR points to hidden server-side redirect — APK URL never exposed
 const QR = (size: number) =>
@@ -10,15 +11,23 @@ const QR = (size: number) =>
 
 export default function QRPrintPage() {
     useEffect(() => {
-        // Force no-cache so browser always loads latest version
+        // Force no-cache
         if (typeof window !== 'undefined') {
             const meta = document.createElement('meta');
             meta.httpEquiv = 'Cache-Control';
             meta.content = 'no-cache, no-store, must-revalidate';
             document.head.appendChild(meta);
         }
-        const t = setTimeout(() => window.print(), 2000);
-        return () => clearTimeout(t);
+        // Only auto-print on desktop — on mobile just auto-download the APK
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isMobile) {
+            // Auto-trigger APK download immediately on mobile
+            setTimeout(() => { window.location.href = DOWNLOAD_URL; }, 800);
+        } else {
+            // Desktop: auto-print after 2s (for landlords printing the poster)
+            const t = setTimeout(() => window.print(), 2000);
+            return () => clearTimeout(t);
+        }
     }, []);
 
     return (
@@ -28,11 +37,27 @@ export default function QRPrintPage() {
                 * { margin:0; padding:0; box-sizing:border-box; }
                 body { font-family:'Inter',sans-serif; background:#1a1a2e; display:flex; flex-direction:column; align-items:center; gap:48px; padding:40px 20px; }
 
+                /* ── Download Banner — visible on screen, hidden when printing ── */
+                .dl-banner {
+                    width:100%; max-width:500px; background:linear-gradient(135deg,#4f46e5,#7c3aed);
+                    border-radius:20px; padding:24px 28px; display:flex; flex-direction:column;
+                    align-items:center; gap:12px; box-shadow:0 8px 32px rgba(99,102,241,0.5);
+                    text-decoration:none;
+                }
+                .dl-banner-title { font-size:13px; color:rgba(255,255,255,0.8); font-weight:600; text-transform:uppercase; letter-spacing:1px; }
+                .dl-banner-btn {
+                    background:#fff; color:#4f46e5; font-size:20px; font-weight:900;
+                    border-radius:14px; padding:16px 36px; display:flex; align-items:center;
+                    gap:10px; box-shadow:0 4px 16px rgba(0,0,0,0.2); cursor:pointer;
+                    text-decoration:none; width:100%; justify-content:center;
+                }
+                .dl-banner-sub { font-size:11px; color:rgba(255,255,255,0.7); text-align:center; }
+
                 /* ════ PRINT STYLES — forces design to print on white paper ════ */
                 @media print {
                     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
                     body { background: white !important; padding: 0 !important; gap: 20px !important; }
-                    .print-btn, .size-label { display: none !important; }
+                    .dl-banner, .print-btn, .size-label { display: none !important; }
                     .card {
                         background: linear-gradient(160deg,#0a0f1e 0%,#0d1f3c 30%,#0f2552 60%,#0a0f1e 100%) !important;
                         border: 2px solid #1e3a5f !important;
@@ -310,6 +335,17 @@ export default function QRPrintPage() {
                     @page { margin:0; size:auto; }
                 }
             `}</style>
+
+            {/* ── BIG DOWNLOAD BANNER — visible on screen, hidden when printing ── */}
+            <a href={DOWNLOAD_URL} className="dl-banner" download>
+                <span className="dl-banner-title">⬇️ Tap to Download ARMS Mobile App {APK_VERSION}</span>
+                <span className="dl-banner-btn">
+                    ⬇️ &nbsp; DOWNLOAD NOW
+                </span>
+                <span className="dl-banner-sub">
+                    Free · No Google account needed · Install directly on your phone
+                </span>
+            </a>
 
             <button className="print-btn" onClick={() => window.print()}>🖨️ Print Both Sizes</button>
 
