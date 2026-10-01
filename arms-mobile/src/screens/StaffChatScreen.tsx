@@ -1,9 +1,7 @@
 /**
  * StaffChatScreen.tsx
- * Caretaker / Landlord chat management — mirrors the web dashboard exactly:
- *   - Inbox: all tenant threads, unread badges, filter tabs (All/Unread/Replied)
- *   - Thread: purple wallpaper, blue double ticks, canned replies, send message
- *   - Realtime: polls every 15s + Supabase subscription
+ * Caretaker / Landlord chat management — mirrors the web dashboard exactly.
+ * v2: Fixed double messages, optimistic UI, OS notifications for tenant messages.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -11,6 +9,7 @@ import {
     StyleSheet, ActivityIndicator, Alert, KeyboardAvoidingView,
     Platform, ScrollView, RefreshControl, Dimensions,
 } from 'react-native';
+import { pushNotification } from '../lib/notifications';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StaffSession } from '../lib/supabase';
@@ -114,7 +113,8 @@ function ChatThread({
     const [sending, setSending]   = useState(false);
     const [loading, setLoading]   = useState(true);
     const [showCanned, setShowCanned] = useState(false);
-    const flatRef = useRef<FlatList>(null);
+    const flatRef    = useRef<FlatList>(null);
+    const sendingRef = useRef(false); // ref lock prevents double-tap race condition
 
     const scrollToBottom = useCallback(() => {
         setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 150);
@@ -124,6 +124,7 @@ function ChatThread({
         try {
             const res = await fetch(`${API}/chats?tenantId=${tenantId}`);
             const data = await res.json();
+            // Replace ALL messages (removes temp optimistic ones too)
             setMessages(data.messages || []);
             scrollToBottom();
         } catch { /* silent */ }
@@ -138,7 +139,7 @@ function ChatThread({
         loadMessages();
         markRead();
 
-        // Realtime subscription
+        // Realtime subscription — receive new messages instantly
         const channel = sb
             .channel(`staff_thread_${tenantId}`)
             .on('postgres_changes' as any, {
@@ -147,38 +148,73 @@ function ChatThread({
             }, (payload: any) => {
                 const msg = payload.new as ChatMessage;
                 setMessages(prev => {
+                    // Already exists by real ID → skip
                     if (prev.find(m => m.chat_id === msg.chat_id)) return prev;
+                    if (msg.sender === 'admin') {
+                        // Replace temp optimistic message (negative id) with real server message
+                        const withoutTemp = prev.filter(m => m.chat_id > 0);
+                        return [...withoutTemp, msg];
+                    }
+                    // Tenant message → add + fire OS notification
+                    pushNotification(
+                        `💬 ${tenantName}`,
+                        msg.message,
+                        'arms_messages',
+                        { tenantId, screen: 'chat' },
+                    );
                     return [...prev, msg];
                 });
-                if (msg.sender === 'admin') markRead();
+                if (msg.sender === 'tenant') markRead();
                 scrollToBottom();
             })
             .subscribe();
 
-        // Poll every 15s fallback
-        const iv = setInterval(() => { loadMessages(); markRead(); }, 15000);
+        // 15s poll fallback
+        const iv = setInterval(loadMessages, 15000);
         return () => { sb.removeChannel(channel); clearInterval(iv); };
     }, [tenantId]);
 
+    // ── FIXED sendMessage — no double send, optimistic UI ──────
     const sendMessage = async () => {
-        if (!reply.trim() || sending) return;
-        setSending(true);
         const text = reply.trim();
+        if (!text || sendingRef.current) return;
+
+        // Ref lock — prevents double-tap race condition
+        sendingRef.current = true;
+        setSending(true);
         setReply('');
         setShowCanned(false);
+
+        // Optimistic: show message immediately with temp negative id
+        const tempId = -Date.now();
+        const optimistic: ChatMessage = {
+            chat_id: tempId,
+            tenant_id: tenantId,
+            sender: 'admin',
+            message: text,
+            is_read: false,
+            created_at: new Date().toISOString(),
+        };
+        setMessages(prev => [...prev, optimistic]);
+        scrollToBottom();
+
         try {
             await fetch(`${API}/chats`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tenant_id: tenantId, sender: 'admin', message: text }),
             });
-            loadMessages();
+            // ✅ NO loadMessages() here — realtime subscription will replace
+            // temp message with real server message automatically
         } catch {
             Alert.alert('Error', 'Message failed to send. Try again.');
             setReply(text);
+            // Roll back optimistic message
+            setMessages(prev => prev.filter(m => m.chat_id !== tempId));
+        } finally {
+            sendingRef.current = false;
+            setSending(false);
         }
-        setSending(false);
-        scrollToBottom();
     };
 
     const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {

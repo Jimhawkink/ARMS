@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
+import { setupNotifications, pushNotification } from './src/lib/notifications';
 
 // 🚀 THIS APK'S VERSION - bump on every release 🚀
 const APP_VERSION = 'v2.3';
@@ -76,23 +77,57 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
     const [activeTab, setActiveTab] = useState<StaffTab>('search');
     const [collectTenant, setCollectTenant] = useState<TenantSearchResult | null>(null);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [staffNotif, setStaffNotif] = useState<{
+        tenant_name: string; message: string; created_at: string; tenant_id: number;
+    } | null>(null);
+    const lastSeenMsgRef = useRef<number>(0);
 
     useEffect(() => { updateStaffSessionActivity(); }, [activeTab]);
 
-    // Poll total unread for badge on chat tab
+    // ── CARETAKER: Poll every 10s for new TENANT messages ──────
+    // Fires OS notification + in-app overlay when any tenant messages
     useEffect(() => {
         const check = async () => {
             try {
                 const res = await fetch('https://arms-opal.vercel.app/api/chats?inbox=1');
                 const data = await res.json();
-                const total = (data.inbox || []).reduce((s: number, t: any) => s + (t.unread_count || 0), 0);
+                const inbox = data.inbox || [];
+                const total = inbox.reduce((s: number, t: any) => s + (t.unread_count || 0), 0);
                 setUnreadCount(total);
+
+                // Find the newest unread tenant message across ALL threads
+                const unreadThreads = inbox.filter((t: any) => t.unread_count > 0 && t.last_message_sender === 'tenant');
+                if (unreadThreads.length > 0) {
+                    const newest = unreadThreads[0];
+                    // Use a composite key: tenantId + message snippet
+                    const msgKey = newest.tenant_id * 1000 + newest.last_message?.length;
+                    if (msgKey !== lastSeenMsgRef.current) {
+                        lastSeenMsgRef.current = msgKey;
+                        if (activeTab !== 'chat') {
+                            // OS notification
+                            pushNotification(
+                                `💬 ${newest.tenant_name}`,
+                                newest.last_message || 'New message',
+                                'arms_messages',
+                                { tenantId: newest.tenant_id, screen: 'staff_chat' },
+                            );
+                            // In-app overlay
+                            setStaffNotif({
+                                tenant_name: newest.tenant_name,
+                                message: newest.last_message || 'New message',
+                                created_at: newest.last_message_at,
+                                tenant_id: newest.tenant_id,
+                            });
+                            setTimeout(() => setStaffNotif(null), 10000);
+                        }
+                    }
+                }
             } catch { /* silent */ }
         };
         check();
-        const iv = setInterval(check, 20000);
+        const iv = setInterval(check, 10000);
         return () => clearInterval(iv);
-    }, []);
+    }, [activeTab]);
 
     const isLandlord = staff.role === 'landlord';
 
@@ -133,6 +168,70 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
     return (
         <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
             {renderTab()}
+
+            {/* ════ CARETAKER NOTIFICATION OVERLAY ════
+                Fires when any tenant sends a message
+                while caretaker is on any tab except chat */}
+            <Modal
+                visible={!!staffNotif}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setStaffNotif(null)}
+            >
+                <View style={notifStyles.backdrop}>
+                    <View style={notifStyles.card}>
+                        <LinearGradient
+                            colors={['#065f46','#059669','#10b981']}
+                            style={notifStyles.cardHeader}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        >
+                            <View style={notifStyles.avatarRing}>
+                                <View style={notifStyles.avatar}>
+                                    <Text style={notifStyles.avatarText}>👤</Text>
+                                </View>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={notifStyles.headerTitle}>
+                                    {staffNotif?.tenant_name || 'Tenant'}
+                                </Text>
+                                <Text style={notifStyles.headerSub}>
+                                    {staffNotif?.created_at
+                                        ? new Date(staffNotif.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                                        : 'Just now'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setStaffNotif(null)} style={notifStyles.closeBtn}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>×</Text>
+                            </TouchableOpacity>
+                        </LinearGradient>
+                        <View style={notifStyles.cardBody}>
+                            <Text style={[notifStyles.msgLabel, { color: '#6ee7b7' }]}>📨 TENANT MESSAGE</Text>
+                            <View style={[notifStyles.msgBox, { backgroundColor: 'rgba(16,185,129,0.12)', borderColor: 'rgba(110,231,183,0.3)' }]}>
+                                <Text style={notifStyles.msgText} numberOfLines={6}>
+                                    {staffNotif?.message || ''}
+                                </Text>
+                            </View>
+                            <View style={notifStyles.progressTrack}>
+                                <View style={[notifStyles.progressBar, { backgroundColor: '#34d399' }]} />
+                            </View>
+                            <View style={notifStyles.btnRow}>
+                                <TouchableOpacity
+                                    style={[notifStyles.btnReply, { backgroundColor: '#059669' }]}
+                                    onPress={() => { setStaffNotif(null); setActiveTab('chat'); }}
+                                >
+                                    <Text style={notifStyles.btnReplyText}>💬 Reply Now</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[notifStyles.btnLater, { borderColor: 'rgba(110,231,183,0.3)' }]}
+                                    onPress={() => setStaffNotif(null)}
+                                >
+                                    <Text style={[notifStyles.btnLaterText, { color: '#6ee7b7' }]}>Later</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Bottom tab bar */}
             <View style={styles.bottomBar}>
@@ -204,22 +303,8 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         })();
     }, [session.tenant_id, session.location_id]);
 
-    // Poll unread admin messages every 20s
-    useEffect(() => {
-        const check = async () => {
-            try {
-                const { getUnreadAdminMessages } = await import('./src/lib/supabase');
-                const count = await getUnreadAdminMessages(session.tenant_id);
-                setUnreadAdmin(count);
-            } catch { /* silent */ }
-        };
-        check();
-        const interval = setInterval(check, 20000);
-        return () => clearInterval(interval);
-    }, [session.tenant_id]);
-
-    // ── NOTIFICATION OVERLAY: poll for new admin messages ────
-    // Shows full-screen overlay when admin sends a new message
+    // ── TENANT: Poll for new admin messages every 10s ──────────
+    // Updates badge count + in-app overlay + OS notification shade
     useEffect(() => {
         const checkNewMessages = async () => {
             try {
@@ -233,19 +318,29 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                     .order('created_at', { ascending: false })
                     .limit(1);
 
+                // Update badge count
+                setUnreadAdmin(data?.length || 0);
+
                 if (data && data.length > 0) {
                     const newest = data[0];
-                    // Only show if it's a genuinely new message we haven't seen
                     if (newest.chat_id !== lastMsgIdRef.current) {
                         lastMsgIdRef.current = newest.chat_id;
-                        // Don't show overlay if tenant is already in chat tab
+
+                        // 1. OS notification — appears in phone shade like WhatsApp
+                        pushNotification(
+                            '🏠 ARMS Property Management',
+                            newest.message,
+                            'arms_messages',
+                            { tenantId: session.tenant_id, screen: 'chat' },
+                        );
+
+                        // 2. In-app overlay — if not already on chat tab
                         if (activeTab !== 'chat') {
                             setChatNotif({
                                 message: newest.message,
                                 sender_name: 'Management',
                                 created_at: newest.created_at,
                             });
-                            // Auto-dismiss after 10 seconds
                             setTimeout(() => setChatNotif(null), 10000);
                         }
                     }
@@ -254,9 +349,10 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         };
 
         checkNewMessages();
-        const interval = setInterval(checkNewMessages, 20000);
+        const interval = setInterval(checkNewMessages, 10000); // 10s — faster than before
         return () => clearInterval(interval);
     }, [session.tenant_id, activeTab]);
+
 
     // Update activity timestamp on tab switches
     useEffect(() => { updateSessionActivity(); }, [activeTab]);
@@ -449,6 +545,9 @@ function AppInner() {
 
     const initApp = async () => {
         try {
+            // 0. Setup OS notifications (request permission, create Android channel)
+            setupNotifications().catch(() => {});
+
             // 1. VERSION CHECK — block outdated APKs immediately
             try {
                 const vRes = await fetch(
