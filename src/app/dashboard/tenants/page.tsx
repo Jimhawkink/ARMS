@@ -907,7 +907,7 @@ export default function TenantsPage() {
                                         {/* Monthly Rent (base, with vacation indicator) */}
                                         <td className="px-3 py-3 whitespace-nowrap font-bold" style={{ background: C.rent.bg + '60', color: C.rent.text }}>
                                             {(() => {
-                                                const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(currentMonth.slice(5,7));
+                                                const isVacNow = t.is_on_vacation && ['05','06','08'].includes(currentMonth.slice(5,7));
                                                 const displayRent = isVacNow ? Math.round((t.monthly_rent||0)*0.5) : (t.monthly_rent||0);
                                                 return (
                                                     <div>
@@ -1418,7 +1418,7 @@ export default function TenantsPage() {
                                         while (c <= end) {
                                             const m = c.toISOString().slice(0, 7);
                                             const mm = m.slice(5, 7);
-                                            const isVac = form.is_on_vacation && ['05','06','07','08'].includes(mm);
+                                            const isVac = form.is_on_vacation && ['05','06','08'].includes(mm);
                                             months.push({ month: m, rent: isVac ? Math.round(baseRent * 0.5) : baseRent, isVac, isCurrent: m === curMonth });
                                             c.setMonth(c.getMonth() + 1);
                                         }
@@ -1615,3 +1615,4 @@ export default function TenantsPage() {
         </div>
     );
 }
+
