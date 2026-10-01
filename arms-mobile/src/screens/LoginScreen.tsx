@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { APP_VERSION } from '../lib/version';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     ActivityIndicator, Animated, Alert,
@@ -389,7 +390,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                     </View>
                     <Text style={styles.footerTitle}>💎 Alpha Solutions</Text>
                     <Text style={styles.footerSub}>Developed by Jimhawkins Korir · 0720316175</Text>
-                    <Text style={styles.version}>ARMS Tenant App v1.0 • {new Date().getFullYear()}</Text>
+                    <Text style={styles.version}>ARMS Tenant App {APP_VERSION} • {new Date().getFullYear()}</Text>
                 </View>
             </SafeAreaView>
         </View>
@@ -545,3 +546,5 @@ const styles = StyleSheet.create({
     roleBtnText: { fontSize: 10, color: COLORS.textDim, fontWeight: '700', textAlign: 'center' },
     roleBtnTextActive: { color: '#a5b4fc', fontWeight: '900' },
 });
+
+

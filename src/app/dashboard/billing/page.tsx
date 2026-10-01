@@ -305,7 +305,7 @@ export default function BillingPage() {
                                             <td className="px-3 py-3 font-bold text-green-700">
                                                 {(() => {
                                                     const curM = new Date().toISOString().slice(0, 7);
-                                                    const isVacNow = t.is_on_vacation && ['05','06','08'].includes(curM.slice(5,7));
+                                                    const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(curM.slice(5,7));
                                                     const displayRent = isVacNow ? Math.round((t.monthly_rent||0)*0.5) : (t.monthly_rent||0);
                                                     return (
                                                         <>
@@ -560,4 +560,5 @@ export default function BillingPage() {
         </div>
     );
 }
+
 

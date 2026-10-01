@@ -131,7 +131,7 @@ export async function deleteUnit(id: number) {
 }
 
 // ==================== VACATION MONTHS (Kenyan University) ====================
-const VACATION_MONTHS = ['05', '06', '08']; // May, Jun, Aug (July removed per config)
+const VACATION_MONTHS = ['05', '06', '07', '08']; // May, Jun, Jul, Aug
 
 export function isVacationMonth(month: string): boolean {
     const mm = month.slice(5, 7); // extract '05' from '2026-05'
@@ -166,7 +166,7 @@ export async function repairVacationBills(): Promise<{ fixed: number; errors: st
 
         for (const bill of (bills || [])) {
             const mm = (bill.billing_month || '').slice(5, 7);
-            if (!['05', '06', '08'].includes(mm)) continue;
+            if (!['05', '06', '07', '08'].includes(mm)) continue;
             // Only fix if rent_amount equals full rent (i.e., wasn't already corrected)
             if (Math.abs((bill.rent_amount || 0) - fullRent) < 1) {
                 const newBalance = Math.max(0, halfRent - (bill.amount_paid || 0));
@@ -2447,4 +2447,5 @@ export const MESSAGE_TEMPLATES = {
     move_out: `Dear {name}, your tenancy at {unit} has been concluded. Thank you for staying with us. Please contact us for deposit refund details. - ARMS`,
     penalty_notice: `Dear {name}, a late payment penalty has been applied to your account for {unit}. Total outstanding: KES {balance}. - ARMS`,
 };
+
 

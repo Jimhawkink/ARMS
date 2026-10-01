@@ -8,9 +8,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 import { setupNotifications, pushNotification } from './src/lib/notifications';
+import { APP_VERSION } from './src/lib/version';
 
-// 🚀 THIS APK'S VERSION - bump on every release 🚀
-const APP_VERSION = 'v4.7';
 
 // ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
@@ -852,3 +851,5 @@ const styles = StyleSheet.create({
     },
     tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 });
+
+
