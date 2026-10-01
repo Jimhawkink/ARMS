@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap, FiSearch, FiFilter } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap, FiSearch, FiFilter, FiCalendar, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
 import PaymentModal from '@/components/PaymentModal';
@@ -36,6 +36,282 @@ const COL = {
 
 const fmt = (n: number) => `KES ${(n||0).toLocaleString()}`;
 
+// ══════════════════════════════════════════════════════════════
+// SHA-STYLE MATERIAL DATE PICKER
+// ══════════════════════════════════════════════════════════════
+const DAYS = ['S','M','T','W','T','F','S'];
+const MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function MaterialDatePicker({
+    value, onConfirm, onCancel, label,
+}: {
+    value: string; onConfirm: (d: string) => void; onCancel: () => void; label: string;
+}) {
+    const today = new Date();
+    const init = value ? new Date(value + 'T12:00:00') : today;
+    const [viewYear, setViewYear]   = useState(init.getFullYear());
+    const [viewMonth, setViewMonth] = useState(init.getMonth());
+    const [selected, setSelected]   = useState<Date | null>(value ? new Date(value + 'T12:00:00') : null);
+    const [mode, setMode]           = useState<'calendar' | 'year'>('calendar');
+    const yearListRef = useRef<HTMLDivElement>(null);
+
+    const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate();
+    const firstDay    = (y: number, m: number) => new Date(y, m, 1).getDay();
+
+    const years = Array.from({ length: 200 }, (_, i) => 1950 + i);
+
+    useEffect(() => {
+        if (mode === 'year' && yearListRef.current) {
+            const el = yearListRef.current.querySelector(`[data-year="${viewYear}"]`);
+            el?.scrollIntoView({ block: 'center' });
+        }
+    }, [mode]);
+
+    const cells: (number | null)[] = [];
+    const fd = firstDay(viewYear, viewMonth);
+    for (let i = 0; i < fd; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth(viewYear, viewMonth); d++) cells.push(d);
+
+    const isSelected = (d: number) =>
+        selected &&
+        selected.getFullYear() === viewYear &&
+        selected.getMonth() === viewMonth &&
+        selected.getDate() === d;
+
+    const isToday = (d: number) =>
+        today.getFullYear() === viewYear &&
+        today.getMonth() === viewMonth &&
+        today.getDate() === d;
+
+    const selectDay = (d: number) => {
+        setSelected(new Date(viewYear, viewMonth, d));
+    };
+
+    const confirmDate = () => {
+        if (!selected) return;
+        const y = selected.getFullYear();
+        const m = String(selected.getMonth() + 1).padStart(2, '0');
+        const d = String(selected.getDate()).padStart(2, '0');
+        onConfirm(`${y}-${m}-${d}`);
+    };
+
+    const selDay   = selected?.getDate();
+    const selMonth = selected ? MONTHS_SHORT[selected.getMonth()] : '';
+    const selYear  = selected?.getFullYear();
+    const selDow   = selected ? ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][selected.getDay()] : '';
+
+    return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadeIn">
+            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden w-[330px] select-none">
+
+                {/* ── Purple header ── */}
+                <div className="bg-indigo-600 px-6 pt-5 pb-4">
+                    <p className="text-indigo-200 text-xs font-semibold uppercase tracking-widest mb-1">{label}</p>
+                    <button
+                        onClick={() => setMode(m => m === 'calendar' ? 'year' : 'calendar')}
+                        className="text-white text-3xl font-black leading-none hover:opacity-80 transition"
+                    >
+                        {selected
+                            ? <span>{selDow}, {selMonth} {selDay}</span>
+                            : <span className="text-indigo-300 text-xl">Select a date</span>
+                        }
+                    </button>
+                    <p className="text-indigo-200 text-sm font-bold mt-0.5">{selYear || viewYear}</p>
+                </div>
+
+                {/* ── Calendar or year list ── */}
+                {mode === 'year' ? (
+                    <div ref={yearListRef} className="h-64 overflow-y-auto px-4 py-2">
+                        {years.map(y => (
+                            <button
+                                key={y}
+                                data-year={y}
+                                onClick={() => { setViewYear(y); setMode('calendar'); }}
+                                className={`w-full text-center py-2 rounded-xl text-sm font-bold transition ${
+                                    y === viewYear
+                                        ? 'text-indigo-700 text-lg bg-indigo-50'
+                                        : 'text-gray-600 hover:bg-gray-50'
+                                }`}
+                            >
+                                {y}
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="px-4 pt-3 pb-2">
+                        {/* Month/Year navigation */}
+                        <div className="flex items-center justify-between mb-3">
+                            <button
+                                onClick={() => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y-1); } else setViewMonth(m => m-1); }}
+                                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-600 transition"
+                            >
+                                <FiChevronLeft size={16}/>
+                            </button>
+                            <button
+                                onClick={() => setMode('year')}
+                                className="text-sm font-bold text-gray-800 hover:text-indigo-600 transition flex items-center gap-1"
+                            >
+                                {MONTHS_LONG[viewMonth]} {viewYear}
+                                <span className="text-gray-400 text-xs">▾</span>
+                            </button>
+                            <button
+                                onClick={() => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y+1); } else setViewMonth(m => m+1); }}
+                                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-600 transition"
+                            >
+                                <FiChevronRight size={16}/>
+                            </button>
+                        </div>
+
+                        {/* Day headers */}
+                        <div className="grid grid-cols-7 mb-1">
+                            {DAYS.map((d, i) => (
+                                <div key={i} className="text-center text-[11px] font-bold text-gray-400 py-1">{d}</div>
+                            ))}
+                        </div>
+
+                        {/* Date cells */}
+                        <div className="grid grid-cols-7 gap-y-0.5">
+                            {cells.map((d, i) => (
+                                <div key={i} className="flex items-center justify-center h-9">
+                                    {d !== null && (
+                                        <button
+                                            onClick={() => selectDay(d)}
+                                            className={`w-9 h-9 rounded-full text-sm font-semibold transition
+                                                ${isSelected(d)
+                                                    ? 'bg-indigo-600 text-white font-bold shadow'
+                                                    : isToday(d)
+                                                        ? 'border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50'
+                                                        : 'text-gray-700 hover:bg-gray-100'
+                                                }`}
+                                        >
+                                            {d}
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Cancel / OK ── */}
+                <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100">
+                    <button onClick={onCancel}
+                        className="px-5 py-2 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-xl transition">
+                        CANCEL
+                    </button>
+                    <button onClick={confirmDate} disabled={!selected}
+                        className={`px-5 py-2 text-sm font-bold rounded-xl transition ${
+                            selected ? 'text-indigo-600 hover:bg-indigo-50' : 'text-gray-300 cursor-not-allowed'
+                        }`}>
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAGINATION HELPER
+// ══════════════════════════════════════════════════════════════
+function Pagination({
+    total, page, perPage, onPage, onPerPage,
+}: {
+    total: number; page: number; perPage: number;
+    onPage: (p: number) => void; onPerPage: (n: number) => void;
+}) {
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const from = total === 0 ? 0 : (page - 1) * perPage + 1;
+    const to   = Math.min(page * perPage, total);
+
+    // Smart page range: always show first, last, current±2, with ellipsis
+    const range: (number | '...')[] = [];
+    const addPage = (p: number) => { if (!range.includes(p)) range.push(p); };
+    addPage(1);
+    for (let p = Math.max(2, page - 2); p <= Math.min(totalPages - 1, page + 2); p++) addPage(p);
+    if (totalPages > 1) addPage(totalPages);
+    const pages: (number | '...')[] = [];
+    let prev = 0;
+    for (const p of range as number[]) {
+        if (prev && p - prev > 1) pages.push('...');
+        pages.push(p);
+        prev = p;
+    }
+
+    return (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-white border-t border-gray-100">
+            {/* Left: showing info + per-page */}
+            <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 font-medium">
+                    Showing <span className="font-bold text-gray-700">{from}–{to}</span> of{' '}
+                    <span className="font-bold text-indigo-600">{total.toLocaleString()}</span> payments
+                </span>
+                <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-gray-400">Per page:</span>
+                    {[10, 25, 50, 100].map(n => (
+                        <button key={n} onClick={() => { onPerPage(n); onPage(1); }}
+                            className={`px-2 py-1 rounded-lg text-xs font-bold transition ${
+                                perPage === n
+                                    ? 'bg-indigo-600 text-white shadow'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700'
+                            }`}>
+                            {n}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Right: page buttons */}
+            <div className="flex items-center gap-1">
+                {/* First & Prev */}
+                <button onClick={() => onPage(1)} disabled={page === 1}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
+                    title="First page">«</button>
+                <button onClick={() => onPage(page - 1)} disabled={page === 1}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 disabled:opacity-30 transition text-gray-500"
+                    title="Previous page"><FiChevronLeft size={13}/></button>
+
+                {/* Page numbers */}
+                {pages.map((p, i) =>
+                    p === '...'
+                        ? <span key={`e${i}`} className="w-7 text-center text-xs text-gray-400 font-bold">…</span>
+                        : <button key={p} onClick={() => onPage(p as number)}
+                            className={`w-7 h-7 rounded-lg text-xs font-bold transition ${
+                                page === p
+                                    ? 'bg-indigo-600 text-white shadow'
+                                    : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
+                            }`}>
+                            {p}
+                          </button>
+                )}
+
+                {/* Next & Last */}
+                <button onClick={() => onPage(page + 1)} disabled={page === totalPages}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 disabled:opacity-30 transition text-gray-500"
+                    title="Next page"><FiChevronRight size={13}/></button>
+                <button onClick={() => onPage(totalPages)} disabled={page === totalPages}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
+                    title="Last page">»</button>
+
+                {/* Jump to page */}
+                <form onSubmit={e => {
+                    e.preventDefault();
+                    const val = parseInt((e.currentTarget.elements.namedItem('jump') as HTMLInputElement).value);
+                    if (val >= 1 && val <= totalPages) onPage(val);
+                    (e.currentTarget.elements.namedItem('jump') as HTMLInputElement).value = '';
+                }} className="flex items-center gap-1 ml-1">
+                    <span className="text-xs text-gray-400">Go</span>
+                    <input name="jump" type="number" min={1} max={totalPages}
+                        className="w-12 text-xs text-center border border-gray-200 rounded-lg py-1 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+                        placeholder={String(page)}/>
+                    <button type="submit" className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition px-1">→</button>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 export default function PaymentsPage() {
     const [payments, setPayments] = useState<any[]>([]);
     const [tenants, setTenants] = useState<any[]>([]);
@@ -58,6 +334,12 @@ export default function PaymentsPage() {
     const [filterTenant, setFilterTenant] = useState('');
     const [filterPhone, setFilterPhone] = useState('');
     const [filterRoom, setFilterRoom] = useState('');
+    const [filterDateFrom, setFilterDateFrom] = useState('');
+    const [filterDateTo, setFilterDateTo] = useState('');
+    const [showDatePicker, setShowDatePicker] = useState<'from' | 'to' | null>(null);
+    // Pagination
+    const [page, setPage]       = useState(1);
+    const [perPage, setPerPage] = useState(25);
 
     // ── Callback linking inside pay modal ─────────────────────────────────────
     const [paymentSource, setPaymentSource] = useState<'manual' | 'mpesa' | 'jenga_stk' | 'jenga_callback'>('manual');
@@ -243,8 +525,18 @@ export default function PaymentsPage() {
         if (filterTenant && !tenantName.includes(filterTenant.toLowerCase())) return false;
         if (filterPhone && !phone.includes(filterPhone.toLowerCase())) return false;
         if (filterRoom && !room.includes(filterRoom.toLowerCase())) return false;
+        // Date range filter
+        if (filterDateFrom || filterDateTo) {
+            const payDate = p.payment_date ? p.payment_date.slice(0, 10) : '';
+            if (filterDateFrom && payDate < filterDateFrom) return false;
+            if (filterDateTo   && payDate > filterDateTo)   return false;
+        }
         return true;
     });
+
+    // Paginated slice — reset to page 1 when filters change
+    useEffect(() => { setPage(1); }, [filterTenant, filterPhone, filterRoom, filterDateFrom, filterDateTo]);
+    const paginatedPayments = filteredPayments.slice((page - 1) * perPage, page * perPage);
 
     const totalAll = payments.reduce((s,p) => s+(p.amount||0),0);
     const todayTotal = payments.filter(p => p.payment_date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s,p) => s+(p.amount||0),0);
@@ -368,8 +660,9 @@ export default function PaymentsPage() {
                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                         <FiFilter size={12}/> Filters
                     </div>
+
                     {/* Tenant Name */}
-                    <div className="relative flex-1 min-w-[160px] max-w-[220px]">
+                    <div className="relative flex-1 min-w-[150px] max-w-[200px]">
                         <FiSearch size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
                         <input
                             type="text" value={filterTenant}
@@ -378,18 +671,20 @@ export default function PaymentsPage() {
                             className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
                         />
                     </div>
+
                     {/* Phone */}
-                    <div className="relative flex-1 min-w-[140px] max-w-[190px]">
+                    <div className="relative flex-1 min-w-[130px] max-w-[175px]">
                         <FiSmartphone size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
                         <input
                             type="text" value={filterPhone}
                             onChange={e => setFilterPhone(e.target.value)}
-                            placeholder="Phone number…"
+                            placeholder="Phone…"
                             className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
                         />
                     </div>
+
                     {/* Room / Unit */}
-                    <div className="relative flex-1 min-w-[140px] max-w-[190px]">
+                    <div className="relative flex-1 min-w-[120px] max-w-[165px]">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]">🏠</span>
                         <input
                             type="text" value={filterRoom}
@@ -398,21 +693,87 @@ export default function PaymentsPage() {
                             className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
                         />
                     </div>
-                    {/* Clear */}
-                    {(filterTenant || filterPhone || filterRoom) && (
+
+                    {/* ── Date Range ── */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1">
+                            <FiCalendar size={11}/> Date:
+                        </span>
+                        {/* FROM */}
                         <button
-                            onClick={() => { setFilterTenant(''); setFilterPhone(''); setFilterRoom(''); }}
+                            onClick={() => setShowDatePicker('from')}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                                filterDateFrom
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600'
+                            }`}
+                        >
+                            <FiCalendar size={11}/>
+                            {filterDateFrom
+                                ? new Date(filterDateFrom + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+                                : 'From date'}
+                            {filterDateFrom && (
+                                <span onClick={e => { e.stopPropagation(); setFilterDateFrom(''); }}
+                                    className="ml-1 hover:text-red-300 text-indigo-200 font-black">×</span>
+                            )}
+                        </button>
+
+                        <span className="text-gray-300 text-xs font-bold">→</span>
+
+                        {/* TO */}
+                        <button
+                            onClick={() => setShowDatePicker('to')}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                                filterDateTo
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600'
+                            }`}
+                        >
+                            <FiCalendar size={11}/>
+                            {filterDateTo
+                                ? new Date(filterDateTo + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+                                : 'To date'}
+                            {filterDateTo && (
+                                <span onClick={e => { e.stopPropagation(); setFilterDateTo(''); }}
+                                    className="ml-1 hover:text-red-300 text-indigo-200 font-black">×</span>
+                            )}
+                        </button>
+                    </div>
+
+                    {/* Clear all */}
+                    {(filterTenant || filterPhone || filterRoom || filterDateFrom || filterDateTo) && (
+                        <button
+                            onClick={() => { setFilterTenant(''); setFilterPhone(''); setFilterRoom(''); setFilterDateFrom(''); setFilterDateTo(''); }}
                             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:bg-red-50 border border-red-100 transition"
                         >
-                            <FiX size={11}/> Clear
+                            <FiX size={11}/> Clear all
                         </button>
                     )}
-                    {(filterTenant || filterPhone || filterRoom) && (
+                    {(filterTenant || filterPhone || filterRoom || filterDateFrom || filterDateTo) && (
                         <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100">
                             {filteredPayments.length} result{filteredPayments.length !== 1 ? 's' : ''}
                         </span>
                     )}
                 </div>
+
+                {/* SHA-style date picker modals */}
+                {showDatePicker === 'from' && (
+                    <MaterialDatePicker
+                        label="From Date"
+                        value={filterDateFrom}
+                        onConfirm={d => { setFilterDateFrom(d); setShowDatePicker(null); }}
+                        onCancel={() => setShowDatePicker(null)}
+                    />
+                )}
+                {showDatePicker === 'to' && (
+                    <MaterialDatePicker
+                        label="To Date"
+                        value={filterDateTo}
+                        onConfirm={d => { setFilterDateTo(d); setShowDatePicker(null); }}
+                        onCancel={() => setShowDatePicker(null)}
+                    />
+                )}
+
                 <div className="overflow-x-auto">
                     <table className="w-full border-collapse" style={{fontSize:12}}>
                         <thead>
@@ -427,7 +788,7 @@ export default function PaymentsPage() {
                                 <tr><td colSpan={12} className="text-center py-12 text-gray-400">
                                     <div className="flex flex-col items-center gap-2"><span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span><p className="text-sm font-medium">{payments.length === 0 ? 'No payments yet' : 'No results match your filters'}</p></div>
                                 </td></tr>
-                            ) : filteredPayments.map(p => {
+                            ) : paginatedPayments.map(p => {
                                 const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
                                 const timeMatch = p.notes?.match(/\[Time: (.+?)\]/);
                                 const payMonth = monthMatch ? monthMatch[1] : '-';
@@ -525,6 +886,16 @@ export default function PaymentsPage() {
                         </tbody>
                     </table>
                 </div>
+
+                {/* ── Ultra Pagination ── */}
+                <Pagination
+                    total={filteredPayments.length}
+                    page={page}
+                    perPage={perPage}
+                    onPage={setPage}
+                    onPerPage={setPerPage}
+                />
+
                 {payments.length > 0 && (
                     <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
                         <p className="text-xs text-gray-400">{payments.length} records</p>
