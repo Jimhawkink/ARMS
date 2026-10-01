@@ -1,12 +1,22 @@
 'use client';
 import { useEffect } from 'react';
 
+// ── Single source of truth for APK version displayed on this page ──
+const APK_VERSION = 'v4.7'; // bump this every release
+
 // QR points to hidden server-side redirect — APK URL never exposed
 const QR = (size: number) =>
     `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=https%3A%2F%2Farms-opal.vercel.app%2Fapi%2Fdl&color=000000&bgcolor=ffffff&margin=2&qzone=1&format=png&ecc=H`;
 
 export default function QRPrintPage() {
     useEffect(() => {
+        // Force no-cache so browser always loads latest version
+        if (typeof window !== 'undefined') {
+            const meta = document.createElement('meta');
+            meta.httpEquiv = 'Cache-Control';
+            meta.content = 'no-cache, no-store, must-revalidate';
+            document.head.appendChild(meta);
+        }
         const t = setTimeout(() => window.print(), 2000);
         return () => clearTimeout(t);
     }, []);
@@ -339,10 +349,10 @@ export default function QRPrintPage() {
                                 </div>
                                 <div className="main-title">📱 ARMS Mobile App</div>
                                 <div className="sub-title">Scan to download — Pay rent instantly</div>
-                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.4.7</strong></div>
+                                <div className="pay-mode">💳 Payment Mode: <strong>ARMS TENANT MOBILE APK VER.{APK_VERSION.replace('v','')}</strong></div>
                                 <div className="notice-banner">
                                     <div className="notice-title">⚠️ IMPORTANT NOTICE</div>
-                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK VER.4.7</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
+                                    We have changed the payment mode from <strong style={{color:'#fca5a5'}}>Bank Account</strong> to <strong style={{color:'#6ee7b7'}}>ARMS Tenant Mobile APK {APK_VERSION}</strong>. Please scan the QR code above to download the app and pay rent directly from your phone.
                                 </div>
                             </div>
 
@@ -363,7 +373,7 @@ export default function QRPrintPage() {
                             <div className="steps">
                                 {[
                                     ['1','Open your camera app and point at the QR code'],
-                                    ['2','Download & install ARMS Mobile APK v4.7'],
+                                    ['2',`Download & install ARMS Mobile APK ${APK_VERSION}`],
                                     ['3','Enter your phone number & 6-digit PIN to login'],
                                 ].map(([n, t]) => (
                                     <div className="step" key={n}>
@@ -388,6 +398,7 @@ export default function QRPrintPage() {
         </>
     );
 }
+
 
 
 
