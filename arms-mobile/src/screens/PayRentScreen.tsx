@@ -321,7 +321,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         }
         setManualChecking(true);
         try {
-            // ── KCB: force-confirm records payment even if callback never arrived ──
+            // ── KCB: check if payment actually went through ──
             if (payMethod === 'KCB' && checkoutRef.current) {
                 const res = await fetch('https://arms-opal.vercel.app/api/kcb/confirm', {
                     method: 'POST',
@@ -332,23 +332,39 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         amount:            Math.round(parseFloat(amount)),
                     }),
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data?.success && data?.status === 'Completed') {
-                        if (timerRef.current) clearInterval(timerRef.current);
-                        paymentDoneRef.current = true; // ← lock so no further recording
-                        const newBal = await refreshTenantBalance(session.tenant_id);
-                        setBalance(newBal);
-                        await updateSessionBalance(newBal);
-                        setReceipt(data.receipt || 'KCB');
-                        setPaidAmount(data.amount || Math.round(parseFloat(amount)));
-                        setStep('success');
-                        setProcessing(false);
-                        setManualChecking(false);
-                        return;
-                    }
+                const data = await res.json();
+
+                // ── Payment SUCCEEDED ──
+                if (res.ok && data?.success && data?.status === 'Completed') {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    paymentDoneRef.current = true;
+                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    setBalance(newBal);
+                    await updateSessionBalance(newBal);
+                    setReceipt(data.receipt || 'KCB');
+                    setPaidAmount(data.amount || Math.round(parseFloat(amount)));
+                    setStep('success');
+                    setProcessing(false);
+                    setManualChecking(false);
+                    return;
                 }
-                Alert.alert('Still Processing', 'KCB payment not yet confirmed. Wait a few seconds and try again.');
+
+                // ── Payment FAILED (insufficient balance, wrong PIN, cancelled, etc.) ──
+                if (!data?.success && data?.status === 'Failed') {
+                    const reason = data?.reason || 'Payment did not go through';
+                    Alert.alert(
+                        '❌ Payment Failed',
+                        reason + '\n\nNo money was deducted. Please try again.',
+                        [{ text: 'OK' }]
+                    );
+                    setError(reason);
+                    setStep('failed');
+                    setManualChecking(false);
+                    return;
+                }
+
+                // ── Payment still PENDING ──
+                Alert.alert('⏳ Still Processing', 'KCB payment not yet confirmed. Wait a few seconds and try again.');
                 setManualChecking(false);
                 return;
             }
