@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server';
 // Bump MIN_VERSION here to force all old APKs to update
 // ============================================================
 
-const LATEST_VERSION  = 'v4.7';
-const MIN_VERSION     = 'v4.7'; // Any APK below this is BLOCKED
+const LATEST_VERSION = 'v4.8';
+const MIN_VERSION    = 'v4.8'; // Any APK below this is BLOCKED
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
@@ -43,3 +43,4 @@ export async function GET(req: Request) {
             : `✅ App is up to date (${appVersion})`,
     });
 }
+
