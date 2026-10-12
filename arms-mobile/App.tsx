@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, Component, ErrorInfo } from 'react'
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox, TouchableOpacity, Modal } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox, TouchableOpacity, Modal, AppState, AppStateStatus } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
@@ -542,6 +542,47 @@ function AppInner() {
         initApp();
     }, []);
 
+    // ── FOREGROUND VERSION CHECK ──────────────────────────────────────────────
+    // Re-check version every time app comes back to foreground.
+    // Catches tenants who are already logged in and never log out.
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const lastVersionCheckRef = useRef<number>(0);
+
+    useEffect(() => {
+        const checkVersionOnForeground = async () => {
+            try {
+                const now = Date.now();
+                // Throttle: max once every 60 seconds
+                if (now - lastVersionCheckRef.current < 60_000) return;
+                lastVersionCheckRef.current = now;
+
+                const vRes = await fetch(
+                    `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
+                    { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined }
+                );
+                if (vRes.ok) {
+                    const vData = await vRes.json();
+                    if (vData.forceUpdate) {
+                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
+                    }
+                }
+            } catch {
+                // Network error — fail-open, don't block
+            }
+        };
+
+        const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            const prev = appStateRef.current;
+            appStateRef.current = nextState;
+            // Trigger when app comes to foreground from background/inactive
+            if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+                checkVersionOnForeground();
+            }
+        });
+
+        return () => subscription.remove();
+    }, []);
+
     const initApp = async () => {
         try {
             // 0. Setup OS notifications (request permission, create Android channel)
@@ -606,7 +647,7 @@ function AppInner() {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-App-Version': 'v4.7' 
+                    'X-App-Version': APP_VERSION
                 },
                 body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
             });
