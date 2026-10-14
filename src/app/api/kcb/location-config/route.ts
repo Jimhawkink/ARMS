@@ -40,11 +40,11 @@ export async function POST(request: NextRequest) {
         const now = new Date().toISOString();
         const rows = units.map((u: any) => {
             const row: any = {
-                unit_id:       u.unit_id,
-                environment:   environment || "production",
-                active:        true,
-                is_configured: true,   // ← CRITICAL: mobile app checks this field
-                updated_at:    now,
+                unit_id:     u.unit_id,
+                environment: environment || "production",
+                active:      true,
+                updated_at:  now,
+                // NOTE: is_configured is a GENERATED column — never set it explicitly
             };
             // Only include credential fields if non-empty (empty = "don't overwrite existing value")
             if (account_number?.trim())   row.account_number  = account_number.trim();
