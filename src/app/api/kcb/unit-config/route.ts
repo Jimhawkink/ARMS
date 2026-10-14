@@ -5,10 +5,16 @@ export const dynamic = "force-dynamic";
 
 /* ─────────────────────────────────────────────────────────────
    GET /api/kcb/unit-config?tenant_id=<id>
-   Returns KCB credentials for a specific tenant's unit.
-   Called by the mobile APK before initiating KCB STK Push.
-   Returns masked credentials for display, FULL credentials
-   are only used server-side in /api/kcb/stk
+   Returns whether KCB is configured for a tenant's unit.
+   Called by mobile APK before showing the KCB Buni pay button.
+
+   Strategy:
+   1. Try DB (arms_unit_kcb_config) — works when supabaseAdmin has
+      the service role key (bypasses RLS).
+   2. Fallback to env vars (KCB_CONSUMER_KEY / KCB_ACCOUNT_NUMBER)
+      — works when SUPABASE_SERVICE_ROLE_KEY is not set on Vercel
+      and RLS blocks the anon client. If KCB STK push works, these
+      env vars are set on Vercel.
 ───────────────────────────────────────────────────────────── */
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
@@ -24,7 +30,7 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // Get tenant unit_id
+        // 1. Get tenant's unit_id
         const { data: tenant, error: tenantErr } = await supabase
             .from("arms_tenants")
             .select("unit_id")
@@ -35,37 +41,44 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: "Tenant not found or has no unit", kcbConfigured: false }, { status: 404 });
         }
 
-        // Get KCB config for this unit
-        const { data: config, error: cfgErr } = await supabase
+        // 2. Try DB lookup (requires service role key / RLS bypass)
+        const { data: config } = await supabase
             .from("arms_unit_kcb_config")
-            .select("account_number, consumer_key, consumer_secret, environment, is_configured")
+            .select("account_number, environment")
             .eq("unit_id", tenant.unit_id)
             .eq("active", true)
             .maybeSingle();
 
-        // TEMP DEBUG — remove after fix confirmed
-        if (cfgErr) return NextResponse.json({ error: cfgErr.message, debug_stage: 'cfgErr', unit_id: tenant.unit_id }, { status: 500 });
-
-        // Consider configured if: row exists AND has an account_number
-        const isConfigured = !!(config && config.account_number);
-        if (!isConfigured) {
+        if (config?.account_number) {
             return NextResponse.json({
-                kcbConfigured: false,
-                message: "KCB not configured for this unit",
-                debug_config_null: config === null,
-                debug_config_undefined: config === undefined,
-                debug_cfg_err: cfgErr ?? null,
-                debug_unit_id: tenant.unit_id,
+                kcbConfigured:  true,
+                environment:    config.environment || "production",
+                account_number: config.account_number,
+                source:         "db",
             });
         }
 
+        // 3. Fallback: DB returned null (RLS blocked anon key on Vercel).
+        //    Check env vars — if KCB STK push works, these are set on Vercel.
+        const envAccountNumber = process.env.KCB_ACCOUNT_NUMBER?.trim();
+        const envConsumerKey   = process.env.KCB_CONSUMER_KEY?.trim();
+
+        if (envAccountNumber && envConsumerKey) {
+            return NextResponse.json({
+                kcbConfigured:  true,
+                environment:    "production",
+                account_number: envAccountNumber,
+                source:         "env",
+            });
+        }
+
+        // 4. Truly not configured
         return NextResponse.json({
-            kcbConfigured: true,
-            environment:   config.environment || "production",
-            account_number: config.account_number || "",
+            kcbConfigured: false,
+            message:       "KCB not configured for this unit",
         });
+
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
 }
-
