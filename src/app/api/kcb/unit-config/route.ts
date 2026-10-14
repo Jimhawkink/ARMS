@@ -43,15 +43,19 @@ export async function GET(request: NextRequest) {
             .eq("active", true)
             .maybeSingle();
 
-        if (cfgErr) return NextResponse.json({ error: cfgErr.message }, { status: 500 });
+        // TEMP DEBUG — remove after fix confirmed
+        if (cfgErr) return NextResponse.json({ error: cfgErr.message, debug_stage: 'cfgErr', unit_id: tenant.unit_id }, { status: 500 });
 
         // Consider configured if: row exists AND has an account_number
-        // account_number presence is the real indicator; is_configured was never being set
         const isConfigured = !!(config && config.account_number);
         if (!isConfigured) {
             return NextResponse.json({
                 kcbConfigured: false,
                 message: "KCB not configured for this unit",
+                debug_config_null: config === null,
+                debug_config_undefined: config === undefined,
+                debug_cfg_err: cfgErr ?? null,
+                debug_unit_id: tenant.unit_id,
             });
         }
 
