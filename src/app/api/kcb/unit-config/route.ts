@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +45,10 @@ export async function GET(request: NextRequest) {
 
         if (cfgErr) return NextResponse.json({ error: cfgErr.message }, { status: 500 });
 
-        if (!config || !config.is_configured) {
+        // Consider configured if: row exists AND has an account_number
+        // (is_configured flag is a bonus but account_number presence is the real indicator)
+        const isConfigured = !!(config && config.account_number);
+        if (!isConfigured) {
             return NextResponse.json({
                 kcbConfigured: false,
                 message: "KCB not configured for this unit",
