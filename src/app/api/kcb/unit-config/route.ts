@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
         if (cfgErr) return NextResponse.json({ error: cfgErr.message }, { status: 500 });
 
         // Consider configured if: row exists AND has an account_number
-        // (is_configured flag is a bonus but account_number presence is the real indicator)
+        // account_number presence is the real indicator; is_configured was never being set
         const isConfigured = !!(config && config.account_number);
         if (!isConfigured) {
             return NextResponse.json({
@@ -64,3 +64,4 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
 }
+
