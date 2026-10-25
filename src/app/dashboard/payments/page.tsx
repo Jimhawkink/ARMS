@@ -1,12 +1,28 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull, getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched, c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth } from '@/lib/supabase';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+    getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull,
+    getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched,
+    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth
+} from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone, FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave, FiSend, FiZap, FiSearch, FiFilter, FiCalendar, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import {
+    FiPlus, FiRefreshCw, FiCheck, FiLink, FiDollarSign, FiCreditCard, FiSmartphone,
+    FiClock, FiFileText, FiPrinter, FiEdit2, FiTrash2, FiX, FiAlertTriangle, FiSave,
+    FiSend, FiZap, FiSearch, FiFilter, FiCalendar, FiChevronLeft, FiChevronRight,
+    FiCopy, FiEye, FiSliders, FiPieChart, FiTrendingUp, FiActivity
+} from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
 import PaymentModal from '@/components/PaymentModal';
 import { topProgress } from '@/components/TopProgressBar';
+import {
+    Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement
+} from 'chart.js';
+import { Doughnut, Bar } from 'react-chartjs-2';
+
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const parseNoteTag = (notes: string, tag: string): number => {
@@ -14,34 +30,125 @@ const parseNoteTag = (notes: string, tag: string): number => {
     const m = notes.match(new RegExp(`\\[${tag}:(\\d+(?:\\.\\d+)?)\\]`));
     return m ? parseFloat(m[1]) : 0;
 };
+
 const cleanNoteDisplay = (notes: string) =>
-    (notes || '').replace(/\[Month:[^\]]+\]/g,'').replace(/\[Time:[^\]]+\]/g,'').replace(/\[ArrearsPaid:[^\]]+\]/g,'').replace(/\[CurrentRentPaid:[^\]]+\]/g,'').replace(/\[BillsCleared:[^\]]+\]/g,'').replace(/\[ArrearMonths:[^\]]+\]/g,'').replace(/\[Credit:[^\]]+\]/g,'').trim();
+    (notes || '')
+        .replace(/\[Month:[^\]]+\]/g, '')
+        .replace(/\[Time:[^\]]+\]/g, '')
+        .replace(/\[ArrearsPaid:[^\]]+\]/g, '')
+        .replace(/\[CurrentRentPaid:[^\]]+\]/g, '')
+        .replace(/\[BillsCleared:[^\]]+\]/g, '')
+        .replace(/\[ArrearMonths:[^\]]+\]/g, '')
+        .replace(/\[Credit:[^\]]+\]/g, '')
+        .trim();
 
 const buildWhatsAppLink = (phone: string, name: string, amount: number, months: string[]) => {
-    const fmt = (n: number) => `KES ${n.toLocaleString()}`;
-    const monthLabels = months.map(m => { try { return new Date(m+'-01').toLocaleDateString('en-US',{month:'long',year:'numeric'}); } catch { return m; } });
-    const msg = [`🏠 *ARMS Rent Reminder*`,`━━━━━━━━━━━━━━━━`,`Dear *${name}*,`,``,`Outstanding rent balance:`,`💰 *${fmt(amount)}*`,`📅 Period: ${monthLabels.join(', ') || 'current period'}`,``,`Please pay via M-Pesa or cash. Thank you! 🙏`,`━━━━━━━━━━━━━━━━`,`📞 Alpha Rental Management`].join('\n');
-    const wap = phone.replace(/^0/,'254').replace(/[^0-9]/g,'');
+    const fmt = (n: number) => `Ksh ${n.toLocaleString()}`;
+    const monthLabels = months.map(m => {
+        try { return new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
+        catch { return m; }
+    });
+    const msg = [
+        `🏠 *ARMS Rent Payment Confirmation*`,
+        `━━━━━━━━━━━━━━━━`,
+        `Dear *${name}*,`,
+        ``,
+        `Your rent payment of *${fmt(amount)}* has been successfully recorded.`,
+        `📅 Allocation Period: ${monthLabels.join(', ') || 'Current Month'}`,
+        ``,
+        `Thank you for paying on time! 🙏`,
+        `━━━━━━━━━━━━━━━━`,
+        `📞 Alpha Rental Management System`
+    ].join('\n');
+    const wap = phone.replace(/^0/, '254').replace(/[^0-9]/g, '');
     return `https://wa.me/${wap}?text=${encodeURIComponent(msg)}`;
 };
 
 const COL = {
-    date:{bg:'#eef2ff',text:'#4338ca',head:'#c7d2fe'}, tenant:{bg:'#f8fafc',text:'#1e293b',head:'#e2e8f0'},
-    location:{bg:'#f1f5f9',text:'#475569',head:'#e2e8f0'}, month:{bg:'#faf5ff',text:'#7c3aed',head:'#e9d5ff'},
-    totalPaid:{bg:'#f0fdf4',text:'#15803d',head:'#bbf7d0'}, arrearsPaid:{bg:'#fff7ed',text:'#c2410c',head:'#fed7aa'},
-    currentRent:{bg:'#eff6ff',text:'#1d4ed8',head:'#bfdbfe'}, arrearsRem:{bg:'#fef9c3',text:'#92400e',head:'#fde68a'},
-    method:{bg:'#f0fdfa',text:'#0f766e',head:'#99f6e4'}, receipt:{bg:'#fafafa',text:'#6b7280',head:'#f3f4f6'},
-    by:{bg:'#fafafa',text:'#9ca3af',head:'#f3f4f6'}, actions:{bg:'#f5f3ff',text:'#6d28d9',head:'#ddd6fe'},
+    date: { bg: '#eef2ff', text: '#4338ca', head: '#c7d2fe' },
+    tenant: { bg: '#f8fafc', text: '#1e293b', head: '#e2e8f0' },
+    location: { bg: '#f1f5f9', text: '#475569', head: '#e2e8f0' },
+    month: { bg: '#faf5ff', text: '#7c3aed', head: '#e9d5ff' },
+    totalPaid: { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
+    arrearsPaid: { bg: '#fff7ed', text: '#c2410c', head: '#fed7aa' },
+    currentRent: { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
+    arrearsRem: { bg: '#fef9c3', text: '#92400e', head: '#fde68a' },
+    method: { bg: '#f0fdfa', text: '#0f766e', head: '#99f6e4' },
+    receipt: { bg: '#fafafa', text: '#6b7280', head: '#f3f4f6' },
+    by: { bg: '#fafafa', text: '#9ca3af', head: '#f3f4f6' },
+    actions: { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
 };
 
-const fmt = (n: number) => `KES ${(n||0).toLocaleString()}`;
+const fmt = (n: number) => `Ksh ${(n || 0).toLocaleString('en-KE')}`;
+
+/* ─── Compact Sleek KPI Card (Exact Reference Proportions: ~88px height, 7 in a row) ─── */
+interface CompactKpiCardProps {
+    icon: string;
+    label: string;
+    value: string | number;
+    sub: string;
+    gradient: string;
+    shadowColor: string;
+    pulse?: boolean;
+}
+
+function CompactKpiCard({
+    icon,
+    label,
+    value,
+    sub,
+    gradient,
+    shadowColor,
+    pulse = false
+}: CompactKpiCardProps) {
+    return (
+        <div
+            className="relative overflow-hidden rounded-2xl p-3 sm:p-3.5 text-white transition-all duration-300 select-none min-h-[86px] sm:min-h-[92px] flex flex-col justify-between hover:-translate-y-1"
+            style={{
+                background: gradient,
+                boxShadow: `0 8px 22px -6px ${shadowColor}`,
+            }}
+        >
+            {/* Subtle glass watermark circle */}
+            <div className="absolute -right-3 -bottom-3 w-16 h-16 rounded-full bg-white/10 pointer-events-none" />
+
+            {/* Top row: Icon + Label in All Caps */}
+            <div className="relative z-10 flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs sm:text-sm flex-shrink-0">{icon}</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-white/90 truncate leading-none">
+                        {label}
+                    </span>
+                </div>
+                {pulse && (
+                    <span className="flex h-2 w-2 flex-shrink-0">
+                        <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-white opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                    </span>
+                )}
+            </div>
+
+            {/* Middle row: Big bold punchy value */}
+            <div className="relative z-10 my-0.5">
+                <p className="text-lg sm:text-xl font-black text-white tracking-tight leading-tight drop-shadow-sm font-sans truncate">
+                    {value}
+                </p>
+            </div>
+
+            {/* Bottom row: Subtitle text */}
+            <div className="relative z-10 flex items-center justify-between text-[10px] text-white/80 font-medium leading-none">
+                <span className="truncate">{sub}</span>
+            </div>
+        </div>
+    );
+}
 
 // ══════════════════════════════════════════════════════════════
 // SHA-STYLE MATERIAL DATE PICKER
 // ══════════════════════════════════════════════════════════════
-const DAYS = ['S','M','T','W','T','F','S'];
-const MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function MaterialDatePicker({
     value, onConfirm, onCancel, label,
@@ -50,15 +157,14 @@ function MaterialDatePicker({
 }) {
     const today = new Date();
     const init = value ? new Date(value + 'T12:00:00') : today;
-    const [viewYear, setViewYear]   = useState(init.getFullYear());
+    const [viewYear, setViewYear] = useState(init.getFullYear());
     const [viewMonth, setViewMonth] = useState(init.getMonth());
-    const [selected, setSelected]   = useState<Date | null>(value ? new Date(value + 'T12:00:00') : null);
-    const [mode, setMode]           = useState<'calendar' | 'year'>('calendar');
+    const [selected, setSelected] = useState<Date | null>(value ? new Date(value + 'T12:00:00') : null);
+    const [mode, setMode] = useState<'calendar' | 'year'>('calendar');
     const yearListRef = useRef<HTMLDivElement>(null);
 
     const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate();
-    const firstDay    = (y: number, m: number) => new Date(y, m, 1).getDay();
-
+    const firstDay = (y: number, m: number) => new Date(y, m, 1).getDay();
     const years = Array.from({ length: 200 }, (_, i) => 1950 + i);
 
     useEffect(() => {
@@ -66,7 +172,7 @@ function MaterialDatePicker({
             const el = yearListRef.current.querySelector(`[data-year="${viewYear}"]`);
             el?.scrollIntoView({ block: 'center' });
         }
-    }, [mode]);
+    }, [mode, viewYear]);
 
     const cells: (number | null)[] = [];
     const fd = firstDay(viewYear, viewMonth);
@@ -96,16 +202,14 @@ function MaterialDatePicker({
         onConfirm(`${y}-${m}-${d}`);
     };
 
-    const selDay   = selected?.getDate();
+    const selDay = selected?.getDate();
     const selMonth = selected ? MONTHS_SHORT[selected.getMonth()] : '';
-    const selYear  = selected?.getFullYear();
-    const selDow   = selected ? ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][selected.getDay()] : '';
+    const selYear = selected?.getFullYear();
+    const selDow = selected ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][selected.getDay()] : '';
 
     return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-2xl overflow-hidden w-[330px] select-none">
-
-                {/* ── Purple header ── */}
                 <div className="bg-indigo-600 px-6 pt-5 pb-4">
                     <p className="text-indigo-200 text-xs font-semibold uppercase tracking-widest mb-1">{label}</p>
                     <button
@@ -120,7 +224,6 @@ function MaterialDatePicker({
                     <p className="text-indigo-200 text-sm font-bold mt-0.5">{selYear || viewYear}</p>
                 </div>
 
-                {/* ── Calendar or year list ── */}
                 {mode === 'year' ? (
                     <div ref={yearListRef} className="h-64 overflow-y-auto px-4 py-2">
                         {years.map(y => (
@@ -140,13 +243,12 @@ function MaterialDatePicker({
                     </div>
                 ) : (
                     <div className="px-4 pt-3 pb-2">
-                        {/* Month/Year navigation */}
                         <div className="flex items-center justify-between mb-3">
                             <button
-                                onClick={() => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y-1); } else setViewMonth(m => m-1); }}
+                                onClick={() => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); } else setViewMonth(m => m - 1); }}
                                 className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-600 transition"
                             >
-                                <FiChevronLeft size={16}/>
+                                <FiChevronLeft size={16} />
                             </button>
                             <button
                                 onClick={() => setMode('year')}
@@ -156,34 +258,32 @@ function MaterialDatePicker({
                                 <span className="text-gray-400 text-xs">▾</span>
                             </button>
                             <button
-                                onClick={() => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y+1); } else setViewMonth(m => m+1); }}
+                                onClick={() => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); } else setViewMonth(m => m + 1); }}
                                 className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-600 transition"
                             >
-                                <FiChevronRight size={16}/>
+                                <FiChevronRight size={16} />
                             </button>
                         </div>
 
-                        {/* Day headers */}
                         <div className="grid grid-cols-7 mb-1">
                             {DAYS.map((d, i) => (
                                 <div key={i} className="text-center text-[11px] font-bold text-gray-400 py-1">{d}</div>
                             ))}
                         </div>
 
-                        {/* Date cells */}
                         <div className="grid grid-cols-7 gap-y-0.5">
                             {cells.map((d, i) => (
                                 <div key={i} className="flex items-center justify-center h-9">
                                     {d !== null && (
                                         <button
                                             onClick={() => selectDay(d)}
-                                            className={`w-9 h-9 rounded-full text-sm font-semibold transition
-                                                ${isSelected(d)
+                                            className={`w-9 h-9 rounded-full text-sm font-semibold transition ${
+                                                isSelected(d)
                                                     ? 'bg-indigo-600 text-white font-bold shadow'
                                                     : isToday(d)
-                                                        ? 'border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50'
-                                                        : 'text-gray-700 hover:bg-gray-100'
-                                                }`}
+                                                    ? 'border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50'
+                                                    : 'text-gray-700 hover:bg-gray-100'
+                                            }`}
                                         >
                                             {d}
                                         </button>
@@ -194,16 +294,11 @@ function MaterialDatePicker({
                     </div>
                 )}
 
-                {/* ── Cancel / OK ── */}
                 <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100">
-                    <button onClick={onCancel}
-                        className="px-5 py-2 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-xl transition">
+                    <button onClick={onCancel} className="px-5 py-2 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-xl transition">
                         CANCEL
                     </button>
-                    <button onClick={confirmDate} disabled={!selected}
-                        className={`px-5 py-2 text-sm font-bold rounded-xl transition ${
-                            selected ? 'text-indigo-600 hover:bg-indigo-50' : 'text-gray-300 cursor-not-allowed'
-                        }`}>
+                    <button onClick={confirmDate} disabled={!selected} className={`px-5 py-2 text-sm font-bold rounded-xl transition ${selected ? 'text-indigo-600 hover:bg-indigo-50' : 'text-gray-300 cursor-not-allowed'}`}>
                         OK
                     </button>
                 </div>
@@ -213,7 +308,7 @@ function MaterialDatePicker({
 }
 
 // ══════════════════════════════════════════════════════════════
-// PAGINATION HELPER
+// PAGINATION COMPONENT
 // ══════════════════════════════════════════════════════════════
 function Pagination({
     total, page, perPage, onPage, onPerPage,
@@ -223,9 +318,8 @@ function Pagination({
 }) {
     const totalPages = Math.max(1, Math.ceil(total / perPage));
     const from = total === 0 ? 0 : (page - 1) * perPage + 1;
-    const to   = Math.min(page * perPage, total);
+    const to = Math.min(page * perPage, total);
 
-    // Smart page range: always show first, last, current±2, with ellipsis
     const range: (number | '...')[] = [];
     const addPage = (p: number) => { if (!range.includes(p)) range.push(p); };
     addPage(1);
@@ -240,21 +334,18 @@ function Pagination({
     }
 
     return (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-white border-t border-gray-100">
-            {/* Left: showing info + per-page */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-white border-t border-slate-100">
             <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 font-medium">
-                    Showing <span className="font-bold text-gray-700">{from}–{to}</span> of{' '}
-                    <span className="font-bold text-indigo-600">{total.toLocaleString()}</span> payments
+                <span className="text-xs text-slate-500 font-medium">
+                    Showing <span className="font-bold text-slate-700">{from}–{to}</span> of{' '}
+                    <span className="font-bold text-indigo-600">{total.toLocaleString()}</span> records
                 </span>
                 <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-gray-400">Per page:</span>
-                    {[10, 25, 50, 100].map(n => (
+                    <span className="text-xs text-slate-400">Rows:</span>
+                    {[15, 25, 50, 100].map(n => (
                         <button key={n} onClick={() => { onPerPage(n); onPage(1); }}
-                            className={`px-2 py-1 rounded-lg text-xs font-bold transition ${
-                                perPage === n
-                                    ? 'bg-indigo-600 text-white shadow'
-                                    : 'bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700'
+                            className={`px-2 py-0.5 rounded-lg text-xs font-bold transition ${
+                                perPage === n ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}>
                             {n}
                         </button>
@@ -262,62 +353,43 @@ function Pagination({
                 </div>
             </div>
 
-            {/* Right: page buttons */}
             <div className="flex items-center gap-1">
-                {/* First & Prev */}
                 <button onClick={() => onPage(1)} disabled={page === 1}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
-                    title="First page">«</button>
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition">«</button>
                 <button onClick={() => onPage(page - 1)} disabled={page === 1}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 disabled:opacity-30 transition text-gray-500"
-                    title="Previous page"><FiChevronLeft size={13}/></button>
+                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition text-slate-500">
+                    <FiChevronLeft size={13} />
+                </button>
 
-                {/* Page numbers */}
                 {pages.map((p, i) =>
                     p === '...'
-                        ? <span key={`e${i}`} className="w-7 text-center text-xs text-gray-400 font-bold">…</span>
+                        ? <span key={`e${i}`} className="w-6 text-center text-xs text-slate-400 font-bold">…</span>
                         : <button key={p} onClick={() => onPage(p as number)}
                             className={`w-7 h-7 rounded-lg text-xs font-bold transition ${
-                                page === p
-                                    ? 'bg-indigo-600 text-white shadow'
-                                    : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
+                                page === p ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-indigo-50 hover:text-indigo-700'
                             }`}>
                             {p}
-                          </button>
+                        </button>
                 )}
 
-                {/* Next & Last */}
                 <button onClick={() => onPage(page + 1)} disabled={page === totalPages}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 disabled:opacity-30 transition text-gray-500"
-                    title="Next page"><FiChevronRight size={13}/></button>
+                    className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition text-slate-500">
+                    <FiChevronRight size={13} />
+                </button>
                 <button onClick={() => onPage(totalPages)} disabled={page === totalPages}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition"
-                    title="Last page">»</button>
-
-                {/* Jump to page */}
-                <form onSubmit={e => {
-                    e.preventDefault();
-                    const val = parseInt((e.currentTarget.elements.namedItem('jump') as HTMLInputElement).value);
-                    if (val >= 1 && val <= totalPages) onPage(val);
-                    (e.currentTarget.elements.namedItem('jump') as HTMLInputElement).value = '';
-                }} className="flex items-center gap-1 ml-1">
-                    <span className="text-xs text-gray-400">Go</span>
-                    <input name="jump" type="number" min={1} max={totalPages}
-                        className="w-12 text-xs text-center border border-gray-200 rounded-lg py-1 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
-                        placeholder={String(page)}/>
-                    <button type="submit" className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition px-1">→</button>
-                </form>
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition">»</button>
             </div>
         </div>
     );
 }
 
 export default function PaymentsPage() {
+    const router = useRouter();
+
     const [payments, setPayments] = useState<any[]>([]);
     const [tenants, setTenants] = useState<any[]>([]);
     const [locations, setLocations] = useState<any[]>([]);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
-    const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [showPayModal, setShowPayModal] = useState(false);
     const [locationId, setLocationId] = useState<number | null>(null);
@@ -330,38 +402,17 @@ export default function PaymentsPage() {
     const [deletingPayment, setDeletingPayment] = useState<any>(null);
     const [actionLoading, setActionLoading] = useState(false);
 
-    // ── Filters ───────────────────────────────────────────────────────────────
-    const [filterTenant, setFilterTenant] = useState('');
-    const [filterPhone, setFilterPhone] = useState('');
-    const [filterRoom, setFilterRoom] = useState('');
+    // ── Filter State ──────────────────────────────────────────────────────────
+    const [filterMethodTab, setFilterMethodTab] = useState<'all' | 'mpesa' | 'cash' | 'bank'>('all');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [filterLocation, setFilterLocation] = useState<string>('');
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
     const [showDatePicker, setShowDatePicker] = useState<'from' | 'to' | null>(null);
-    // Pagination
-    const [page, setPage]       = useState(1);
+    const [page, setPage] = useState(1);
     const [perPage, setPerPage] = useState(25);
 
-    // ── Callback linking inside pay modal ─────────────────────────────────────
-    const [paymentSource, setPaymentSource] = useState<'manual' | 'mpesa' | 'jenga_stk' | 'jenga_callback'>('manual');
-    const [selectedCallback, setSelectedCallback] = useState<any>(null);
-    const [loadingCallbacks, setLoadingCallbacks] = useState(false);
-
-    // ── Jenga STK Push state ─────────────────────────────────────────────
-    const [jengaStkSending, setJengaStkSending] = useState(false);
-    const [jengaStkChannel, setJengaStkChannel] = useState<'mpesa' | 'equitel'>('mpesa');
-    const [jengaStkResult, setJengaStkResult] = useState<any>(null);
-    const [jengaStkPhone, setJengaStkPhone] = useState('');
-
-    // ── Real bill arrears for selected tenant ─────────────────────────────────
-    const [tenantArrearData, setTenantArrearData] = useState<any>(null);
-    const [loadingArrears, setLoadingArrears] = useState(false);
-
-    const [payForm, setPayForm] = useState({
-        tenant_id: 0, amount: '', payment_method: 'Cash',
-        mpesa_receipt: '', mpesa_phone: '', reference_no: '', notes: '',
-        payment_month: new Date().toISOString().slice(0, 7)
-    });
-
+    // ── Data Loading ──────────────────────────────────────────────────────────
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         topProgress.start();
@@ -372,123 +423,55 @@ export default function PaymentsPage() {
                 getLocations(),
                 getMpesaTransactions(false)
             ]);
-            setPayments(p); setTenants(t.filter((te: any) => te.status === 'Active'));
-            setLocations(l); setMpesaTxns(m);
-        } catch { toast.error('Failed to load payments'); } finally { topProgress.done(); }
-        setLoading(false);
+            setPayments(p || []);
+            setTenants((t || []).filter((te: any) => te.status === 'Active'));
+            setLocations(l || []);
+            setMpesaTxns(m || []);
+        } catch {
+            toast.error('Failed to load payment records');
+        } finally {
+            topProgress.done();
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
         const saved = localStorage.getItem('arms_location');
         const lid = saved ? parseInt(saved) : null;
-        setLocationId(lid); loadData(lid);
+        setLocationId(lid);
+        loadData(lid);
         const handler = (e: any) => { setLocationId(e.detail); loadData(e.detail); };
         window.addEventListener('arms-location-change', handler);
         return () => window.removeEventListener('arms-location-change', handler);
     }, [loadData]);
 
-    // ── Real arrears when tenant changes ─────────────────────────────────────
-    useEffect(() => {
-        if (!payForm.tenant_id) { setTenantArrearData(null); return; }
-        setLoadingArrears(true);
-        getAccumulatedArrearsForTenant(payForm.tenant_id)
-            .then(d => setTenantArrearData(d)).catch(() => setTenantArrearData(null))
-            .finally(() => setLoadingArrears(false));
-    }, [payForm.tenant_id]);
-
-    // ── Load C2B / Jenga callbacks ─────────────────────────────────────────
-    const loadCallbacks = async () => {
-        setLoadingCallbacks(true);
-        topProgress.start();
-        try {
-            const { data } = await c2bSupabase.from('c2b_transactions').select('*').order('created_at', { ascending: false }).limit(100);
-            setC2bPayments(data || []);
-        } catch { setC2bPayments([]); } finally {
-            topProgress.done();
-        }
-        setLoadingCallbacks(false);
-    };
-
-    const openPayModal = () => {
-        setShowPayModal(true);
-    };
-
-    // ── Select a callback → auto-fill form + auto-match tenant by phone ─────────
-    const selectCallback = (txn: any) => {
-        setSelectedCallback(txn);
-        const amount = txn.trans_amount || txn.amount || 0;
-        const code = txn.trans_id || txn.mpesa_receipt || txn.reference || '';
-        const rawPhone = txn.msisdn || txn.phone || '';
-
-        // Normalise phone: strip leading 254 → 0XXXXXXXXX for comparison
-        const normalizePhone = (p: string) => p.replace(/[^0-9]/g, '').replace(/^254/, '0');
-        const txnPhone = normalizePhone(rawPhone);
-
-        // Try to auto-match a tenant by phone number
-        const matchedTenant = tenants.find((t: any) => {
-            const tp = normalizePhone(t.phone || '');
-            return tp.length >= 9 && tp === txnPhone;
-        });
-
-        if (matchedTenant) {
-            setPayForm(f => ({
-                ...f, amount: amount.toString(), mpesa_receipt: code,
-                mpesa_phone: rawPhone, payment_method: 'M-Pesa',
-                tenant_id: matchedTenant.tenant_id,
-            }));
-            toast.success(`🎯 Auto-matched → ${matchedTenant.tenant_name}`, { icon: '📱' });
-        } else {
-            setPayForm(f => ({
-                ...f, amount: amount.toString(), mpesa_receipt: code,
-                mpesa_phone: rawPhone, payment_method: 'M-Pesa',
-            }));
-        }
-    };
-
-    const handlePay = async () => {
-        if (!payForm.tenant_id || !payForm.amount) { toast.error('Tenant and amount required'); return; }
-        const tenant = tenants.find((t: any) => t.tenant_id === payForm.tenant_id);
-        if (!tenant) { toast.error('Tenant not found'); return; }
-        try {
-            const user = JSON.parse(localStorage.getItem('arms_user') || '{}');
-            const paymentTime = new Date().toISOString();
-            const result = await recordPayment({
-                tenant_id: payForm.tenant_id, amount: parseFloat(payForm.amount),
-                payment_method: payForm.payment_method,
-                mpesa_receipt: payForm.mpesa_receipt || undefined,
-                mpesa_phone: payForm.mpesa_phone || undefined,
-                reference_no: payForm.reference_no || undefined,
-                notes: `[Month: ${payForm.payment_month}] [Time: ${new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${payForm.notes || ''}`.trim(),
-                recorded_by: user.name || 'Admin',
-                location_id: tenant?.location_id
-            });
-            toast.success('Payment recorded! Generating receipt…');
-            const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
-            setShowReceipt({
-                tenant_name: tenant.tenant_name, phone: tenant.phone || '', id_number: tenant.id_number || '',
-                unit_name: tenant.arms_units?.unit_name || '-', location_name: tenant.arms_locations?.location_name || '-',
-                monthly_rent: tenant.monthly_rent || 0, amount: parseFloat(payForm.amount),
-                payment_method: payForm.payment_method, mpesa_receipt: payForm.mpesa_receipt || '',
-                payment_date: paymentTime, payment_month: payForm.payment_month,
-                balance_before: balanceBefore, balance_after: Math.max(0, balanceBefore - parseFloat(payForm.amount)),
-                recorded_by: user.name || 'Admin', arrears_paid: result.arrearsPaid ?? 0, current_rent_paid: result.currentRentPaid ?? 0,
-            });
-            setShowPayModal(false); loadData(locationId);
-        } catch (err: any) { toast.error(err.message || 'Failed'); }
-    };
-
     const handleDeleteConfirm = async () => {
         if (!deletingPayment) return;
         setActionLoading(true);
         topProgress.start();
-        try { await deletePayment(deletingPayment.payment_id); toast.success('Deleted & balances restored'); setDeletingPayment(null); loadData(locationId); } catch (err: any) { toast.error(err.message || 'Delete failed'); } finally { topProgress.done(); }
-        setActionLoading(false);
+        try {
+            await deletePayment(deletingPayment.payment_id);
+            toast.success('Payment deleted and tenant balance restored');
+            setDeletingPayment(null);
+            loadData(locationId);
+        } catch (err: any) {
+            toast.error(err.message || 'Delete failed');
+        } finally {
+            topProgress.done();
+            setActionLoading(false);
+        }
     };
 
     const handleEditSave = async () => {
         if (!editingPayment) return;
-        if (!editForm.amount || parseFloat(editForm.amount) <= 0) { toast.error('Amount must be greater than zero'); return; }
-        if (!editForm.payment_month) { toast.error('Payment month is required'); return; }
+        if (!editForm.amount || parseFloat(editForm.amount) <= 0) {
+            toast.error('Amount must be greater than zero');
+            return;
+        }
+        if (!editForm.payment_month) {
+            toast.error('Payment month is required');
+            return;
+        }
         setActionLoading(true);
         topProgress.start();
         try {
@@ -503,381 +486,726 @@ export default function PaymentsPage() {
                 notes: editForm.notes_display,
                 recorded_by: user.name || undefined,
             });
-            toast.success('✅ Payment updated & balances recalculated!');
+            toast.success('Payment updated & billing balances recalculated via FIFO!');
             setEditingPayment(null);
             loadData(locationId);
-        } catch (err: any) { toast.error(err.message || 'Update failed'); } finally { topProgress.done(); }
-        setActionLoading(false);
+        } catch (err: any) {
+            toast.error(err.message || 'Update failed');
+        } finally {
+            topProgress.done();
+            setActionLoading(false);
+        }
     };
 
     const viewReceipt = (p: any) => {
         const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
         const arrearsPaid = parseNoteTag(p.notes, 'ArrearsPaid');
         const currentRentPaid = parseNoteTag(p.notes, 'CurrentRentPaid');
-        setShowReceipt({ payment_id: p.payment_id, tenant_name: p.arms_tenants?.tenant_name||'-', phone: p.arms_tenants?.phone||'', id_number: p.arms_tenants?.id_number||'', unit_name: p.arms_tenants?.arms_units?.unit_name||'-', location_name: p.arms_locations?.location_name||'-', monthly_rent: p.arms_tenants?.monthly_rent||0, amount: p.amount, payment_method: p.payment_method, mpesa_receipt: p.mpesa_receipt||'', payment_date: p.payment_date, payment_month: monthMatch?monthMatch[1]:'', balance_before: p.amount+(p.arms_tenants?.balance||0), balance_after: p.arms_tenants?.balance||0, recorded_by: p.recorded_by||'', arrears_paid: arrearsPaid, current_rent_paid: currentRentPaid||p.amount-arrearsPaid });
+        setShowReceipt({
+            payment_id: p.payment_id,
+            tenant_name: p.arms_tenants?.tenant_name || '-',
+            phone: p.arms_tenants?.phone || '',
+            id_number: p.arms_tenants?.id_number || '',
+            unit_name: p.arms_tenants?.arms_units?.unit_name || '-',
+            location_name: p.arms_locations?.location_name || '-',
+            monthly_rent: p.arms_tenants?.monthly_rent || 0,
+            amount: p.amount,
+            payment_method: p.payment_method,
+            mpesa_receipt: p.mpesa_receipt || '',
+            payment_date: p.payment_date,
+            payment_month: monthMatch ? monthMatch[1] : '',
+            balance_before: p.amount + (p.arms_tenants?.balance || 0),
+            balance_after: p.arms_tenants?.balance || 0,
+            recorded_by: p.recorded_by || '',
+            arrears_paid: arrearsPaid,
+            current_rent_paid: currentRentPaid || p.amount - arrearsPaid
+        });
     };
 
-    // ── Derived filtered list ─────────────────────────────────────────────────
-    const filteredPayments = payments.filter(p => {
-        const tenantName = (p.arms_tenants?.tenant_name || '').toLowerCase();
-        const phone = (p.arms_tenants?.phone || '').toLowerCase();
-        const room = (p.arms_tenants?.arms_units?.unit_name || '').toLowerCase();
-        if (filterTenant && !tenantName.includes(filterTenant.toLowerCase())) return false;
-        if (filterPhone && !phone.includes(filterPhone.toLowerCase())) return false;
-        if (filterRoom && !room.includes(filterRoom.toLowerCase())) return false;
-        // Date range filter
-        if (filterDateFrom || filterDateTo) {
-            const payDate = p.payment_date ? p.payment_date.slice(0, 10) : '';
-            if (filterDateFrom && payDate < filterDateFrom) return false;
-            if (filterDateTo   && payDate > filterDateTo)   return false;
-        }
-        return true;
-    });
+    // ── Metrics & Calculations ────────────────────────────────────────────────
+    const totalAll = useMemo(() => payments.reduce((s, p) => s + (p.amount || 0), 0), [payments]);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayPayments = useMemo(() => payments.filter(p => p.payment_date?.startsWith(todayStr)), [payments, todayStr]);
+    const todayTotal = todayPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const todayCount = todayPayments.length;
 
-    // Paginated slice — reset to page 1 when filters change
-    useEffect(() => { setPage(1); }, [filterTenant, filterPhone, filterRoom, filterDateFrom, filterDateTo]);
+    const totalArrearsPaid = useMemo(() => payments.reduce((s, p) => s + (p.arrears_paid || 0), 0), [payments]);
+    const totalCurrentRentPaid = useMemo(() => payments.reduce((s, p) => s + (p.current_rent_paid || 0), 0), [payments]);
+
+    const mpesaPayments = useMemo(() => payments.filter(p => p.payment_method === 'M-Pesa' || p.payment_method?.startsWith('Jenga-M-Pesa')), [payments]);
+    const cashPayments = useMemo(() => payments.filter(p => p.payment_method === 'Cash'), [payments]);
+    const bankPayments = useMemo(() => payments.filter(p => p.payment_method === 'Bank Transfer' || p.payment_method?.includes('Equitel')), [payments]);
+
+    const mpesaTotal = mpesaPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const cashTotal = cashPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const bankTotal = bankPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const mpesaAdoptionRate = totalAll > 0 ? Math.round((mpesaTotal / totalAll) * 100) : 0;
+    const avgTicket = payments.length > 0 ? Math.round(totalAll / payments.length) : 0;
+    const currentDay = Math.max(1, new Date().getDate());
+    const dailyPace = Math.round(todayTotal > 0 ? todayTotal : totalAll / Math.max(payments.length, 1));
+
+    // ── Filtered Payments List ────────────────────────────────────────────────
+    const filteredPayments = useMemo(() => {
+        return payments.filter(p => {
+            const tenantName = (p.arms_tenants?.tenant_name || '').toLowerCase();
+            const phone = (p.arms_tenants?.phone || '').toLowerCase();
+            const room = (p.arms_tenants?.arms_units?.unit_name || '').toLowerCase();
+            const receipt = (p.mpesa_receipt || p.reference_no || '').toLowerCase();
+            const q = searchQuery.toLowerCase().trim();
+
+            if (filterMethodTab === 'mpesa' && p.payment_method !== 'M-Pesa' && !p.payment_method?.startsWith('Jenga-M-Pesa')) return false;
+            if (filterMethodTab === 'cash' && p.payment_method !== 'Cash') return false;
+            if (filterMethodTab === 'bank' && p.payment_method !== 'Bank Transfer' && !p.payment_method?.includes('Equitel')) return false;
+
+            if (filterLocation && String(p.location_id) !== filterLocation) return false;
+
+            if (q) {
+                const match = tenantName.includes(q) || phone.includes(q) || room.includes(q) || receipt.includes(q);
+                if (!match) return false;
+            }
+
+            if (filterDateFrom || filterDateTo) {
+                const payDate = p.payment_date ? p.payment_date.slice(0, 10) : '';
+                if (filterDateFrom && payDate < filterDateFrom) return false;
+                if (filterDateTo && payDate > filterDateTo) return false;
+            }
+
+            return true;
+        });
+    }, [payments, filterMethodTab, searchQuery, filterLocation, filterDateFrom, filterDateTo]);
+
+    useEffect(() => { setPage(1); }, [searchQuery, filterLocation, filterMethodTab, filterDateFrom, filterDateTo]);
     const paginatedPayments = filteredPayments.slice((page - 1) * perPage, page * perPage);
 
-    const totalAll = payments.reduce((s,p) => s+(p.amount||0),0);
-    const todayTotal = payments.filter(p => p.payment_date?.startsWith(new Date().toISOString().split('T')[0])).reduce((s,p) => s+(p.amount||0),0);
-    const totalArrearsPaid = payments.reduce((s,p) => s+(p.arrears_paid||0),0);
-    const totalCurrentRentPaid = payments.reduce((s,p) => s+(p.current_rent_paid||0),0);
-    const selectedTenant = tenants.find((t: any) => t.tenant_id === payForm.tenant_id);
-
-    // ── Live allocation preview ───────────────────────────────────────────────
-    const liveAmount = parseFloat(payForm.amount)||0;
-    const realArrearsTotal = tenantArrearData?.arrearsTotal ?? 0;
-    const realCurrentMonthDue = tenantArrearData?.currentMonthDue ?? 0;
-    const realTotalDue = tenantArrearData?.totalDue ?? (selectedTenant?.balance||0);
-    const liveArrearsPaid = Math.min(liveAmount, realArrearsTotal);
-    const liveCurrentRentPaid = Math.max(0, Math.min(liveAmount - liveArrearsPaid, realCurrentMonthDue));
-    const liveCredit = Math.max(0, liveAmount - realTotalDue);
-    const liveBalanceAfter = Math.max(0, realTotalDue - liveAmount);
-
-    // Callbacks for current tab
-    const activeCallbacks = paymentSource === 'mpesa' ? mpesaTxns : c2bPayments;
-
-    // ── Jenga STK Push handler ─────────────────────────────────────────────
-    const handleJengaStkPush = async () => {
-        if (!payForm.tenant_id || !payForm.amount) { toast.error('Select tenant and enter amount first'); return; }
-        const tenant = tenants.find((t: any) => t.tenant_id === payForm.tenant_id);
-        const phone = jengaStkPhone || tenant?.phone || '';
-        if (!phone) { toast.error('Tenant phone number required for STK push'); return; }
-        setJengaStkSending(true); setJengaStkResult(null);
-        topProgress.start();
-        try {
-            const res = await fetch('/api/jenga/stk-push', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    phone, amount: parseFloat(payForm.amount),
-                    tenantId: payForm.tenant_id, channel: jengaStkChannel,
-                    description: `Rent Payment - ${tenant?.tenant_name || 'Tenant'}`,
-                }),
-            });
-            const data = await res.json();
-            setJengaStkResult(data);
-            if (data.success && data.status === true) {
-                toast.success('STK Push sent! Tenant will receive a payment prompt on their phone.');
-            } else if (data.success) {
-                toast.error(data.message || 'STK Push failed');
-            } else {
-                toast.error(data.error || 'STK Push failed');
-            }
-        } catch (e: any) { toast.error(e.message); setJengaStkResult({ error: e.message }); } finally { topProgress.done(); }
-        setJengaStkSending(false);
+    // ── Charts Data ───────────────────────────────────────────────────────────
+    const channelDonutData = {
+        labels: ['M-Pesa Paybill', 'Cash Settlement', 'Bank Transfer'],
+        datasets: [{
+            data: [mpesaTotal, cashTotal, bankTotal],
+            backgroundColor: ['#10b981', '#3b82f6', '#8b5cf6'],
+            borderWidth: 0,
+            hoverOffset: 6
+        }]
     };
 
-    if (loading) return (
-        <div className="flex flex-col items-center justify-center h-64 gap-3">
-            <div className="relative">
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl" style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)'}}>💰</div>
-                <div className="absolute -inset-2 rounded-3xl border-2 border-indigo-200 animate-ping opacity-30"/>
-            </div>
-            <p className="text-sm font-bold text-gray-500">Loading payments…</p>
-        </div>
-    );
+    const channelDonutOpts: any = {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '72%',
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    usePointStyle: true,
+                    padding: 12,
+                    font: { size: 11, family: 'Inter, sans-serif', weight: '600' },
+                    color: '#64748b'
+                }
+            },
+            tooltip: {
+                backgroundColor: '#0f172a',
+                padding: 10,
+                cornerRadius: 10,
+                callbacks: { label: (c: any) => ` ${c.label}: Ksh ${c.parsed.toLocaleString()}` }
+            }
+        }
+    };
 
-    // ── Vacation month detection ──────────────────────────────────────────────
+    const allocationBarData = {
+        labels: ['Current Rent', 'Arrears Cleared'],
+        datasets: [{
+            data: [totalCurrentRentPaid, totalArrearsPaid],
+            backgroundColor: ['rgba(59, 130, 246, 0.85)', 'rgba(234, 88, 12, 0.85)'],
+            borderColor: ['#2563eb', '#c2410c'],
+            borderWidth: 1.5,
+            borderRadius: 8,
+            barPercentage: 0.55
+        }]
+    };
+
+    const allocationBarOpts: any = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: '#0f172a',
+                padding: 10,
+                cornerRadius: 10,
+                callbacks: { label: (c: any) => ` ${c.parsed.y ? fmt(c.parsed.y) : fmt(c.parsed)}` }
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                ticks: {
+                    callback: (v: any) => `${(v / 1000).toFixed(0)}K`,
+                    font: { size: 10, family: 'Inter, sans-serif' },
+                    color: '#64748b'
+                },
+                border: { display: false }
+            },
+            x: {
+                grid: { display: false },
+                ticks: { font: { size: 11, family: 'Inter, sans-serif', weight: '600' }, color: '#475569' },
+                border: { display: false }
+            }
+        }
+    };
+
     const nowLocal = new Date();
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
     const isCurrentVacationMonth = isVacationMonth(currentMonth);
 
-    return (
-        <div className="animate-fadeIn space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                    <h1 className="page-title">💰 Payments</h1>
-                    <p className="text-sm text-gray-500 mt-1">Record, track and manage rent payments · FIFO arrears-first allocation</p>
+    if (loading) {
+        return (
+            <div className="min-h-[500px] flex flex-col items-center justify-center gap-4">
+                <div className="relative">
+                    <div
+                        className="w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-xl animate-pulse"
+                        style={{ background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)' }}
+                    >
+                        💳
+                    </div>
+                    <div className="absolute -inset-2.5 rounded-full border-2 border-emerald-300 animate-ping opacity-35" />
                 </div>
-                <div className="flex gap-2">
-                    <button onClick={() => loadData(locationId)} className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition"><FiRefreshCw size={16}/></button>
-                    <button onClick={openPayModal} className="btn-primary flex items-center gap-2"><FiPlus size={16}/> Record Payment</button>
+                <div className="text-center">
+                    <p className="text-base font-extrabold text-slate-800">Synchronizing Kenya Payment Ledger</p>
+                    <p className="text-xs text-slate-400 mt-1">Aggregating M-Pesa callbacks, cash receipts, and FIFO allocations...</p>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="animate-fadeIn space-y-5 pb-16 font-sans text-slate-800">
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                1. EXECUTIVE HEADER (EXACT REFERENCE DESIGN)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="flex items-center justify-between flex-wrap gap-4 py-1">
+                <div className="flex items-center gap-3.5">
+                    <div
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl text-white shadow-md shadow-emerald-600/20 flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)' }}
+                    >
+                        💳
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-sans">
+                                Rent Collections & M-Pesa Payment Ledger
+                            </h1>
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                LIVE SETTLEMENTS
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                            Real-time Kenya payment settlements, M-Pesa Daraja/C2B reconciliation & FIFO rent allocation
+                        </p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                    <button
+                        onClick={() => setShowPayModal(true)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-white shadow-md shadow-emerald-600/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                        style={{ background: '#059669' }}
+                    >
+                        <FiPlus size={14} /> Record Payment
+                    </button>
+                    <button
+                        onClick={() => setShowPayModal(true)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                        style={{ background: '#4f46e5' }}
+                    >
+                        <FiSmartphone size={13} /> M-Pesa STK Push
+                    </button>
+                    <button
+                        onClick={() => loadData(locationId)}
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl text-slate-700 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/40 transition text-xs font-bold shadow-sm"
+                        title="Synchronize payments ledger"
+                    >
+                        <FiRefreshCw size={13} /> Sync Ledger
+                    </button>
                 </div>
             </div>
 
-            {/* Vacation Month Banner */}
+            {/* Vacation Month Warning Banner */}
             {isCurrentVacationMonth && <VacationBanner />}
 
-            {/* Stat Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                {[
-                    {label:'Total Records',value:payments.length,icon:FiFileText,color:'#6366f1',bg:'#eef2ff',sub:'All time'},
-                    {label:"Today's Collection",value:fmt(todayTotal),icon:FiDollarSign,color:'#10b981',bg:'#f0fdf4',sub:'Today'},
-                    {label:'Total Collected',value:fmt(totalAll),icon:FiCreditCard,color:'#3b82f6',bg:'#eff6ff',sub:'All payments'},
-                    {label:'Arrears Paid',value:fmt(totalArrearsPaid),icon:FiAlertTriangle,color:'#c2410c',bg:'#fff7ed',sub:'⬇ Old balances cleared'},
-                    {label:'Current Rent Paid',value:fmt(totalCurrentRentPaid),icon:FiSmartphone,color:'#7c3aed',bg:'#faf5ff',sub:'✅ Monthly rent'},
-                ].map((card,i) => (
-                    <div key={i} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all relative overflow-hidden" style={{borderLeftWidth:4,borderLeftColor:card.color}}>
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">{card.label}</p>
-                            <div className="p-2.5 rounded-xl" style={{background:card.bg}}><card.icon size={18} style={{color:card.color}}/></div>
-                        </div>
-                        <p className="text-xl font-extrabold text-gray-900">{card.value}</p>
-                        <p className="text-xs text-gray-400 mt-1">{card.sub}</p>
-                        <div className="absolute -bottom-6 -right-6 w-20 h-20 rounded-full opacity-[0.05]" style={{background:card.color}}/>
-                    </div>
-                ))}
+            {/* ══════════════════════════════════════════════════════════════════════
+                2. THE 7 SLEEK COMPACT KPI CARDS IN 1 ROW (EXACT REFERENCE PROPORTIONS)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+                {/* 1. Purple Card: TOTAL COLLECTIONS */}
+                <CompactKpiCard
+                    icon="💰"
+                    label="TOTAL COLLECTED"
+                    value={fmt(totalAll)}
+                    sub={`${payments.length} transactions total`}
+                    gradient="linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #7c3aed 100%)"
+                    shadowColor="rgba(79, 70, 229, 0.4)"
+                />
+
+                {/* 2. Emerald Card: TODAY'S INFLOW */}
+                <CompactKpiCard
+                    icon="⚡"
+                    label="TODAY'S INFLOW"
+                    value={fmt(todayTotal)}
+                    sub={`${todayCount} payments today`}
+                    gradient="linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)"
+                    shadowColor="rgba(5, 150, 105, 0.4)"
+                    pulse={todayCount > 0}
+                />
+
+                {/* 3. Ocean Blue Card: CURRENT RENT PAID */}
+                <CompactKpiCard
+                    icon="🏠"
+                    label="CURRENT RENT"
+                    value={fmt(totalCurrentRentPaid)}
+                    sub="Allocated to active bills"
+                    gradient="linear-gradient(135deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%)"
+                    shadowColor="rgba(2, 132, 199, 0.4)"
+                />
+
+                {/* 4. Orange Card: ARREARS RECOVERED */}
+                <CompactKpiCard
+                    icon="⬇️"
+                    label="ARREARS CLEARED"
+                    value={fmt(totalArrearsPaid)}
+                    sub="Past debts recovered"
+                    gradient="linear-gradient(135deg, #ea580c 0%, #f59e0b 50%, #fbbf24 100%)"
+                    shadowColor="rgba(234, 88, 12, 0.4)"
+                />
+
+                {/* 5. Teal/Green Card: M-PESA VOLUME */}
+                <CompactKpiCard
+                    icon="📱"
+                    label="M-PESA VOLUME"
+                    value={fmt(mpesaTotal)}
+                    sub={`${mpesaAdoptionRate}% digital adoption`}
+                    gradient="linear-gradient(135deg, #0d9488 0%, #14b8a6 50%, #10b981 100%)"
+                    shadowColor="rgba(13, 148, 136, 0.4)"
+                />
+
+                {/* 6. Slate Card: CASH SETTLEMENTS */}
+                <CompactKpiCard
+                    icon="💵"
+                    label="CASH INFLOW"
+                    value={fmt(cashTotal)}
+                    sub={`${cashPayments.length} cash entries`}
+                    gradient="linear-gradient(135deg, #1e293b 0%, #334155 100%)"
+                    shadowColor="rgba(30, 41, 59, 0.4)"
+                />
+
+                {/* 7. Crimson/Red Card: COLLECTION VELOCITY */}
+                <CompactKpiCard
+                    icon="📈"
+                    label="AVG TICKET SIZE"
+                    value={fmt(avgTicket)}
+                    sub="Per settlement receipt"
+                    gradient="linear-gradient(135deg, #e11d48 0%, #f43f5e 50%, #fb7185 100%)"
+                    shadowColor="rgba(225, 29, 72, 0.4)"
+                />
             </div>
 
-            {/* Ultra DataGrid */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                        <h2 className="text-sm font-bold text-gray-900">🗂️ Payment Records</h2>
-                        <p className="text-[11px] text-gray-400 mt-0.5">{filteredPayments.length} of {payments.length} · FIFO arrears-first</p>
+            {/* ══════════════════════════════════════════════════════════════════════
+                3. RICH FILTER BAR (DIRECTLY BENEATH THE CARDS)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3">
+                <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+                    {/* Live Omni-Search */}
+                    <div className="relative flex-1 min-w-[240px]">
+                        <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            placeholder="Search tenant name, phone, M-Pesa receipt code, unit, location..."
+                            className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200/90 rounded-xl text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100/60 transition font-medium"
+                        />
+                        {searchQuery && (
+                            <button
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-600 p-0.5"
+                            >
+                                <FiX size={14} />
+                            </button>
+                        )}
                     </div>
+
+                    {/* Property / Location Dropdown */}
+                    <div className="w-full sm:w-auto min-w-[170px]">
+                        <select
+                            value={filterLocation}
+                            onChange={e => { setFilterLocation(e.target.value); setPage(1); }}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200/90 rounded-xl text-xs text-slate-700 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                        >
+                            <option value="">All Locations ({locations.length})</option>
+                            {locations.map(l => (
+                                <option key={l.location_id} value={String(l.location_id)}>
+                                    {l.location_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Date Range Picker Buttons */}
                     <div className="flex items-center gap-2 flex-wrap">
-                        {[{label:'Arrears Paid',color:COL.arrearsPaid.text},{label:'Current Rent',color:COL.currentRent.text},{label:'Rem. Arrears',color:COL.arrearsRem.text}].map(l => (
-                            <span key={l.label} className="text-[10px] font-bold px-2 py-1 rounded-lg border" style={{color:l.color,borderColor:l.color+'40',background:l.color+'10'}}>{l.label}</span>
-                        ))}
-                    </div>
-                </div>
-
-                {/* ── Filter Bar ── */}
-                <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-indigo-50/40 border-b border-gray-100 flex flex-wrap gap-3 items-center">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                        <FiFilter size={12}/> Filters
-                    </div>
-
-                    {/* Tenant Name */}
-                    <div className="relative flex-1 min-w-[150px] max-w-[200px]">
-                        <FiSearch size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                        <input
-                            type="text" value={filterTenant}
-                            onChange={e => setFilterTenant(e.target.value)}
-                            placeholder="Tenant name…"
-                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-                        />
-                    </div>
-
-                    {/* Phone */}
-                    <div className="relative flex-1 min-w-[130px] max-w-[175px]">
-                        <FiSmartphone size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                        <input
-                            type="text" value={filterPhone}
-                            onChange={e => setFilterPhone(e.target.value)}
-                            placeholder="Phone…"
-                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-                        />
-                    </div>
-
-                    {/* Room / Unit */}
-                    <div className="relative flex-1 min-w-[120px] max-w-[165px]">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]">🏠</span>
-                        <input
-                            type="text" value={filterRoom}
-                            onChange={e => setFilterRoom(e.target.value)}
-                            placeholder="Room / unit…"
-                            className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-                        />
-                    </div>
-
-                    {/* ── Date Range ── */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1">
-                            <FiCalendar size={11}/> Date:
-                        </span>
-                        {/* FROM */}
                         <button
                             onClick={() => setShowDatePicker('from')}
                             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
                                 filterDateFrom
-                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow'
-                                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600'
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
                             }`}
                         >
-                            <FiCalendar size={11}/>
+                            <FiCalendar size={12} />
                             {filterDateFrom
                                 ? new Date(filterDateFrom + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
-                                : 'From date'}
+                                : 'From Date'}
                             {filterDateFrom && (
-                                <span onClick={e => { e.stopPropagation(); setFilterDateFrom(''); }}
-                                    className="ml-1 hover:text-red-300 text-indigo-200 font-black">×</span>
+                                <span onClick={e => { e.stopPropagation(); setFilterDateFrom(''); }} className="ml-1 text-indigo-200 font-black">×</span>
                             )}
                         </button>
 
-                        <span className="text-gray-300 text-xs font-bold">→</span>
+                        <span className="text-slate-300 text-xs">→</span>
 
-                        {/* TO */}
                         <button
                             onClick={() => setShowDatePicker('to')}
                             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
                                 filterDateTo
-                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow'
-                                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600'
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
                             }`}
                         >
-                            <FiCalendar size={11}/>
+                            <FiCalendar size={12} />
                             {filterDateTo
                                 ? new Date(filterDateTo + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
-                                : 'To date'}
+                                : 'To Date'}
                             {filterDateTo && (
-                                <span onClick={e => { e.stopPropagation(); setFilterDateTo(''); }}
-                                    className="ml-1 hover:text-red-300 text-indigo-200 font-black">×</span>
+                                <span onClick={e => { e.stopPropagation(); setFilterDateTo(''); }} className="ml-1 text-indigo-200 font-black">×</span>
                             )}
                         </button>
                     </div>
 
-                    {/* Clear all */}
-                    {(filterTenant || filterPhone || filterRoom || filterDateFrom || filterDateTo) && (
+                    {/* Showing Records Indicator */}
+                    <div className="text-xs font-medium text-slate-500 whitespace-nowrap ml-auto">
+                        Showing <b className="text-indigo-600 font-bold">{filteredPayments.length}</b> of {payments.length} payments
+                    </div>
+
+                    {(searchQuery || filterLocation || filterDateFrom || filterDateTo || filterMethodTab !== 'all') && (
                         <button
-                            onClick={() => { setFilterTenant(''); setFilterPhone(''); setFilterRoom(''); setFilterDateFrom(''); setFilterDateTo(''); }}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:bg-red-50 border border-red-100 transition"
+                            onClick={() => {
+                                setSearchQuery('');
+                                setFilterLocation('');
+                                setFilterDateFrom('');
+                                setFilterDateTo('');
+                                setFilterMethodTab('all');
+                            }}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition"
                         >
-                            <FiX size={11}/> Clear all
+                            <FiX size={12} /> Clear
                         </button>
                     )}
-                    {(filterTenant || filterPhone || filterRoom || filterDateFrom || filterDateTo) && (
-                        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full border border-indigo-100">
-                            {filteredPayments.length} result{filteredPayments.length !== 1 ? 's' : ''}
+                </div>
+            </div>
+
+            {/* Date Pickers Modals */}
+            {showDatePicker === 'from' && (
+                <MaterialDatePicker
+                    label="From Date"
+                    value={filterDateFrom}
+                    onConfirm={d => { setFilterDateFrom(d); setShowDatePicker(null); }}
+                    onCancel={() => setShowDatePicker(null)}
+                />
+            )}
+            {showDatePicker === 'to' && (
+                <MaterialDatePicker
+                    label="To Date"
+                    value={filterDateTo}
+                    onConfirm={d => { setFilterDateTo(d); setShowDatePicker(null); }}
+                    onCancel={() => setShowDatePicker(null)}
+                />
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                4. KENYA SETTLEMENT INTELLIGENCE STRIP (3 VISUAL ANALYTICS CARDS)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* 1. Payment Channel Distribution Donut */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Channel Distribution
                         </span>
-                    )}
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                            {mpesaAdoptionRate}% M-Pesa
+                        </span>
+                    </div>
+                    <div style={{ height: 160 }}>
+                        <Doughnut data={channelDonutData} options={channelDonutOpts} />
+                    </div>
                 </div>
 
-                {/* SHA-style date picker modals */}
-                {showDatePicker === 'from' && (
-                    <MaterialDatePicker
-                        label="From Date"
-                        value={filterDateFrom}
-                        onConfirm={d => { setFilterDateFrom(d); setShowDatePicker(null); }}
-                        onCancel={() => setShowDatePicker(null)}
-                    />
-                )}
-                {showDatePicker === 'to' && (
-                    <MaterialDatePicker
-                        label="To Date"
-                        value={filterDateTo}
-                        onConfirm={d => { setFilterDateTo(d); setShowDatePicker(null); }}
-                        onCancel={() => setShowDatePicker(null)}
-                    />
-                )}
+                {/* 2. FIFO Rent Allocation Waterfall */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            FIFO Allocation Breakdown
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                            Rent vs Debt
+                        </span>
+                    </div>
+                    <div style={{ height: 160 }}>
+                        <Bar data={allocationBarData} options={allocationBarOpts} />
+                    </div>
+                </div>
+
+                {/* 3. Real-time Payment Reconciler Summary */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 flex flex-col justify-between">
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                                M-Pesa Auto-Reconciler
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                Daraja C2B
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Tenant payments via Paybill / Till are automatically matched via phone number and cleared via FIFO arrears-first allocation.
+                        </p>
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5 text-xs">
+                        <div className="flex justify-between items-center text-slate-600">
+                            <span>Unmatched M-Pesa Transactions:</span>
+                            <b className="text-indigo-600 font-mono">{mpesaTxns.length} pending</b>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                            <span>Active Tenant Folios:</span>
+                            <b className="text-slate-800 font-mono">{tenants.length} tenants</b>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={() => setShowPayModal(true)}
+                        className="mt-3 w-full py-2 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition flex items-center justify-center gap-1.5"
+                    >
+                        <FiLink size={13} /> Link Callback Transaction
+                    </button>
+                </div>
+            </div>
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                5. MASTER PAYMENT RECORDS DATAGRID
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                        <h2 className="text-sm font-extrabold text-slate-900">
+                            Master Payments & Receipts Ledger
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            Showing {filteredPayments.length} records · FIFO arrears-first reconciliation
+                        </p>
+                    </div>
+
+                    {/* Method Channel Tabs */}
+                    <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-2xl">
+                        {[
+                            { key: 'all', label: `All (${payments.length})` },
+                            { key: 'mpesa', label: `📱 M-Pesa (${mpesaPayments.length})` },
+                            { key: 'cash', label: `💵 Cash (${cashPayments.length})` },
+                            { key: 'bank', label: `🏦 Bank (${bankPayments.length})` },
+                        ].map(tab => (
+                            <button
+                                key={tab.key}
+                                onClick={() => setFilterMethodTab(tab.key as any)}
+                                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                                    filterMethodTab === tab.key
+                                        ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/70'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full border-collapse" style={{fontSize:12}}>
+                    <table className="w-full border-collapse text-xs">
                         <thead>
-                            <tr>
-                                {[{label:'Date & Time',col:COL.date},{label:'Tenant',col:COL.tenant},{label:'Location',col:COL.location},{label:'Month',col:COL.month},{label:'Total Paid',col:COL.totalPaid},{label:'⬇ Arrears Paid',col:COL.arrearsPaid},{label:'🏠 Current Rent',col:COL.currentRent},{label:'⏳ Arrears Rem.',col:COL.arrearsRem},{label:'Method',col:COL.method},{label:'Receipt/Ref',col:COL.receipt},{label:'By',col:COL.by},{label:'Actions',col:COL.actions}].map((h,i) => (
-                                    <th key={i} className="text-left px-3 py-3 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap" style={{background:h.col.head,color:h.col.text,borderBottom:`2px solid ${h.col.text}25`}}>{h.label}</th>
-                                ))}
+                            <tr className="border-b border-slate-100 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-50/70">
+                                <th className="text-left px-3.5 py-3">Date & Time</th>
+                                <th className="text-left px-3.5 py-3">Tenant Folio</th>
+                                <th className="text-left px-3.5 py-3">Location</th>
+                                <th className="text-left px-3.5 py-3">Month</th>
+                                <th className="text-right px-3.5 py-3">Total Paid</th>
+                                <th className="text-right px-3.5 py-3">Arrears Paid</th>
+                                <th className="text-right px-3.5 py-3">Current Rent</th>
+                                <th className="text-right px-3.5 py-3">Rem. Debt</th>
+                                <th className="text-center px-3.5 py-3">Method</th>
+                                <th className="text-left px-3.5 py-3">Receipt / Ref</th>
+                                <th className="text-left px-3.5 py-3">By</th>
+                                <th className="text-center px-3.5 py-3">Actions</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody className="divide-y divide-slate-100">
                             {filteredPayments.length === 0 ? (
-                                <tr><td colSpan={12} className="text-center py-12 text-gray-400">
-                                    <div className="flex flex-col items-center gap-2"><span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span><p className="text-sm font-medium">{payments.length === 0 ? 'No payments yet' : 'No results match your filters'}</p></div>
-                                </td></tr>
+                                <tr>
+                                    <td colSpan={12} className="text-center py-14 text-slate-400">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span>
+                                            <p className="text-sm font-bold text-slate-700">
+                                                {payments.length === 0 ? 'No payments recorded yet' : 'No records match your active search filters'}
+                                            </p>
+                                            <p className="text-xs text-slate-400">Try broadening your search query or reset filters</p>
+                                        </div>
+                                    </td>
+                                </tr>
                             ) : paginatedPayments.map(p => {
                                 const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
                                 const timeMatch = p.notes?.match(/\[Time: (.+?)\]/);
-                                const payMonth = monthMatch ? monthMatch[1] : '-';
-                                const payTime = timeMatch ? timeMatch[1] : new Date(p.payment_date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-                                const arrearsPaid = p.arrears_paid||0;
-                                // Only show currentRentPaid from the tagged value — don't fallback to amount-arrears
-                                const currentRentPaid = p.current_rent_paid||0;
-                                const tenantBalance = p.arms_tenants?.balance||0;
-                                // Arrears Remaining = tenant's current total outstanding balance after this payment
+                                const payTime = timeMatch ? timeMatch[1] : new Date(p.payment_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                const arrearsPaid = p.arrears_paid || 0;
+                                const currentRentPaid = p.current_rent_paid || 0;
+                                const tenantBalance = p.arms_tenants?.balance || 0;
                                 const arrearsRemaining = Math.max(0, tenantBalance);
+                                const isMpesa = p.payment_method === 'M-Pesa' || p.payment_method?.startsWith('Jenga');
+
                                 return (
-                                    <tr key={p.payment_id} className="transition-colors" style={{borderBottom:'1px solid #f1f5f9'}}
-                                        onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background='#fafbff'}
-                                        onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background=''}>
-                                        <td className="px-3 py-3" style={{background:COL.date.bg+'80'}}>
-                                            <div className="font-semibold text-xs" style={{color:COL.date.text}}>{new Date(p.payment_date).toLocaleDateString()}</div>
-                                            <div className="text-[10px] text-gray-400 flex items-center gap-1"><FiClock size={9}/> {payTime}</div>
+                                    <tr key={p.payment_id} className="hover:bg-slate-50/80 transition group">
+                                        <td className="px-3.5 py-3 font-semibold text-slate-800">
+                                            <div className="font-bold text-slate-900">{new Date(p.payment_date).toLocaleDateString('en-KE')}</div>
+                                            <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                <FiClock size={10} /> {payTime}
+                                            </div>
                                         </td>
-                                        <td className="px-3 py-3 font-semibold text-xs text-gray-900" style={{background:COL.tenant.bg+'80'}}>{p.arms_tenants?.tenant_name||'-'}</td>
-                                        <td className="px-3 py-3 text-[11px]" style={{background:COL.location.bg+'80',color:COL.location.text}}>{p.arms_locations?.location_name||'-'}</td>
-                                        <td className="px-3 py-3" style={{background:COL.month.bg+'80'}}>
+                                        <td className="px-3.5 py-3 font-semibold text-slate-900">
+                                            <div className="font-bold text-slate-900">{p.arms_tenants?.tenant_name || '-'}</div>
+                                            <div className="text-[10px] text-slate-400 font-mono">
+                                                {p.arms_tenants?.phone || 'No phone'}
+                                            </div>
+                                        </td>
+                                        <td className="px-3.5 py-3 text-slate-500">
+                                            <div className="font-semibold text-slate-700">{p.arms_locations?.location_name || '-'}</div>
+                                            <div className="text-[10px] text-slate-400 font-mono">Room {p.arms_tenants?.arms_units?.unit_name || '-'}</div>
+                                        </td>
+                                        <td className="px-3.5 py-3">
                                             {(() => {
-                                                // Priority: linked billing month > notes tag > payment date month
                                                 const billingMonth = p.arms_billing?.billing_month;
-                                                const monthMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
-                                                const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0,7);
-                                                // Use local date for currentMo — avoid UTC timezone shift
+                                                const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0, 7);
                                                 const nowL = new Date();
-                                                const currentMo = `${nowL.getFullYear()}-${String(nowL.getMonth()+1).padStart(2,'0')}`;
+                                                const currentMo = `${nowL.getFullYear()}-${String(nowL.getMonth() + 1).padStart(2, '0')}`;
                                                 const isArrear = payMonth && payMonth < currentMo;
-                                                const billingBal = p.arms_billing?.balance ?? 0;
-                                                const billingStatus = p.arms_billing?.status;
-                                                
-                                                if (!payMonth || payMonth === '-') return <span className="text-[10px] text-gray-300">—</span>;
-                                                
-                                                const monthLabel = new Date(payMonth+'-02').toLocaleDateString('en-US',{month:'short',year:'numeric'});
-                                                
+
+                                                if (!payMonth || payMonth === '-') return <span className="text-slate-300">—</span>;
+
+                                                const monthLabel = new Date(payMonth + '-02').toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
                                                 if (isArrear) {
                                                     return (
-                                                        <div>
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{background:'#fee2e2',color:'#b91c1c'}}>
-                                                                ⏰ {monthLabel}
-                                                            </span>
-                                                            {billingBal > 0 && <div className="text-[9px] text-red-500 mt-0.5 font-semibold">Bal: {fmt(billingBal)}</div>}
-                                                        </div>
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200">
+                                                            ⏰ {monthLabel}
+                                                        </span>
                                                     );
                                                 }
                                                 return (
-                                                    <div>
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{background:'#dbeafe',color:'#1d4ed8'}}>
-                                                            🏠 {monthLabel}
-                                                        </span>
-                                                        {billingStatus === 'Paid' && <div className="text-[9px] text-green-600 mt-0.5 font-semibold">✓ Cleared</div>}
-                                                    </div>
+                                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                                                        🏠 {monthLabel}
+                                                    </span>
                                                 );
                                             })()}
                                         </td>
-                                        <td className="px-3 py-3" style={{background:COL.totalPaid.bg+'80'}}><span className="text-xs font-extrabold" style={{color:COL.totalPaid.text}}>{fmt(p.amount)}</span></td>
-                                        <td className="px-3 py-3" style={{background:COL.arrearsPaid.bg+'80'}}>
-                                            {arrearsPaid>0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{background:COL.arrearsPaid.head,color:COL.arrearsPaid.text}}>{fmt(arrearsPaid)}</span> : <span className="text-[10px] text-gray-300">—</span>}
+                                        <td className="px-3.5 py-3 text-right font-mono font-black text-emerald-600">
+                                            {fmt(p.amount)}
                                         </td>
-                                        <td className="px-3 py-3" style={{background:COL.currentRent.bg+'80'}}>
-                                            {currentRentPaid>0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{background:COL.currentRent.head,color:COL.currentRent.text}}>{fmt(currentRentPaid)}</span> : <span className="text-[10px] text-gray-300">—</span>}
+                                        <td className="px-3.5 py-3 text-right font-mono font-bold text-orange-600">
+                                            {arrearsPaid > 0 ? fmt(arrearsPaid) : <span className="text-slate-300 font-normal">—</span>}
                                         </td>
-                                        <td className="px-3 py-3" style={{background:COL.arrearsRem.bg+'80'}}>
-                                            {arrearsRemaining>0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{background:COL.arrearsRem.head,color:COL.arrearsRem.text}}>{fmt(arrearsRemaining)}</span> : <span className="text-[10px] font-bold text-green-600">✓ Clear</span>}
+                                        <td className="px-3.5 py-3 text-right font-mono font-bold text-blue-600">
+                                            {currentRentPaid > 0 ? fmt(currentRentPaid) : <span className="text-slate-300 font-normal">—</span>}
                                         </td>
-                                        <td className="px-3 py-3" style={{background:COL.method.bg+'80'}}>
-                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${p.payment_method==='M-Pesa'?'bg-green-100 text-green-700':p.payment_method?.startsWith('Jenga')?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}`}>{p.payment_method==='M-Pesa'?'📱':p.payment_method?.startsWith('Jenga')?'🏦':'💵'} {p.payment_method}</span>
+                                        <td className="px-3.5 py-3 text-right font-mono font-bold">
+                                            {arrearsRemaining > 0 ? (
+                                                <span className="text-rose-600 font-bold">{fmt(arrearsRemaining)}</span>
+                                            ) : (
+                                                <span className="text-emerald-600 text-[10px]">✓ Clear</span>
+                                            )}
                                         </td>
-                                        <td className="px-3 py-3 text-[10px]" style={{background:COL.receipt.bg+'80',color:COL.receipt.text}}>{p.mpesa_receipt||p.reference_no||'-'}</td>
-                                        <td className="px-3 py-3 text-[10px]" style={{background:COL.by.bg+'80',color:COL.by.text}}>{p.recorded_by||'-'}</td>
-                                        <td className="px-3 py-3" style={{background:COL.actions.bg+'80'}}>
-                                            <div className="flex items-center gap-1.5">
-                                                <button onClick={() => viewReceipt(p)} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:COL.month.head,color:COL.month.text}}><FiPrinter size={13}/></button>
-                                                <button onClick={() => {
-                                                    const mMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
-                                                    setEditingPayment(p);
-                                                    setEditForm({
-                                                        amount: String(p.amount || ''),
-                                                        payment_method: p.payment_method || 'Cash',
-                                                        payment_month: mMatch ? mMatch[1] : p.payment_date?.slice(0,7) || new Date().toISOString().slice(0,7),
-                                                        mpesa_receipt: p.mpesa_receipt || '',
-                                                        mpesa_phone: p.mpesa_phone || '',
-                                                        reference_no: p.reference_no || '',
-                                                        notes_display: cleanNoteDisplay(p.notes),
-                                                    });
-                                                }} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:COL.currentRent.head,color:COL.currentRent.text}}><FiEdit2 size={13}/></button>
-                                                <button onClick={() => setDeletingPayment(p)} className="p-1.5 rounded-lg transition hover:scale-110" style={{background:'#fee2e2',color:'#b91c1c'}}><FiTrash2 size={13}/></button>
+                                        <td className="px-3.5 py-3 text-center">
+                                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                isMpesa
+                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                    : p.payment_method === 'Cash'
+                                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                                    : 'bg-purple-50 text-purple-700 border border-purple-200'
+                                            }`}>
+                                                {isMpesa ? '📱' : p.payment_method === 'Cash' ? '💵' : '🏦'} {p.payment_method}
+                                            </span>
+                                        </td>
+                                        <td className="px-3.5 py-3 text-[10px] font-mono text-slate-600">
+                                            <div className="flex items-center gap-1">
+                                                <span>{p.mpesa_receipt || p.reference_no || '-'}</span>
+                                                {(p.mpesa_receipt || p.reference_no) && (
+                                                    <button
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(p.mpesa_receipt || p.reference_no);
+                                                            toast.success('Code copied to clipboard!');
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 transition"
+                                                        title="Copy Code"
+                                                    >
+                                                        <FiCopy size={11} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-3.5 py-3 text-[10px] text-slate-400">
+                                            {p.recorded_by || '-'}
+                                        </td>
+                                        <td className="px-3.5 py-3 text-center">
+                                            <div className="flex items-center justify-center gap-1.5 opacity-90 group-hover:opacity-100 transition">
+                                                <button
+                                                    onClick={() => viewReceipt(p)}
+                                                    className="w-7 h-7 rounded-xl flex items-center justify-center bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 transition"
+                                                    title="Print / View Official Receipt"
+                                                >
+                                                    <FiPrinter size={12} />
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        const mMatch = p.notes?.match(/\[Month: (\d{4}-\d{2})\]/);
+                                                        setEditingPayment(p);
+                                                        setEditForm({
+                                                            amount: String(p.amount || ''),
+                                                            payment_method: p.payment_method || 'Cash',
+                                                            payment_month: mMatch ? mMatch[1] : p.payment_date?.slice(0, 7) || new Date().toISOString().slice(0, 7),
+                                                            mpesa_receipt: p.mpesa_receipt || '',
+                                                            mpesa_phone: p.mpesa_phone || '',
+                                                            reference_no: p.reference_no || '',
+                                                            notes_display: cleanNoteDisplay(p.notes),
+                                                        });
+                                                    }}
+                                                    className="w-7 h-7 rounded-xl flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition"
+                                                    title="Edit Payment"
+                                                >
+                                                    <FiEdit2 size={12} />
+                                                </button>
+                                                <button
+                                                    onClick={() => setDeletingPayment(p)}
+                                                    className="w-7 h-7 rounded-xl flex items-center justify-center bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 transition"
+                                                    title="Delete Payment"
+                                                >
+                                                    <FiTrash2 size={12} />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -887,7 +1215,7 @@ export default function PaymentsPage() {
                     </table>
                 </div>
 
-                {/* ── Ultra Pagination ── */}
+                {/* Ultra Pagination */}
                 <Pagination
                     total={filteredPayments.length}
                     page={page}
@@ -896,19 +1224,22 @@ export default function PaymentsPage() {
                     onPerPage={setPerPage}
                 />
 
+                {/* Summary Strip */}
                 {payments.length > 0 && (
-                    <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
-                        <p className="text-xs text-gray-400">{payments.length} records</p>
-                        <div className="flex items-center gap-4 text-xs font-bold flex-wrap">
-                            <span style={{color:COL.totalPaid.text}}>Total: {fmt(totalAll)}</span>
-                            <span style={{color:COL.arrearsPaid.text}}>Arrears: {fmt(totalArrearsPaid)}</span>
-                            <span style={{color:COL.currentRent.text}}>Current Rent: {fmt(totalCurrentRentPaid)}</span>
+                    <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between flex-wrap gap-3 text-xs font-bold text-slate-700">
+                        <span className="text-slate-400 font-normal">Scope total: {filteredPayments.length} payments</span>
+                        <div className="flex items-center gap-4 flex-wrap">
+                            <span className="text-emerald-700">Total Paid: {fmt(totalAll)}</span>
+                            <span>•</span>
+                            <span className="text-orange-700">Arrears Cleared: {fmt(totalArrearsPaid)}</span>
+                            <span>•</span>
+                            <span className="text-blue-700">Current Rent: {fmt(totalCurrentRentPaid)}</span>
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* ════════════════ RECORD PAYMENT MODAL (Ultra) ════════════════ */}
+            {/* ════════════════ PAYMENT MODAL ════════════════ */}
             <PaymentModal
                 isOpen={showPayModal}
                 onClose={() => setShowPayModal(false)}
@@ -917,457 +1248,78 @@ export default function PaymentsPage() {
                 onPaymentRecorded={() => loadData(locationId)}
             />
 
-            {/* LEGACY MODAL PLACEHOLDER - kept for reference, remove after verification */}
-            {false && (
-                <div className="modal-overlay" onClick={() => setShowPayModal(false)}>
-                    <div className="modal-content" style={{maxWidth:680}} onClick={e => e.stopPropagation()}>
-                        {/* Header */}
-                        <div className="px-6 py-5 relative overflow-hidden" style={{background:'linear-gradient(135deg,#4f46e5,#7c3aed)'}}>
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2">💰 Record Rent Payment</h2>
-                            <p className="text-indigo-200 text-sm mt-0.5">Select payment source → choose tenant → confirm</p>
-                        </div>
-
-                        <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
-
-                            {/* ── STEP 1: Payment Source ─────────────────────── */}
-                            <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">① Payment Source</p>
-                                <div className="flex gap-2 p-1.5 rounded-2xl bg-gray-100 flex-wrap">
-                                    {[
-                                        {id:'manual',label:'💵 Manual',desc:'Cash / Bank',color:'#6366f1'},
-                                        {id:'mpesa', label:'📱 M-Pesa',desc:'Daraja callback',color:'#10b981'},
-                                        {id:'jenga_stk', label:'🏦 Jenga Push',desc:'Send STK to phone',color:'#f59e0b'},
-                                        {id:'jenga_callback', label:'🔗 Jenga IPN',desc:'Payment callback',color:'#ef4444'},
-                                    ].map(src => (
-                                        <button key={src.id}
-                                            onClick={() => {
-                                                setPaymentSource(src.id as any); setSelectedCallback(null); setJengaStkResult(null);
-                                                if (src.id==='manual') setPayForm(f=>({...f,payment_method:'Cash',mpesa_receipt:'',mpesa_phone:''}));
-                                                else if (src.id==='mpesa') setPayForm(f=>({...f,payment_method:'M-Pesa',mpesa_receipt:'',mpesa_phone:'',amount:''}));
-                                                else if (src.id==='jenga_stk') setPayForm(f=>({...f,payment_method:'Jenga-M-Pesa',mpesa_receipt:'',mpesa_phone:''}));
-                                                else setPayForm(f=>({...f,payment_method:'Jenga-M-Pesa',mpesa_receipt:'',mpesa_phone:'',amount:''}));
-                                            }}>
-                                            <div className={`px-3 py-2.5 rounded-xl text-sm font-bold transition-all text-center ${paymentSource===src.id ? 'bg-white shadow-md scale-[1.02]' : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'}`}
-                                                style={paymentSource===src.id ? {color:src.color} : {}}>
-                                                <div>{src.label}</div>
-                                                <div className="text-[9px] font-normal opacity-60 mt-0.5">{src.desc}</div>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* ── JENGA STK PUSH SECTION ── */}
-                            {paymentSource === 'jenga_stk' && (
-                                <div className="space-y-4">
-                                    <div className="rounded-2xl overflow-hidden border-2 border-amber-200" style={{background:'linear-gradient(135deg,#fffbeb,#fef3c7)'}}>
-                                        <div className="px-4 py-3 flex items-center gap-3" style={{background:'linear-gradient(90deg,#f59e0b,#d97706)'}}>
-                                            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">🏦</div>
-                                            <div>
-                                                <h3 className="text-sm font-bold text-white">Jenga STK Push — Send Payment Prompt</h3>
-                                                <p className="text-[10px] text-amber-100">Initiate an M-Pesa or Equitel push directly to the tenant's phone</p>
-                                            </div>
-                                        </div>
-                                        <div className="p-4 space-y-3">
-                                            {/* Channel selector */}
-                                            <div className="flex gap-2">
-                                                <button onClick={() => setJengaStkChannel('mpesa')}
-                                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${jengaStkChannel==='mpesa' ? 'bg-green-600 text-white shadow-lg scale-[1.02]' : 'bg-white text-green-700 border-2 border-green-200 hover:border-green-400'}`}>
-                                                    <span className="text-lg">📱</span> M-Pesa via Jenga
-                                                </button>
-                                                <button onClick={() => setJengaStkChannel('equitel')}
-                                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${jengaStkChannel==='equitel' ? 'bg-purple-600 text-white shadow-lg scale-[1.02]' : 'bg-white text-purple-700 border-2 border-purple-200 hover:border-purple-400'}`}>
-                                                    <span className="text-lg">💳</span> Equitel
-                                                </button>
-                                            </div>
-
-                                            {/* Phone input */}
-                                            <div>
-                                                <label className="text-xs font-bold text-amber-700 mb-1 block">📞 Tenant Phone Number</label>
-                                                <div className="flex gap-2">
-                                                    <input type="tel" value={jengaStkPhone} onChange={e => setJengaStkPhone(e.target.value)}
-                                                        placeholder={selectedTenant?.phone || '07XXXXXXXX'}
-                                                        className="flex-1 px-4 py-2.5 bg-white border-2 border-amber-200 rounded-xl text-sm font-bold text-gray-800 placeholder-amber-300 focus:outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100 transition"/>
-                                                    {selectedTenant?.phone && (
-                                                        <button onClick={() => setJengaStkPhone(selectedTenant.phone)}
-                                                            className="px-3 py-2 rounded-xl bg-amber-100 text-amber-700 text-xs font-bold border border-amber-200 hover:bg-amber-200 transition">
-                                                            Use tenant's
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Send STK button */}
-                                            <button onClick={handleJengaStkPush} disabled={jengaStkSending || !payForm.tenant_id || !payForm.amount}
-                                                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-extrabold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                                style={{background:'linear-gradient(135deg,#f59e0b,#d97706)',color:'white',boxShadow:'0 4px 14px rgba(245,158,11,0.4)'}}>
-                                                {jengaStkSending ? (
-                                                    <><FiSend size={16}/> Sending STK Push…</>
-                                                ) : (
-                                                    <><FiSend size={16}/> Send {jengaStkChannel==='mpesa' ? 'M-Pesa' : 'Equitel'} STK Push — KES {payForm.amount || '0'}</>
-                                                )}
-                                            </button>
-
-                                            {/* STK Result */}
-                                            {jengaStkResult && (
-                                                <div className={`rounded-xl p-3 text-xs font-mono border-2 ${jengaStkResult.status === true ? 'bg-green-50 border-green-300 text-green-800' : jengaStkResult.success ? 'bg-red-50 border-red-300 text-red-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
-                                                    {jengaStkResult.status === true ? (
-                                                        <div className="space-y-1">
-                                                            <p className="font-bold text-green-900">✅ STK Push Sent Successfully!</p>
-                                                            <p>Invoice: <span className="font-bold">{jengaStkResult.data?.invoiceNumber || jengaStkResult.reference}</span></p>
-                                                            <p>Order Ref: {jengaStkResult.orderReference}</p>
-                                                            <p>Amount Debited: KES {jengaStkResult.data?.amountDebited || payForm.amount}</p>
-                                                            <p className="text-[10px] text-green-600 mt-1">⏳ Waiting for tenant to confirm on their phone… Payment will auto-record via callback.</p>
-                                                        </div>
-                                                    ) : (
-                                                        <p>❌ {jengaStkResult.message || jengaStkResult.error || 'Failed'}</p>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* ── CALLBACK TRANSACTION GRID (M-Pesa or Jenga) ── */}
-                            {(paymentSource === 'mpesa' || paymentSource === 'jenga_callback') && (
-                                <div>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                                            {paymentSource==='mpesa' ? '📱 M-Pesa Transactions — click a row to select' : '🔗 Jenga / C2B Transactions — click a row to select'}
-                                        </p>
-                                        <button onClick={loadCallbacks} disabled={loadingCallbacks} className="text-[10px] font-bold px-2 py-1 rounded-lg text-indigo-600 hover:bg-indigo-50 flex items-center gap-1">
-                                            {loadingCallbacks ? <FiRefreshCw size={10} className="animate-spin"/> : <FiRefreshCw size={10}/>} Refresh
-                                        </button>
-                                    </div>
-                                    <div className="rounded-2xl border overflow-hidden" style={{borderColor:'#e2e8f0'}}>
-                                        {loadingCallbacks ? (
-                                            <div className="flex items-center justify-center py-8 gap-2">
-                                                <FiRefreshCw size={16} className="animate-spin text-indigo-400"/>
-                                                <span className="text-xs text-gray-400">Loading transactions…</span>
-                                            </div>
-                                        ) : (
-                                            <div className="max-h-56 overflow-y-auto">
-                                                <table className="w-full" style={{fontSize:12}}>
-                                                    <thead className="sticky top-0 z-10">
-                                                        <tr style={{background:'linear-gradient(90deg,#f8fafc,#f1f5f9)'}}>
-                                                            <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500">👤 Name</th>
-                                                            <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500">📞 Phone</th>
-                                                            <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-green-700">💰 Amount</th>
-                                                            <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-indigo-600">🏷 Code</th>
-                                                            <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500">🕐 Time</th>
-                                                            <th className="px-4 py-2.5"></th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {activeCallbacks.length === 0 ? (
-                                                            <tr><td colSpan={6} className="text-center py-6 text-gray-400">
-                                                                <div className="flex flex-col items-center gap-1">
-                                                                    <span className="text-2xl">📭</span>
-                                                                    <p className="text-xs font-medium">No unmatched transactions found</p>
-                                                                    <p className="text-[10px] text-gray-300">Transactions that have not been linked to a tenant appear here</p>
-                                                                </div>
-                                                            </td></tr>
-                                                        ) : activeCallbacks.map((txn: any, i: number) => {
-                                                            const isSelected = selectedCallback?.id === txn.id;
-                                                            const name = `${txn.first_name||''} ${txn.last_name||''}`.trim() || 'Unknown Sender';
-                                                            const amount = txn.trans_amount||txn.amount||0;
-                                                            const code = txn.trans_id||txn.mpesa_receipt||txn.reference||'-';
-                                                            const rawPhone = txn.msisdn||txn.phone||'-';
-                                                            const time = txn.created_at ? new Date(txn.created_at).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '-';
-                                                            // ── Phone auto-match badge ──
-                                                            const normP = (p: string) => p.replace(/[^0-9]/g,'').replace(/^254/,'0');
-                                                            const txnNorm = normP(rawPhone);
-                                                            const matchedT = txnNorm.length >= 9 ? tenants.find((t:any) => normP(t.phone||'') === txnNorm) : null;
-                                                            return (
-                                                                <tr key={txn.id||i}
-                                                                    className="cursor-pointer transition-all border-b border-gray-50"
-                                                                    style={{background: isSelected ? 'linear-gradient(90deg,#f0fdf4,#dcfce7)' : matchedT ? '#fafff5' : undefined}}
-                                                                    onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLTableRowElement).style.background='#eff6ff'; }}
-                                                                    onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLTableRowElement).style.background = isSelected ? '' : matchedT ? '#fafff5' : ''; }}
-                                                                    onClick={() => selectCallback(txn)}>
-                                                                    <td className="px-4 py-3">
-                                                                        <div className="flex items-center gap-2">
-                                                                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black text-white flex-shrink-0"
-                                                                                style={{background: isSelected ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)'}}>
-                                                                                {name.charAt(0).toUpperCase()}
-                                                                            </div>
-                                                                            <span className="font-semibold text-gray-900">{name}</span>
-                                                                        </div>
-                                                                    </td>
-                                                                    <td className="px-4 py-3 text-gray-500">{rawPhone}</td>
-                                                                    <td className="px-4 py-3">
-                                                                        <span className="font-extrabold text-green-700">{fmt(amount)}</span>
-                                                                    </td>
-                                                                    <td className="px-4 py-3">
-                                                                        <span className="font-mono text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{code}</span>
-                                                                    </td>
-                                                                    <td className="px-4 py-3 text-gray-400 text-[10px]">{time}</td>
-                                                                    <td className="px-4 py-3 min-w-[130px]">
-                                                                        {/* Auto-match badge */}
-                                                                        {matchedT && !isSelected && (
-                                                                            <div className="flex flex-col gap-1">
-                                                                                <span className="inline-flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-300 animate-pulse whitespace-nowrap">
-                                                                                    🎯 {matchedT.tenant_name}
-                                                                                </span>
-                                                                                <span className="text-[9px] text-gray-400">Click to auto-select</span>
-                                                                            </div>
-                                                                        )}
-                                                                        {isSelected ? (
-                                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full bg-green-100 text-green-700">
-                                                                                <FiCheck size={10}/> Selected
-                                                                            </span>
-                                                                        ) : !matchedT ? (
-                                                                            <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition">
-                                                                                Select →
-                                                                            </span>
-                                                                        ) : null}
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {selectedCallback && (
-                                        <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200">
-                                            <FiCheck size={14} className="text-green-600"/>
-                                            <p className="text-xs font-bold text-green-800">
-                                                Selected: <span className="text-green-700">{`${selectedCallback.first_name||''} ${selectedCallback.last_name||''}`.trim()}</span> — {fmt(selectedCallback.trans_amount||selectedCallback.amount||0)} — Code: {selectedCallback.trans_id||selectedCallback.mpesa_receipt||'-'}
-                                            </p>
-                                            <button onClick={() => {setSelectedCallback(null); setPayForm(f=>({...f,amount:'',mpesa_receipt:'',mpesa_phone:''}));}} className="ml-auto text-gray-400 hover:text-red-500"><FiX size={14}/></button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* ── STEP 2: Tenant Select ─────────────────────── */}
-                            <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">② Select Tenant</p>
-                                <select value={payForm.tenant_id} onChange={e => setPayForm({...payForm,tenant_id:parseInt(e.target.value)})} className="select-field">
-                                    <option value={0}>Choose tenant…</option>
-                                    {tenants.map((t: any) => (
-                                        <option key={t.tenant_id} value={t.tenant_id}>
-                                            {t.tenant_name} — {t.arms_units?.unit_name||'?'} ({t.arms_locations?.location_name||t.location_id})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {/* Tenant bill breakdown */}
-                            {selectedTenant && (
-                                <div className="rounded-2xl overflow-hidden border" style={{borderColor:'#c7d2fe'}}>
-                                    <div className="px-4 py-2.5 text-xs font-bold text-white" style={{background:'linear-gradient(90deg,#4f46e5,#7c3aed)'}}>📊 Actual Arrears from Billing Records</div>
-                                    {loadingArrears ? (
-                                        <div className="flex items-center justify-center p-4 gap-2"><FiRefreshCw size={14} className="animate-spin text-indigo-400"/><span className="text-xs text-gray-400">Calculating…</span></div>
-                                    ) : tenantArrearData ? (
-                                        <>
-                                            <div className="grid grid-cols-3 gap-0">
-                                                <div className="p-3 border-r" style={{background:'#fef2f2'}}>
-                                                    <p className="text-[9px] font-bold uppercase text-red-400 mb-1">⏰ Prev. Arrears</p>
-                                                    <p className="text-lg font-extrabold text-red-700">{fmt(tenantArrearData.arrearsTotal)}</p>
-                                                    <p className="text-[10px] text-gray-400">{tenantArrearData.arrearsMonths.length} mth{tenantArrearData.arrearsMonths.length!==1?'s':''} overdue</p>
-                                                </div>
-                                                <div className="p-3 border-r" style={{background:'#eff6ff'}}>
-                                                    <p className="text-[9px] font-bold uppercase text-blue-400 mb-1">🏠 Current Month</p>
-                                                    <p className="text-lg font-extrabold text-blue-700">{fmt(tenantArrearData.currentMonthDue)}</p>
-                                                    <p className="text-[10px] text-gray-400">Monthly rent</p>
-                                                </div>
-                                                <div className="p-3" style={{background:'#fef9c3'}}>
-                                                    <p className="text-[9px] font-bold uppercase text-amber-600 mb-1">💰 Total Due</p>
-                                                    <p className="text-lg font-extrabold text-amber-900">{fmt(tenantArrearData.totalDue)}</p>
-                                                    <p className="text-[10px] text-gray-400">{tenantArrearData.bills.length} unpaid bills</p>
-                                                </div>
-                                            </div>
-                                            {tenantArrearData.bills.length > 0 && (
-                                                <div className="p-3 border-t bg-gray-50">
-                                                    <p className="text-[9px] font-bold uppercase text-gray-400 mb-1.5">📅 Unpaid Bill Months</p>
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {tenantArrearData.bills.map((bill: any) => {
-                                                            const isArrear = bill.billing_month < new Date().toISOString().slice(0,7);
-                                                            return (
-                                                                <div key={bill.billing_id} className="flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-semibold"
-                                                                    style={isArrear ? {background:'#fee2e2',borderColor:'#fca5a5',color:'#b91c1c'} : {background:'#dbeafe',borderColor:'#93c5fd',color:'#1d4ed8'}}>
-                                                                    <span>{isArrear?'⏰':'🏠'}</span>
-                                                                    <span>{new Date(bill.billing_month+'-01').toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span>
-                                                                    <span className="font-extrabold">{fmt(bill.balance)}</span>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </>
-                                    ) : (
-                                        <div className="p-3 bg-green-50 text-xs text-green-700 font-medium">✅ No unpaid bills — tenant is fully up to date!</div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* ── STEP 3: Payment Details ─────────────────────── */}
-                            <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">③ Payment Details</p>
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="text-xs font-medium text-gray-700 mb-1 block">📅 For Month *</label>
-                                            <input type="month" value={payForm.payment_month} onChange={e => setPayForm({...payForm,payment_month:e.target.value})} className="input-field"/>
-                                        </div>
-                                        <div>
-                                            <label className="text-xs font-medium text-gray-700 mb-1 block">💳 Method</label>
-                                            <select value={payForm.payment_method} onChange={e => setPayForm({...payForm,payment_method:e.target.value})} className="select-field">
-                                                <option value="Cash">💵 Cash</option>
-                                                <option value="M-Pesa">📱 M-Pesa (Daraja)</option>
-                                                <option value="Bank Transfer">🏦 Bank Transfer</option>
-                                                <option value="Jenga-M-Pesa">🏦 Jenga M-Pesa</option>
-                                                <option value="Jenga-Equitel">� Jenga Equitel</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-medium text-gray-700 mb-1 block">💰 Amount (KES) *</label>
-                                        <input type="number" value={payForm.amount} onChange={e => setPayForm({...payForm,amount:e.target.value})} className="input-field text-lg font-bold" placeholder="0.00" readOnly={paymentSource!=='manual' && !!selectedCallback} style={paymentSource!=='manual'&&selectedCallback?{background:'#f0fdf4',borderColor:'#86efac'}:{}}/>
-                                        {paymentSource!=='manual'&&selectedCallback&&<p className="text-[10px] text-green-600 mt-1">✓ Amount auto-filled from selected callback</p>}
-                                    </div>
-                                    {payForm.payment_method!=='Cash'&&payForm.payment_method!=='Bank Transfer'&&(
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div><label className="text-xs font-medium text-gray-700 mb-1 block">📝 Transaction Code</label><input value={payForm.mpesa_receipt} onChange={e => setPayForm({...payForm,mpesa_receipt:e.target.value})} className="input-field" placeholder="e.g. SJ12ABC456"/></div>
-                                            <div><label className="text-xs font-medium text-gray-700 mb-1 block">📞 Phone</label><input value={payForm.mpesa_phone} onChange={e => setPayForm({...payForm,mpesa_phone:e.target.value})} className="input-field" placeholder="07XXXXXXXX"/></div>
-                                        </div>
-                                    )}
-                                    <div><label className="text-xs font-medium text-gray-700 mb-1 block">📋 Notes</label><textarea value={payForm.notes} onChange={e => setPayForm({...payForm,notes:e.target.value})} className="input-field" rows={2} placeholder="Optional notes"/></div>
-                                </div>
-                            </div>
-
-                            {/* ── Live Allocation Preview ─────────────────────── */}
-                            {selectedTenant && liveAmount > 0 && (
-                                <div className="rounded-2xl overflow-hidden border" style={{borderColor:'#a5b4fc'}}>
-                                    <div className="px-4 py-2.5 text-xs font-bold text-white" style={{background:'linear-gradient(90deg,#6366f1,#8b5cf6)'}}>💡 Live FIFO Allocation Preview</div>
-                                    <div className="grid grid-cols-2 gap-0">
-                                        <div className="p-3 border-r" style={{background:COL.arrearsPaid.bg}}>
-                                            <p className="text-[9px] font-bold uppercase text-orange-400 mb-1">⬇ Arrears Cleared</p>
-                                            <p className="text-base font-extrabold" style={{color:COL.arrearsPaid.text}}>{fmt(liveArrearsPaid)}</p>
-                                            <p className="text-[10px] text-gray-400">of {fmt(realArrearsTotal)} overdue</p>
-                                        </div>
-                                        <div className="p-3" style={{background:COL.currentRent.bg}}>
-                                            <p className="text-[9px] font-bold uppercase text-blue-400 mb-1">🏠 Current Month Rent</p>
-                                            <p className="text-base font-extrabold" style={{color:COL.currentRent.text}}>{fmt(liveCurrentRentPaid)}</p>
-                                            <p className="text-[10px] text-gray-400">of {fmt(realCurrentMonthDue)} due</p>
-                                        </div>
-                                        {liveCredit>0&&<div className="col-span-2 p-3 border-t" style={{background:'#f0fdf4',borderColor:'#bbf7d0'}}><div className="flex items-center justify-between"><span className="text-xs font-bold text-green-700">💳 Credit (overpayment)</span><span className="text-sm font-extrabold text-green-700">{fmt(liveCredit)}</span></div></div>}
-                                        <div className="col-span-2 p-3 border-t" style={{background:liveBalanceAfter>0?'#fef2f2':'#f0fdf4',borderColor:liveBalanceAfter>0?'#fecaca':'#bbf7d0'}}>
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs font-bold" style={{color:liveBalanceAfter>0?'#b91c1c':'#15803d'}}>{liveBalanceAfter>0?'⚠️ Remaining Balance':'✅ Fully Settled'}</span>
-                                                <span className="text-sm font-extrabold" style={{color:liveBalanceAfter>0?'#b91c1c':'#15803d'}}>{fmt(liveBalanceAfter)}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
-                            <button onClick={() => setShowPayModal(false)} className="btn-outline">Cancel</button>
-                            <button onClick={handlePay} disabled={!payForm.tenant_id||!payForm.amount} className="btn-success flex items-center gap-2"><FiDollarSign size={16}/> Record &amp; Print Receipt</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ════════════════ SUPER EDIT PAYMENT MODAL ════════════════ */}
+            {/* ════════════════ EDIT PAYMENT MODAL ════════════════ */}
             {editingPayment && (() => {
                 const editAmount = parseFloat(editForm.amount) || 0;
-                // Live FIFO preview using tenant's current balance (approximate before save)
-                const tenantBalanceSnapshot = editingPayment.arms_tenants?.balance ?? 0;
-                const currentRentSnapshot = editingPayment.arms_tenants?.monthly_rent ?? 0;
                 const isMpesa = editForm.payment_method === 'M-Pesa' || editForm.payment_method?.startsWith('Jenga');
                 return (
                     <div className="modal-overlay" onClick={() => setEditingPayment(null)}>
-                        <div className="modal-content" style={{maxWidth:560}} onClick={e => e.stopPropagation()}>
-                            {/* Header */}
-                            <div className="relative overflow-hidden" style={{background:'linear-gradient(135deg,#1e40af,#4f46e5,#7c3aed)'}}>
-                                <div className="absolute inset-0 opacity-10" style={{backgroundImage:'radial-gradient(circle,white 1px,transparent 1px)',backgroundSize:'20px 20px'}}/>
-                                <div className="relative px-6 py-5 flex items-center justify-between">
+                        <div className="modal-content" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+                            <div className="relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #1e40af, #4f46e5, #7c3aed)' }}>
+                                <div className="relative px-6 py-5 flex items-center justify-between text-white">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
-                                            <FiEdit2 size={18} className="text-white"/>
+                                            <FiEdit2 size={18} className="text-white" />
                                         </div>
                                         <div>
-                                            <h2 className="text-base font-extrabold text-white">Edit Payment</h2>
-                                            <p className="text-blue-200 text-xs mt-0.5">Changes recalculate all billing balances via FIFO</p>
+                                            <h2 className="text-base font-extrabold text-white">Edit Payment Record</h2>
+                                            <p className="text-blue-200 text-xs mt-0.5">Changes will recompute tenant billing balances via FIFO</p>
                                         </div>
                                     </div>
-                                    <button onClick={() => setEditingPayment(null)} className="p-2 rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition"><FiX size={16}/></button>
+                                    <button onClick={() => setEditingPayment(null)} className="p-2 rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition">
+                                        <FiX size={16} />
+                                    </button>
                                 </div>
                             </div>
 
-                            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
-                                {/* Tenant info banner */}
-                                <div className="rounded-2xl overflow-hidden border border-indigo-100" style={{background:'linear-gradient(135deg,#eef2ff,#f5f3ff)'}}>
-                                    <div className="px-4 py-3 flex items-start justify-between gap-3">
-                                        <div>
-                                            <p className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-0.5">Tenant</p>
-                                            <p className="text-base font-extrabold text-indigo-900">{editingPayment.arms_tenants?.tenant_name || '—'}</p>
-                                            <p className="text-xs text-indigo-500 mt-0.5">
-                                                🏠 {editingPayment.arms_tenants?.arms_units?.unit_name || '—'} &nbsp;·&nbsp;
-                                                📞 {editingPayment.arms_tenants?.phone || '—'}
-                                            </p>
-                                        </div>
-                                        <div className="text-right flex-shrink-0">
-                                            <p className="text-[10px] font-bold text-indigo-400 uppercase mb-0.5">Original</p>
-                                            <p className="text-lg font-extrabold text-indigo-700">{fmt(editingPayment.amount)}</p>
-                                            <p className="text-[10px] text-indigo-400">{new Date(editingPayment.payment_date).toLocaleDateString()}</p>
-                                        </div>
-                                    </div>
-                                    <div className="px-4 py-2 border-t border-indigo-100 bg-white/50 flex items-center gap-2">
-                                        <span className="text-[10px] text-amber-600 font-bold">⚠️ Saving will reverse old billing allocations and re-apply FIFO with the new amount.</span>
-                                    </div>
+                            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                                <div className="rounded-2xl p-4 border border-indigo-100 bg-indigo-50/60">
+                                    <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-0.5">Tenant Folio</p>
+                                    <p className="text-base font-extrabold text-indigo-900">{editingPayment.arms_tenants?.tenant_name || '—'}</p>
+                                    <p className="text-xs text-indigo-600 mt-0.5">
+                                        Room {editingPayment.arms_tenants?.arms_units?.unit_name || '—'} · Phone {editingPayment.arms_tenants?.phone || '—'}
+                                    </p>
                                 </div>
 
-                                {/* ── Row 1: Amount + Month ── */}
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">💰 Amount (KES) *</label>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Amount (KES) *</label>
                                         <input
                                             type="number" min="1" step="any"
                                             value={editForm.amount}
-                                            onChange={e => setEditForm({...editForm, amount: e.target.value})}
-                                            className="input-field text-lg font-extrabold"
+                                            onChange={e => setEditForm({ ...editForm, amount: e.target.value })}
+                                            className="input-field text-base font-extrabold"
                                             placeholder="0.00"
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">📅 For Month *</label>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">For Month *</label>
                                         <input
                                             type="month"
                                             value={editForm.payment_month}
-                                            onChange={e => setEditForm({...editForm, payment_month: e.target.value})}
+                                            onChange={e => setEditForm({ ...editForm, payment_month: e.target.value })}
                                             className="input-field"
                                         />
                                     </div>
                                 </div>
 
-                                {/* ── Row 2: Payment Method ── */}
                                 <div>
-                                    <label className="text-xs font-bold text-gray-700 mb-1.5 block">💳 Payment Method</label>
+                                    <label className="text-xs font-bold text-slate-700 mb-1 block">Payment Method</label>
                                     <div className="flex flex-wrap gap-2">
                                         {[
-                                            {id:'Cash', icon:'💵', color:'#3b82f6'},
-                                            {id:'M-Pesa', icon:'📱', color:'#10b981'},
-                                            {id:'Bank Transfer', icon:'🏦', color:'#6366f1'},
-                                            {id:'Jenga-M-Pesa', icon:'⚡', color:'#f59e0b'},
-                                            {id:'Jenga-Equitel', icon:'💳', color:'#8b5cf6'},
+                                            { id: 'Cash', icon: '💵', color: '#3b82f6' },
+                                            { id: 'M-Pesa', icon: '📱', color: '#10b981' },
+                                            { id: 'Bank Transfer', icon: '🏦', color: '#6366f1' },
+                                            { id: 'Jenga-M-Pesa', icon: '⚡', color: '#f59e0b' },
                                         ].map(m => (
                                             <button
                                                 key={m.id}
                                                 type="button"
-                                                onClick={() => setEditForm({...editForm, payment_method: m.id})}
-                                                className="px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all"
+                                                onClick={() => setEditForm({ ...editForm, payment_method: m.id })}
+                                                className="px-3 py-1.5 rounded-xl text-xs font-bold border-2 transition"
                                                 style={editForm.payment_method === m.id
-                                                    ? {background:m.color,color:'white',borderColor:m.color,boxShadow:`0 4px 12px ${m.color}40`}
-                                                    : {background:'white',color:m.color,borderColor:`${m.color}40`}}
+                                                    ? { background: m.color, color: 'white', borderColor: m.color }
+                                                    : { background: 'white', color: m.color, borderColor: `${m.color}40` }}
                                             >
                                                 {m.icon} {m.id}
                                             </button>
@@ -1375,23 +1327,22 @@ export default function PaymentsPage() {
                                     </div>
                                 </div>
 
-                                {/* ── M-Pesa / Jenga fields ── */}
                                 {isMpesa && (
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-2 gap-3">
                                         <div>
-                                            <label className="text-xs font-bold text-gray-700 mb-1.5 block">📝 Transaction Code</label>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">M-Pesa Code</label>
                                             <input
                                                 value={editForm.mpesa_receipt}
-                                                onChange={e => setEditForm({...editForm, mpesa_receipt: e.target.value})}
+                                                onChange={e => setEditForm({ ...editForm, mpesa_receipt: e.target.value })}
                                                 className="input-field font-mono"
-                                                placeholder="e.g. SJ12ABC456"
+                                                placeholder="e.g. QX1234ABCD"
                                             />
                                         </div>
                                         <div>
-                                            <label className="text-xs font-bold text-gray-700 mb-1.5 block">📞 M-Pesa Phone</label>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Phone Number</label>
                                             <input
                                                 value={editForm.mpesa_phone}
-                                                onChange={e => setEditForm({...editForm, mpesa_phone: e.target.value})}
+                                                onChange={e => setEditForm({ ...editForm, mpesa_phone: e.target.value })}
                                                 className="input-field"
                                                 placeholder="07XXXXXXXX"
                                             />
@@ -1399,73 +1350,37 @@ export default function PaymentsPage() {
                                     </div>
                                 )}
 
-                                {/* ── Reference + Notes ── */}
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">🔖 Reference No.</label>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Reference No.</label>
                                         <input
                                             value={editForm.reference_no}
-                                            onChange={e => setEditForm({...editForm, reference_no: e.target.value})}
+                                            onChange={e => setEditForm({ ...editForm, reference_no: e.target.value })}
                                             className="input-field"
                                             placeholder="Optional"
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-gray-700 mb-1.5 block">📋 Notes</label>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Notes</label>
                                         <input
                                             value={editForm.notes_display}
-                                            onChange={e => setEditForm({...editForm, notes_display: e.target.value})}
+                                            onChange={e => setEditForm({ ...editForm, notes_display: e.target.value })}
                                             className="input-field"
                                             placeholder="Optional"
                                         />
                                     </div>
                                 </div>
-
-                                {/* ── Live Preview of Impact ── */}
-                                {editAmount > 0 && (
-                                    <div className="rounded-2xl overflow-hidden border-2" style={{borderColor:'#a5b4fc'}}>
-                                        <div className="px-4 py-2.5 flex items-center gap-2" style={{background:'linear-gradient(90deg,#4f46e5,#7c3aed)'}}>
-                                            <span className="text-sm">💡</span>
-                                            <span className="text-xs font-extrabold text-white">Impact Preview</span>
-                                            <span className="text-indigo-200 text-[10px] ml-auto">Approximate — exact FIFO on save</span>
-                                        </div>
-                                        <div className="grid grid-cols-3 gap-0">
-                                            <div className="p-3 border-r border-indigo-100" style={{background:'#eef2ff'}}>
-                                                <p className="text-[9px] font-bold uppercase text-indigo-400 mb-1">Old Amount</p>
-                                                <p className="text-base font-extrabold text-indigo-700">{fmt(editingPayment.amount)}</p>
-                                            </div>
-                                            <div className="p-3 border-r border-indigo-100" style={{background:'#f0fdf4'}}>
-                                                <p className="text-[9px] font-bold uppercase text-green-500 mb-1">New Amount</p>
-                                                <p className="text-base font-extrabold text-green-700">{fmt(editAmount)}</p>
-                                            </div>
-                                            <div className="p-3" style={{background: editAmount > editingPayment.amount ? '#f0fdf4' : editAmount < editingPayment.amount ? '#fef2f2' : '#f8fafc'}}>
-                                                <p className="text-[9px] font-bold uppercase mb-1" style={{color: editAmount > editingPayment.amount ? '#15803d' : editAmount < editingPayment.amount ? '#b91c1c' : '#6b7280'}}>Difference</p>
-                                                <p className="text-base font-extrabold" style={{color: editAmount > editingPayment.amount ? '#15803d' : editAmount < editingPayment.amount ? '#b91c1c' : '#6b7280'}}>
-                                                    {editAmount > editingPayment.amount ? '+' : editAmount < editingPayment.amount ? '-' : ''}{fmt(Math.abs(editAmount - editingPayment.amount))}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="px-4 py-2.5 border-t border-indigo-100 bg-indigo-50/50">
-                                            <p className="text-[10px] text-indigo-600 font-semibold">
-                                                🔄 All billing records for this tenant will be reset and replayed in FIFO order with the corrected amount.
-                                            </p>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
 
-                            {/* Footer */}
-                            <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end" style={{background:'#fafafa'}}>
+                            <div className="px-6 py-4 border-t border-slate-100 flex gap-3 justify-end bg-slate-50">
                                 <button onClick={() => setEditingPayment(null)} className="btn-outline">Cancel</button>
                                 <button
                                     onClick={handleEditSave}
                                     disabled={actionLoading || !editForm.amount || parseFloat(editForm.amount) <= 0}
-                                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-extrabold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{background:'linear-gradient(135deg,#4f46e5,#7c3aed)',boxShadow:'0 4px 14px rgba(79,70,229,0.4)'}}
+                                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-extrabold text-white transition disabled:opacity-50"
+                                    style={{ background: 'linear-gradient(135deg, #4f46e5, #7c3aed)' }}
                                 >
-                                    {actionLoading
-                                        ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/><span>Saving…</span></>
-                                        : <><FiSave size={15}/><span>Save & Recalculate</span></>}
+                                    {actionLoading ? 'Saving…' : 'Save & Reallocate'}
                                 </button>
                             </div>
                         </div>
@@ -1473,26 +1388,39 @@ export default function PaymentsPage() {
                 );
             })()}
 
-            {/* Delete Confirm */}
+            {/* ════════════════ DELETE PAYMENT MODAL ════════════════ */}
             {deletingPayment && (
                 <div className="modal-overlay" onClick={() => setDeletingPayment(null)}>
-                    <div className="modal-content" style={{maxWidth:420}} onClick={e => e.stopPropagation()}>
+                    <div className="modal-content" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
                         <div className="p-6 text-center">
-                            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4"><FiTrash2 size={28} className="text-red-600"/></div>
-                            <h2 className="text-lg font-bold text-gray-900 mb-2">Delete Payment?</h2>
-                            <p className="text-xl font-extrabold text-red-600 my-2">{fmt(deletingPayment.amount)}</p>
-                            <p className="text-sm text-gray-500">for <strong>{deletingPayment.arms_tenants?.tenant_name}</strong></p>
-                            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mt-3 border border-amber-100">⚠️ Balances will be restored automatically.</p>
+                            <div className="w-16 h-16 rounded-full bg-rose-100 flex items-center justify-center mx-auto mb-4">
+                                <FiTrash2 size={26} className="text-rose-600" />
+                            </div>
+                            <h2 className="text-lg font-bold text-slate-900 mb-1">Delete Payment Record?</h2>
+                            <p className="text-2xl font-black text-rose-600 my-2">{fmt(deletingPayment.amount)}</p>
+                            <p className="text-xs text-slate-500">
+                                Recorded for <strong>{deletingPayment.arms_tenants?.tenant_name}</strong>
+                            </p>
+                            <p className="text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2 mt-3 border border-amber-200">
+                                ⚠️ Tenant debt balance and cleared bills will be automatically restored.
+                            </p>
                         </div>
                         <div className="px-6 pb-6 flex gap-3">
                             <button onClick={() => setDeletingPayment(null)} className="btn-outline flex-1">Cancel</button>
-                            <button onClick={handleDeleteConfirm} disabled={actionLoading} className="flex-1 px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition flex items-center justify-center gap-2">{actionLoading?<FiTrash2 size={14} className="animate-pulse"/>:<FiTrash2 size={14}/>} Delete</button>
+                            <button
+                                onClick={handleDeleteConfirm}
+                                disabled={actionLoading}
+                                className="flex-1 px-4 py-2 rounded-xl bg-rose-600 text-white text-sm font-bold hover:bg-rose-700 transition"
+                            >
+                                {actionLoading ? 'Deleting…' : 'Confirm Delete'}
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {showReceipt && <RentReceipt payment={showReceipt} onClose={() => setShowReceipt(null)}/>}
+            {/* Receipt Modal */}
+            {showReceipt && <RentReceipt payment={showReceipt} onClose={() => setShowReceipt(null)} />}
         </div>
     );
 }
