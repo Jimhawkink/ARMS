@@ -1,17 +1,18 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     getDashboardStats, getRecentPayments, calculateUnpaidRent,
     get12MonthAnalytics, getCurrentMonthGrid, getLocations,
-    getTenants, getArrearsPaymentsDetail, getExpenseSummary, getProfitAndLoss, getNetRevenueSummary
+    getTenants, getArrearsPaymentsDetail, getNetRevenueSummary
 } from '@/lib/supabase';
 import {
     FiUsers, FiHome, FiDollarSign, FiAlertTriangle, FiTrendingUp,
     FiPercent, FiCalendar, FiCreditCard, FiSearch, FiFilter, FiX,
     FiCheckCircle, FiFileText, FiSmartphone, FiRefreshCw, FiPlus,
     FiPhone, FiTrendingDown, FiActivity, FiArrowUpRight, FiArrowDownRight,
-    FiBarChart2, FiMessageSquare, FiMapPin, FiClock, FiZap
+    FiBarChart2, FiMessageSquare, FiMapPin, FiClock, FiZap, FiShield,
+    FiTarget, FiLayers, FiChevronRight, FiChevronLeft, FiAward, FiEye
 } from 'react-icons/fi';
 import {
     Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement,
@@ -28,110 +29,264 @@ ChartJS.register(
 
 /* ─── Quick Actions ─── */
 const quickActions = [
-    { label: 'Record Payment', emoji: '💳', href: '/dashboard/payments', bg: '#f0fdf4', color: '#15803d', ring: '#bbf7d0' },
-    { label: 'Mark Paid', emoji: '✅', href: '/dashboard/billing', bg: '#eff6ff', color: '#1d4ed8', ring: '#bfdbfe' },
-    { label: 'Statement', emoji: '📄', href: '/dashboard/reports', bg: '#f5f3ff', color: '#6d28d9', ring: '#ddd6fe' },
-    { label: 'M-Pesa', emoji: '📱', href: '/dashboard/payments', bg: '#f0fdfa', color: '#0f766e', ring: '#99f6e4' },
-    { label: 'Send Bulk SMS', emoji: '💬', href: '/dashboard/sms', bg: '#fdf4ff', color: '#7e22ce', ring: '#e9d5ff' },
-    { label: 'Add Tenant', emoji: '➕', href: '/dashboard/tenants', bg: '#fdf2f8', color: '#9d174d', ring: '#fbcfe8' },
+    { label: 'Record Payment', emoji: '💳', href: '/dashboard/payments', bg: '#ecfdf5', color: '#047857', border: '#a7f3d0' },
+    { label: 'Billing Grid', emoji: '🧾', href: '/dashboard/billing', bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+    { label: 'Tenant Statements', emoji: '📄', href: '/dashboard/reports', bg: '#f5f3ff', color: '#6d28d9', border: '#ddd6fe' },
+    { label: 'M-Pesa Paybill', emoji: '📱', href: '/dashboard/payments', bg: '#f0fdfa', color: '#0f766e', border: '#99f6e4' },
+    { label: 'Bulk SMS Alert', emoji: '💬', href: '/dashboard/sms', bg: '#fdf4ff', color: '#7e22ce', border: '#e9d5ff' },
+    { label: 'Register Tenant', emoji: '➕', href: '/dashboard/tenants', bg: '#fff1f2', color: '#be123c', border: '#fecdd3' },
 ];
 
 /* ─── Time-ago helper ─── */
 function timeAgo(dateStr: string): string {
+    if (!dateStr) return 'just now';
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
 }
 
-/* ─── Smart Banner ─── */
-function SmartBanner({ unpaidCount, totalArrears, collectionRate, totalOwed, fmt }: any) {
-    if (unpaidCount === 0 && totalArrears === 0) {
-        return (
-            <div className="rounded-2xl px-5 py-4 flex items-center gap-4"
-                style={{ background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', border: '1.5px solid #86efac' }}>
-                <span className="text-3xl">🎉</span>
-                <div>
-                    <p className="font-bold text-green-800 text-sm">All tenants are up to date!</p>
-                    <p className="text-green-600 text-xs mt-0.5">No outstanding rent or arrears. Excellent collection performance!</p>
-                </div>
-                <div className="ml-auto flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-green-700 bg-green-100 border border-green-200">
-                    <FiCheckCircle size={13} /> 100% Collected
-                </div>
-            </div>
-        );
-    }
-    if (collectionRate < 50) {
-        return (
-            <div className="rounded-2xl px-5 py-4 flex items-center gap-4"
-                style={{ background: 'linear-gradient(135deg,#fff1f2,#ffe4e6)', border: '1.5px solid #fca5a5' }}>
-                <span className="text-3xl">🚨</span>
-                <div>
-                    <p className="font-bold text-red-800 text-sm">Low collection rate — immediate action required</p>
-                    <p className="text-red-600 text-xs mt-0.5">{unpaidCount} tenant{unpaidCount !== 1 ? 's' : ''} overdue · {fmt(totalOwed)} total owed · Only {collectionRate}% collected</p>
-                </div>
-                <a href="/dashboard/unpaid" className="ml-auto flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-red-700 bg-red-100 border border-red-200 hover:bg-red-200 transition whitespace-nowrap">
-                    <FiAlertTriangle size={13} /> View Overdue
-                </a>
-            </div>
-        );
-    }
+/* ─── Super Premium Glassmorphic Gradient KPI Card ─── */
+interface GlassmorphicKpiProps {
+    title: string;
+    value: string | number;
+    subValue?: string;
+    pillText?: string;
+    pillType?: 'positive' | 'warning' | 'neutral' | 'danger';
+    icon: React.ReactNode;
+    gradient: string;
+    shadowColor: string;
+    pulse?: boolean;
+    href?: string;
+    trend?: number;
+    trendLabel?: string;
+}
+
+function GlassmorphicKpiCard({
+    title,
+    value,
+    subValue,
+    pillText,
+    pillType = 'neutral',
+    icon,
+    gradient,
+    shadowColor,
+    pulse = false,
+    href,
+    trend,
+    trendLabel
+}: GlassmorphicKpiProps) {
+    const router = useRouter();
+
     return (
-        <div className="rounded-2xl px-5 py-4 flex items-center gap-4"
-            style={{ background: 'linear-gradient(135deg,#fffbeb,#fef3c7)', border: '1.5px solid #fde68a' }}>
-            <span className="text-3xl">⚠️</span>
-            <div>
-                <p className="font-bold text-amber-800 text-sm">{unpaidCount} tenant{unpaidCount !== 1 ? 's' : ''} yet to pay this period</p>
-                <p className="text-amber-600 text-xs mt-0.5">{fmt(totalArrears)} in arrears · {fmt(totalOwed)} total owed · {collectionRate}% collected</p>
+        <div
+            onClick={() => { if (href) router.push(href); }}
+            className={`relative overflow-hidden rounded-3xl p-5 text-white transition-all duration-300 group select-none ${href ? 'cursor-pointer' : ''}`}
+            style={{
+                background: gradient,
+                boxShadow: `0 14px 30px -8px ${shadowColor}`,
+            }}
+            onMouseEnter={e => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.boxShadow = `0 20px 38px -6px ${shadowColor}`;
+            }}
+            onMouseLeave={e => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = `0 14px 30px -8px ${shadowColor}`;
+            }}
+        >
+            {/* Ambient glass glows & decorative shapes */}
+            <div className="absolute -right-8 -bottom-8 w-32 h-32 rounded-full bg-white/10 blur-2xl pointer-events-none group-hover:scale-125 transition-transform duration-500" />
+            <div className="absolute right-3 top-3 w-16 h-16 rounded-full border border-white/15 pointer-events-none" />
+            <div className="absolute -left-6 -top-6 w-20 h-20 rounded-full bg-white/10 blur-xl pointer-events-none" />
+
+            {/* Header row: Label + Glass icon capsule */}
+            <div className="relative z-10 flex items-start justify-between gap-2 mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-white/80">
+                    {title}
+                </span>
+                <div className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 text-white shadow-sm flex-shrink-0">
+                    {icon}
+                    {pulse && (
+                        <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border-2 border-white"></span>
+                        </span>
+                    )}
+                </div>
             </div>
-            <a href="/dashboard/unpaid" className="ml-auto flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-100 border border-amber-200 hover:bg-amber-200 transition whitespace-nowrap">
-                <FiFileText size={13} /> Send Reminders
-            </a>
+
+            {/* Main Primary Value */}
+            <div className="relative z-10">
+                <p className="text-2xl sm:text-3xl font-black tracking-tight text-white drop-shadow-sm font-sans">
+                    {value}
+                </p>
+            </div>
+
+            {/* Bottom info row with glass pill & subValue */}
+            <div className="relative z-10 mt-3 pt-2.5 border-t border-white/15 flex items-center justify-between flex-wrap gap-1.5 text-xs">
+                {subValue && (
+                    <span className="text-white/85 font-medium text-[11px] truncate max-w-[170px]">
+                        {subValue}
+                    </span>
+                )}
+                {pillText && (
+                    <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold backdrop-blur-md border shadow-sm ${
+                            pillType === 'positive'
+                                ? 'bg-emerald-500/30 text-white border-emerald-300/40'
+                                : pillType === 'danger'
+                                ? 'bg-rose-500/35 text-white border-rose-300/40'
+                                : pillType === 'warning'
+                                ? 'bg-amber-500/35 text-white border-amber-300/40'
+                                : 'bg-white/25 text-white border-white/30'
+                        }`}
+                    >
+                        {trend !== undefined && (
+                            trend >= 0 ? <FiArrowUpRight size={11} /> : <FiArrowDownRight size={11} />
+                        )}
+                        {pillText}
+                    </span>
+                )}
+            </div>
+
+            {href && (
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-70 transition-opacity">
+                    <FiArrowUpRight size={14} className="text-white/80" />
+                </div>
+            )}
         </div>
     );
 }
 
-/* ─── KPI Card ─── */
-function KpiCard({ label, value, emoji, bg, border, pulse, trend, sub, href }: any) {
-    const router = useRouter();
-    const handleClick = () => { if (href) router.push(href); };
-    return (
-        <div
-            onClick={handleClick}
-            className={`bg-white rounded-2xl p-4 transition-all duration-300 group relative overflow-hidden ${href ? 'cursor-pointer' : 'cursor-default'}`}
-            style={{ borderLeft: `4px solid ${border}`, border: `1px solid #e8edf5`, borderLeftWidth: 4, borderLeftColor: border, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}
-            onMouseEnter={e => {
-                (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)';
-                (e.currentTarget as HTMLDivElement).style.boxShadow = `0 8px 24px ${border}30`;
-            }}
-            onMouseLeave={e => {
-                (e.currentTarget as HTMLDivElement).style.transform = '';
-                (e.currentTarget as HTMLDivElement).style.boxShadow = '0 1px 4px rgba(0,0,0,0.04)';
-            }}
-        >
-            <div className="flex items-start justify-between mb-3">
-                <p className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">{label}</p>
-                <div className="relative">
-                    <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base" style={{ background: bg }}>
-                        <span>{emoji}</span>
+/* ─── Intelligent Rental Advisory Banner ─── */
+function IntelligentAdvisoryBanner({
+    unpaidCount,
+    totalArrears,
+    collectionRate,
+    totalOwed,
+    tenantsNewToday,
+    paidTodayAmount,
+    fmt,
+    router
+}: any) {
+    if (unpaidCount === 0 && totalArrears === 0) {
+        return (
+            <div
+                className="relative overflow-hidden rounded-3xl p-5 border border-emerald-200 shadow-sm flex items-center justify-between flex-wrap gap-4"
+                style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #dcfce7 100%)' }}
+            >
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center text-2xl shadow-md shadow-emerald-500/20 flex-shrink-0">
+                        🏆
                     </div>
-                    {pulse && <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-white animate-pulse" />}
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-extrabold text-emerald-950 text-base">Perfect Rent Compliance — 100% Up to Date</h3>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-200/80 text-emerald-800">
+                                0 Arrears
+                            </span>
+                        </div>
+                        <p className="text-emerald-700 text-xs mt-0.5">
+                            All tenant folios are fully reconciled. No pending arrears or late rent this billing cycle.
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => router.push('/dashboard/reports')}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 transition"
+                    >
+                        View Financial Statement
+                    </button>
                 </div>
             </div>
-            <p className="text-[22px] font-black" style={{ color: '#0f172a' }}>{value}</p>
-            {trend !== undefined && (
-                <div className="flex items-center gap-1 mt-1.5">
-                    {trend >= 0 ? <FiArrowUpRight size={12} className="text-green-500" /> : <FiArrowDownRight size={12} className="text-red-500" />}
-                    <span className={`text-[10px] font-semibold ${trend >= 0 ? 'text-green-500' : 'text-red-500'}`}>{Math.abs(trend)}%</span>
-                    {sub && <span className="text-[10px] text-gray-400 ml-1">{sub}</span>}
+        );
+    }
+
+    if (collectionRate < 50) {
+        return (
+            <div
+                className="relative overflow-hidden rounded-3xl p-5 border border-rose-200 shadow-sm flex items-center justify-between flex-wrap gap-4"
+                style={{ background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 50%, #fecdd3 100%)' }}
+            >
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-rose-500 text-white flex items-center justify-center text-2xl shadow-md shadow-rose-500/20 flex-shrink-0">
+                        🚨
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-extrabold text-rose-950 text-base">
+                                Rent Recovery Alert — Collection at {collectionRate}%
+                            </h3>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-200 text-rose-900 animate-pulse">
+                                Immediate Action
+                            </span>
+                        </div>
+                        <p className="text-rose-700 text-xs mt-0.5">
+                            {unpaidCount} tenant{unpaidCount !== 1 ? 's' : ''} have unpaid balances totaling <b>{fmt(totalOwed)}</b>. Dispatch reminders or prompt M-Pesa payments now.
+                        </p>
+                    </div>
                 </div>
-            )}
-            {trend === undefined && sub && <p className="text-[11px] text-gray-400 mt-1">{sub}</p>}
-            <div className="absolute -bottom-6 -right-6 w-20 h-20 rounded-full opacity-[0.06] group-hover:opacity-[0.12] transition-opacity" style={{ background: border }} />
-            {href && <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-40 transition-opacity"><FiArrowUpRight size={12} className="text-gray-400" /></div>}
+                <div className="flex items-center gap-2.5">
+                    <button
+                        onClick={() => router.push('/dashboard/sms')}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold bg-rose-600 text-white shadow-md shadow-rose-600/20 hover:bg-rose-700 transition flex items-center gap-1.5"
+                    >
+                        <FiMessageSquare size={13} /> Send SMS Demand
+                    </button>
+                    <button
+                        onClick={() => router.push('/dashboard/unpaid')}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold bg-white text-rose-700 border border-rose-200 hover:bg-rose-50 transition"
+                    >
+                        Review Overdue Folios
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            className="relative overflow-hidden rounded-3xl p-5 border border-amber-200 shadow-sm flex items-center justify-between flex-wrap gap-4"
+            style={{ background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 50%, #fde68a 100%)' }}
+        >
+            <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center text-2xl shadow-md shadow-amber-500/20 flex-shrink-0">
+                    ⚡
+                </div>
+                <div>
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-extrabold text-amber-950 text-base">
+                            Active Collection Run — {collectionRate}% Collected
+                        </h3>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-200/90 text-amber-900">
+                            {unpaidCount} Pending
+                        </span>
+                    </div>
+                    <p className="text-amber-800 text-xs mt-0.5">
+                        {fmt(totalArrears)} remaining in active balances · {paidTodayAmount > 0 ? `${fmt(paidTodayAmount)} received today` : 'No payments logged yet today'}.
+                    </p>
+                </div>
+            </div>
+            <div className="flex items-center gap-2.5">
+                <button
+                    onClick={() => router.push('/dashboard/sms')}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-600 text-white shadow-md shadow-amber-600/20 hover:bg-amber-700 transition flex items-center gap-1.5"
+                >
+                    <FiMessageSquare size={13} /> Broadcast SMS
+                </button>
+                <button
+                    onClick={() => router.push('/dashboard/billing')}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold bg-white text-amber-900 border border-amber-200 hover:bg-amber-50 transition"
+                >
+                    Billing Overview
+                </button>
+            </div>
         </div>
     );
 }
@@ -139,7 +294,7 @@ function KpiCard({ label, value, emoji, bg, border, pulse, trend, sub, href }: a
 export default function DashboardPage() {
     const router = useRouter();
 
-    //  Core data state 
+    // ─── Core Data State ───
     const [stats, setStats] = useState<any>(null);
     const [recentPayments, setRecentPayments] = useState<any[]>([]);
     const [unpaidRentData, setUnpaidRentData] = useState<any[]>([]);
@@ -150,13 +305,15 @@ export default function DashboardPage() {
     const [allTenants, setAllTenants] = useState<any[]>([]);
     const [netRevenue, setNetRevenue] = useState<any>(null);
 
-    //  UI state 
+    // ─── UI & Interactive State ───
     const [loading, setLoading] = useState(true);
-    const [gridTab, setGridTab] = useState<'paid' | 'unpaid'>('unpaid');
+    const [gridTab, setGridTab] = useState<'all' | 'unpaid' | 'paid'>('unpaid');
     const [showArrearsGrid, setShowArrearsGrid] = useState(false);
     const [chartTab, setChartTab] = useState<'revenue' | 'cashmpesa' | 'rate' | 'radar'>('revenue');
+    const [gridPage, setGridPage] = useState(1);
+    const pageSize = 12;
 
-    //  Search & filter state 
+    // ─── Search & Rich Filter State ───
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [showSearchDropdown, setShowSearchDropdown] = useState(false);
@@ -169,15 +326,20 @@ export default function DashboardPage() {
     const [filterArrears, setFilterArrears] = useState<string>('');
     const [showFilters, setShowFilters] = useState(false);
 
-    //  Mini tenant search 
+    // ─── Mini Tenant Quick Balance State ───
     const [miniSearch, setMiniSearch] = useState('');
     const [miniResults, setMiniResults] = useState<any[]>([]);
 
-    //  Live search 
+    // ─── Live Search Filter ───
     useEffect(() => {
-        if (!searchQuery.trim()) { setSearchResults([]); setShowSearchDropdown(false); setHighlightedIndex(-1); return; }
+        if (!searchQuery.trim()) {
+            setSearchResults([]);
+            setShowSearchDropdown(false);
+            setHighlightedIndex(-1);
+            return;
+        }
         const q = searchQuery.toLowerCase().trim();
-        const results = allTenants.filter((t: any) =>
+        const results = (allTenants || []).filter((t: any) =>
             t.tenant_name?.toLowerCase().includes(q) ||
             t.phone?.includes(q) ||
             t.arms_units?.unit_name?.toLowerCase().includes(q) ||
@@ -190,11 +352,14 @@ export default function DashboardPage() {
         setHighlightedIndex(-1);
     }, [searchQuery, allTenants]);
 
-    //  Mini search 
+    // ─── Mini Quick Balance Search ───
     useEffect(() => {
-        if (!miniSearch.trim()) { setMiniResults([]); return; }
+        if (!miniSearch.trim()) {
+            setMiniResults([]);
+            return;
+        }
         const q = miniSearch.toLowerCase().trim();
-        setMiniResults(allTenants.filter((t: any) =>
+        setMiniResults((allTenants || []).filter((t: any) =>
             t.tenant_name?.toLowerCase().includes(q) ||
             t.phone?.includes(q) ||
             t.arms_units?.unit_name?.toLowerCase().includes(q)
@@ -202,82 +367,69 @@ export default function DashboardPage() {
     }, [miniSearch, allTenants]);
 
     useEffect(() => {
-        const h = (e: MouseEvent) => { if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowSearchDropdown(false); };
-        document.addEventListener('mousedown', h);
-        return () => document.removeEventListener('mousedown', h);
+        const handler = (e: MouseEvent) => {
+            if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+                setShowSearchDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
     }, []);
 
     const handleSearchKeyDown = (e: React.KeyboardEvent) => {
         if (!showSearchDropdown || searchResults.length === 0) return;
-        if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightedIndex(p => Math.min(p + 1, searchResults.length - 1)); }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightedIndex(p => Math.max(p - 1, 0)); }
-        else if (e.key === 'Enter' && highlightedIndex >= 0) { e.preventDefault(); setSearchQuery(searchResults[highlightedIndex].tenant_name); setShowSearchDropdown(false); }
-        else if (e.key === 'Escape') setShowSearchDropdown(false);
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setHighlightedIndex(p => Math.min(p + 1, searchResults.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setHighlightedIndex(p => Math.max(p - 1, 0));
+        } else if (e.key === 'Enter' && highlightedIndex >= 0) {
+            e.preventDefault();
+            setSearchQuery(searchResults[highlightedIndex].tenant_name);
+            setShowSearchDropdown(false);
+        } else if (e.key === 'Escape') {
+            setShowSearchDropdown(false);
+        }
     };
 
-    //  Filtered grid items 
-    const filteredGridItems = (() => {
-        let items = gridTab === 'paid' ? (monthGrid?.paid || []) : (monthGrid?.unpaid || []);
-        if (searchQuery) {
-            const q = searchQuery.toLowerCase();
-            items = items.filter((b: any) =>
-                b.arms_tenants?.tenant_name?.toLowerCase().includes(q) ||
-                b.arms_units?.unit_name?.toLowerCase().includes(q) ||
-                b.arms_locations?.location_name?.toLowerCase().includes(q) ||
-                b.arms_tenants?.phone?.includes(q)
-            );
-        }
-        if (filterLocation) items = items.filter((b: any) => String(b.location_id) === filterLocation);
-        if (filterDateFrom) items = items.filter((b: any) => b.billing_date >= filterDateFrom);
-        if (filterDateTo) items = items.filter((b: any) => b.billing_date <= filterDateTo);
-        if (filterArrears === 'below5k') items = items.filter((b: any) => (b.balance || 0) > 0 && (b.balance || 0) < 5000);
-        else if (filterArrears === '5kto10k') items = items.filter((b: any) => (b.balance || 0) >= 5000 && (b.balance || 0) < 10000);
-        else if (filterArrears === 'above10k') items = items.filter((b: any) => (b.balance || 0) >= 10000);
-        return items;
-    })();
-
-    const filteredOverdue = (() => {
-        let items = unpaidRentData;
-        if (searchQuery) {
-            const q = searchQuery.toLowerCase();
-            items = items.filter((t: any) =>
-                t.tenant_name?.toLowerCase().includes(q) ||
-                t.arms_units?.unit_name?.toLowerCase().includes(q) ||
-                t.arms_locations?.location_name?.toLowerCase().includes(q) ||
-                t.phone?.includes(q)
-            );
-        }
-        if (filterLocation) items = items.filter((t: any) => String(t.location_id) === filterLocation);
-        return items;
-    })();
-
-    const clearFilters = () => { setSearchQuery(''); setFilterLocation(''); setFilterDateFrom(''); setFilterDateTo(''); setFilterArrears(''); };
-    const hasActiveFilters = searchQuery || filterLocation || filterDateFrom || filterDateTo || filterArrears;
-
-    //  Data loading 
+    // ─── Data Loading ───
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
         topProgress.start();
         try {
             const lid = locId ?? undefined;
             const [s, rp, ur, an, mg, apd, nr] = await Promise.all([
-                getDashboardStats(lid), getRecentPayments(10, lid), calculateUnpaidRent(lid),
-                get12MonthAnalytics(lid), getCurrentMonthGrid(lid), getArrearsPaymentsDetail(lid),
+                getDashboardStats(lid),
+                getRecentPayments(15, lid),
+                calculateUnpaidRent(lid),
+                get12MonthAnalytics(lid),
+                getCurrentMonthGrid(lid),
+                getArrearsPaymentsDetail(lid),
                 getNetRevenueSummary(lid)
             ]);
-            setStats(s); setRecentPayments(rp); setUnpaidRentData(ur);
-            setAnalytics(an); setMonthGrid(mg); setArrearsPaymentsDetail(apd);
+            setStats(s);
+            setRecentPayments(rp || []);
+            setUnpaidRentData(ur || []);
+            setAnalytics(an || []);
+            setMonthGrid(mg);
+            setArrearsPaymentsDetail(apd || []);
             setNetRevenue(nr);
-        } catch (err) { console.error(err); } finally { topProgress.done(); }
-        setLoading(false);
+        } catch (err) {
+            console.error('Error loading dashboard data:', err);
+        } finally {
+            topProgress.done();
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
         const saved = localStorage.getItem('arms_location');
         const lid = saved ? parseInt(saved) : null;
         loadData(lid);
-        getLocations().then(l => setLocations(l));
-        getTenants().then(t => setAllTenants(t));
+        getLocations().then(l => setLocations(l || []));
+        getTenants().then(t => setAllTenants(t || []));
+
         const handler = (e: any) => loadData(e.detail);
         window.addEventListener('arms-location-change', handler);
         return () => window.removeEventListener('arms-location-change', handler);
@@ -285,426 +437,909 @@ export default function DashboardPage() {
 
     const fmt = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
 
-    if (loading) return (
-        <div className="flex flex-col items-center justify-center h-96 gap-4">
-            <div className="relative">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl"
-                    style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}></div>
-                <div className="absolute -inset-2 rounded-3xl border-2 border-indigo-200 animate-ping opacity-30" />
-            </div>
-            <div className="text-center">
-                <p className="text-sm font-bold text-gray-700">Loading dashboard</p>
-                <p className="text-xs text-gray-400 mt-1">Fetching your rental data</p>
-            </div>
-        </div>
-    );
+    // ─── Filtering Logic for Billing Grid ───
+    const filteredGridItems = useMemo(() => {
+        let items: any[] = [];
+        if (gridTab === 'paid') {
+            items = monthGrid?.paid || [];
+        } else if (gridTab === 'unpaid') {
+            items = monthGrid?.unpaid || [];
+        } else {
+            items = [...(monthGrid?.paid || []), ...(monthGrid?.unpaid || [])];
+        }
 
-    //  Derived values 
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase().trim();
+            items = items.filter((b: any) =>
+                b.arms_tenants?.tenant_name?.toLowerCase().includes(q) ||
+                b.arms_units?.unit_name?.toLowerCase().includes(q) ||
+                b.arms_locations?.location_name?.toLowerCase().includes(q) ||
+                b.arms_tenants?.phone?.includes(q)
+            );
+        }
+
+        if (filterLocation) {
+            items = items.filter((b: any) => String(b.location_id) === filterLocation);
+        }
+        if (filterDateFrom) {
+            items = items.filter((b: any) => b.billing_date >= filterDateFrom);
+        }
+        if (filterDateTo) {
+            items = items.filter((b: any) => b.billing_date <= filterDateTo);
+        }
+        if (filterArrears === 'below5k') {
+            items = items.filter((b: any) => (b.balance || 0) > 0 && (b.balance || 0) < 5000);
+        } else if (filterArrears === '5kto10k') {
+            items = items.filter((b: any) => (b.balance || 0) >= 5000 && (b.balance || 0) < 10000);
+        } else if (filterArrears === 'above10k') {
+            items = items.filter((b: any) => (b.balance || 0) >= 10000);
+        }
+
+        return items;
+    }, [monthGrid, gridTab, searchQuery, filterLocation, filterDateFrom, filterDateTo, filterArrears]);
+
+    // ─── Filtering Overdue Tenants ───
+    const filteredOverdue = useMemo(() => {
+        let items = unpaidRentData.filter((t: any) => (t.totalOwed || 0) > 0);
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase().trim();
+            items = items.filter((t: any) =>
+                t.tenant_name?.toLowerCase().includes(q) ||
+                t.arms_units?.unit_name?.toLowerCase().includes(q) ||
+                t.arms_locations?.location_name?.toLowerCase().includes(q) ||
+                t.phone?.includes(q)
+            );
+        }
+        if (filterLocation) {
+            items = items.filter((t: any) => String(t.location_id) === filterLocation);
+        }
+        if (filterArrears === 'below5k') {
+            items = items.filter((t: any) => (t.totalOwed || 0) < 5000);
+        } else if (filterArrears === '5kto10k') {
+            items = items.filter((t: any) => (t.totalOwed || 0) >= 5000 && (t.totalOwed || 0) < 10000);
+        } else if (filterArrears === 'above10k') {
+            items = items.filter((t: any) => (t.totalOwed || 0) >= 10000);
+        }
+        return items.sort((a, b) => (b.totalOwed || 0) - (a.totalOwed || 0));
+    }, [unpaidRentData, searchQuery, filterLocation, filterArrears]);
+
+    const clearFilters = () => {
+        setSearchQuery('');
+        setFilterLocation('');
+        setFilterDateFrom('');
+        setFilterDateTo('');
+        setFilterArrears('');
+        setGridPage(1);
+    };
+
+    const hasActiveFilters = Boolean(searchQuery || filterLocation || filterDateFrom || filterDateTo || filterArrears);
+
+    // ─── Derived Calculations ───
     const totalArrearsFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalUnpaid || 0), 0);
     const totalPenaltiesFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalPenalty || 0), 0);
     const totalOwedFromCalc = unpaidRentData.reduce((s: number, t: any) => s + (t.totalOwed || 0), 0);
     const collRate = stats?.collectionRate || 0;
-    const occupancyRate = stats?.totalUnits > 0 ? Math.round(((stats?.activeTenants || 0) / stats?.totalUnits) * 100) : 0;
+    const totalUnitsCount = stats?.totalUnits || 0;
+    const activeTenantsCount = stats?.activeTenants || 0;
+    const vacantUnitsCount = Math.max(0, totalUnitsCount - activeTenantsCount);
+    const occupancyRate = totalUnitsCount > 0 ? Math.round((activeTenantsCount / totalUnitsCount) * 100) : 0;
     const tenantsNewToday = stats?.tenantsNewToday || 0;
     const todayStr = new Date().toISOString().split('T')[0];
 
     // Paid today
-    const paidTodayAmount = recentPayments
-        .filter((p: any) => p.payment_date?.startsWith(todayStr))
-        .reduce((s: number, p: any) => s + (p.amount || 0), 0);
-    const paidTodayCount = recentPayments.filter((p: any) => p.payment_date?.startsWith(todayStr)).length;
+    const paidTodayPayments = recentPayments.filter((p: any) => p.payment_date?.startsWith(todayStr));
+    const paidTodayAmount = paidTodayPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
+    const paidTodayCount = paidTodayPayments.length;
 
-    // Month-over-month comparison
+    // Month-over-month calculation
     const currentMonthAnalytics = analytics[analytics.length - 1];
     const prevMonthAnalytics = analytics[analytics.length - 2];
-    const momChange = prevMonthAnalytics?.collected > 0
+    const momChange = (prevMonthAnalytics?.collected > 0)
         ? Math.round(((currentMonthAnalytics?.collected - prevMonthAnalytics?.collected) / prevMonthAnalytics?.collected) * 100)
         : 0;
 
-    // Arrears histogram brackets
-    const arrearsBrackets = [
-        { label: '05K', count: unpaidRentData.filter((t: any) => t.totalOwed > 0 && t.totalOwed < 5000).length },
-        { label: '5K10K', count: unpaidRentData.filter((t: any) => t.totalOwed >= 5000 && t.totalOwed < 10000).length },
-        { label: '10K20K', count: unpaidRentData.filter((t: any) => t.totalOwed >= 10000 && t.totalOwed < 20000).length },
-        { label: '20K+', count: unpaidRentData.filter((t: any) => t.totalOwed >= 20000).length },
-    ];
+    // Advanced Metrics: RevPAU, Vacancy Cost, Digital Payment Velocity
+    const revPau = totalUnitsCount > 0 ? Math.round((stats?.monthlyBilled || 0) / totalUnitsCount) : 0;
+    const avgRentPerUnit = totalUnitsCount > 0 ? Math.round((stats?.maxExpectedRevenue || 0) / totalUnitsCount) : 0;
+    const vacancyOpportunityLoss = vacantUnitsCount * avgRentPerUnit;
+    const netMonthCollected = netRevenue?.month?.collected || 0;
+    const netMonthExpenses = netRevenue?.month?.expenses || 0;
+    const netMonthProfit = netRevenue?.month?.net || 0;
+    const operatingMargin = netMonthCollected > 0 ? Math.round((netMonthProfit / netMonthCollected) * 100) : 0;
 
-    // Payment method breakdown (all-time from analytics)
+    // Payment methods total
     const totalCash = analytics.reduce((s, a) => s + (a.cashCollected || 0), 0);
     const totalMpesa = analytics.reduce((s, a) => s + (a.mpesaCollected || 0), 0);
-    const totalOther = Math.max(0, (stats?.monthlyCollected || 0) - (analytics[analytics.length - 1]?.cashCollected || 0) - (analytics[analytics.length - 1]?.mpesaCollected || 0));
+    const totalPaymentsVolume = totalCash + totalMpesa;
+    const mpesaAdoptionRate = totalPaymentsVolume > 0 ? Math.round((totalMpesa / totalPaymentsVolume) * 100) : 0;
 
-    // Vacancy by location
-    const locationOccupancy = locations.map(loc => {
-        const locTenants = allTenants.filter((t: any) => t.location_id === loc.location_id && t.status === 'Active');
-        return { name: loc.location_name, occupied: locTenants.length, total: locTenants.length + 1 };
-    });
-
-    // Top 5 overdue
-    const top5Overdue = [...unpaidRentData]
-        .sort((a: any, b: any) => (b.totalOwed || 0) - (a.totalOwed || 0))
-        .slice(0, 5);
-
-
-    // -- KPI Cards --
-    const kpiCards = [
-        { label: 'Total Tenants', value: stats?.activeTenants || 0, emoji: '👤', bg: '#eef2ff', border: '#818cf8', sub: `${occupancyRate}% occupancy`, href: '/dashboard/tenants' },
-        { label: '🆕 New Today', value: tenantsNewToday, emoji: '🎉', bg: '#f0fdf4', border: '#34d399', sub: tenantsNewToday > 0 ? 'Moved in today!' : 'No new tenants', pulse: tenantsNewToday > 0, href: '/dashboard/tenants' },
-        { label: 'Occupied Units', value: `${stats?.activeTenants || 0} / ${stats?.totalUnits || 0}`, emoji: '🚪', bg: '#ecfdf5', border: '#6ee7b7', sub: `${(stats?.totalUnits || 0) - (stats?.activeTenants || 0)} vacant`, href: '/dashboard/units' },
-        { label: 'Total Units', value: stats?.totalUnits || 0, emoji: '🏠', bg: '#f0f9ff', border: '#38bdf8', sub: `${stats?.occupiedUnits || 0} occupied · ${stats?.vacantUnits || 0} vacant`, href: '/dashboard/units' },
-        { label: 'Max Expected Revenue', value: fmt(stats?.maxExpectedRevenue || 0), emoji: '📊', bg: '#faf5ff', border: '#c084fc', sub: 'If all units occupied', href: '/dashboard/units' },
-        { label: 'This Month Collected', value: fmt(stats?.monthlyCollected), emoji: '💵', bg: '#ecfdf5', border: '#34d399', sub: 'Cash + M-Pesa', trend: momChange, href: '/dashboard/payments' },
-        { label: 'This Month Billed', value: fmt(stats?.monthlyBilled), emoji: '🧾', bg: '#faf5ff', border: '#a78bfa', sub: 'Total invoiced', href: '/dashboard/billing' },
-        { label: 'Paid Today', value: fmt(paidTodayAmount), emoji: '✅', bg: '#f0fdf4', border: '#4ade80', sub: `${paidTodayCount} payment${paidTodayCount !== 1 ? 's' : ''} today`, pulse: paidTodayCount > 0, href: '/dashboard/payments' },
-        { label: 'Total Arrears', value: fmt(totalArrearsFromCalc), emoji: '⏰', bg: '#fef2f2', border: '#f87171', pulse: totalArrearsFromCalc > 0, sub: `${unpaidRentData.length} tenants`, href: '/dashboard/unpaid' },
-        { label: 'Total Penalty', value: fmt(totalPenaltiesFromCalc), emoji: '💢', bg: '#fffbeb', border: '#fbbf24', sub: 'Late fees', href: '/dashboard/unpaid' },
-        { label: 'Collection Rate', value: `${collRate}%`, emoji: collRate >= 80 ? '🌟' : collRate >= 50 ? '📈' : '📉', bg: collRate >= 80 ? '#ecfdf5' : collRate >= 50 ? '#fffbeb' : '#fef2f2', border: collRate >= 80 ? '#34d399' : collRate >= 50 ? '#fbbf24' : '#f87171', sub: collRate >= 80 ? 'Excellent' : collRate >= 50 ? 'Needs attention' : 'Critical', pulse: collRate < 50 && totalArrearsFromCalc > 0, href: '/dashboard/reports' },
-        { label: 'Total Owed', value: fmt(totalOwedFromCalc), emoji: '💰', bg: '#fff7ed', border: '#fb923c', sub: 'Incl. penalties', pulse: totalOwedFromCalc > 0, href: '/dashboard/unpaid' },
+    // Arrears distribution brackets
+    const arrearsBrackets = [
+        { label: 'Under 5K', count: unpaidRentData.filter((t: any) => t.totalOwed > 0 && t.totalOwed < 5000).length },
+        { label: '5K - 10K', count: unpaidRentData.filter((t: any) => t.totalOwed >= 5000 && t.totalOwed < 10000).length },
+        { label: '10K - 20K', count: unpaidRentData.filter((t: any) => t.totalOwed >= 10000 && t.totalOwed < 20000).length },
+        { label: 'Over 20K', count: unpaidRentData.filter((t: any) => t.totalOwed >= 20000).length },
     ];
 
-    // -- Chart data --
+    // Top 5 overdue leaderboard
+    const top5Overdue = [...filteredOverdue].slice(0, 5);
+
+    // Urgency styling helper
+    const urgencyStyle = (months: number) => {
+        if (months >= 3) return { dot: 'bg-rose-500 animate-pulse', badge: 'bg-rose-50 text-rose-700 border-rose-200', label: `${months} mo critical` };
+        if (months >= 2) return { dot: 'bg-rose-400', badge: 'bg-rose-50 text-rose-600 border-rose-200', label: `${months} mo overdue` };
+        if (months >= 1) return { dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700 border-amber-200', label: `${months} mo due` };
+        return { dot: 'bg-slate-300', badge: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Current' };
+    };
+
+    // ─── Chart Setup ───
     const labels = analytics.map(a => a.label);
 
     const commonTooltip = {
-        backgroundColor: '#0f172a', titleFont: { size: 12, family: 'Outfit' },
-        bodyFont: { size: 12, family: 'Inter' }, padding: 14, cornerRadius: 12,
-        callbacks: { label: (c: any) => ` ${c.dataset.label}: KES ${c.parsed.y?.toLocaleString() ?? c.parsed}` }
-    };
-    const commonScales = {
-        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false }, ticks: { callback: (v: any) => `${(v / 1000).toFixed(0)}K`, font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } },
-        x: { grid: { display: false }, ticks: { font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } }
+        backgroundColor: '#0f172a',
+        titleFont: { size: 12, family: 'Outfit, Inter, sans-serif', weight: '700' as const },
+        bodyFont: { size: 12, family: 'Inter, sans-serif' },
+        padding: 14,
+        cornerRadius: 12,
+        boxPadding: 6,
+        borderColor: '#334155',
+        borderWidth: 1,
+        callbacks: {
+            label: (c: any) => ` ${c.dataset.label}: KES ${(c.parsed.y ?? c.parsed)?.toLocaleString()}`
+        }
     };
 
-    // Revenue trend (area chart)
+    const commonScales = {
+        y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(226, 232, 240, 0.6)', drawBorder: false },
+            ticks: {
+                callback: (v: any) => `${(v / 1000).toFixed(0)}K`,
+                font: { size: 11, family: 'Inter, sans-serif' },
+                color: '#64748b'
+            },
+            border: { display: false }
+        },
+        x: {
+            grid: { display: false },
+            ticks: {
+                font: { size: 11, family: 'Inter, sans-serif' },
+                color: '#64748b'
+            },
+            border: { display: false }
+        }
+    };
+
+    // Revenue Trend Chart (Area)
     const revenueLineData = {
         labels,
         datasets: [
             {
-                label: 'Billed', data: analytics.map(a => a.billed),
-                borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.12)',
-                borderWidth: 2.5, tension: 0.45, fill: true,
-                pointBackgroundColor: '#6366f1', pointRadius: 4, pointHoverRadius: 7
+                label: 'Invoiced / Billed',
+                data: analytics.map(a => a.billed),
+                borderColor: '#4f46e5',
+                backgroundColor: 'rgba(79, 70, 229, 0.12)',
+                borderWidth: 2.5,
+                tension: 0.42,
+                fill: true,
+                pointBackgroundColor: '#4f46e5',
+                pointRadius: 4,
+                pointHoverRadius: 7
             },
             {
-                label: 'Collected', data: analytics.map(a => a.collected),
-                borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.10)',
-                borderWidth: 2.5, tension: 0.45, fill: true,
-                pointBackgroundColor: '#10b981', pointRadius: 4, pointHoverRadius: 7
+                label: 'Rent Collected',
+                data: analytics.map(a => a.collected),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                borderWidth: 2.5,
+                tension: 0.42,
+                fill: true,
+                pointBackgroundColor: '#10b981',
+                pointRadius: 4,
+                pointHoverRadius: 7
             },
         ]
     };
+
     const revenueLineOpts: any = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyleWidth: 10, padding: 20, font: { size: 11, weight: '600', family: 'Inter' }, color: '#64748b' } }, tooltip: commonTooltip },
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    usePointStyle: true,
+                    pointStyleWidth: 10,
+                    padding: 18,
+                    font: { size: 12, weight: '600', family: 'Inter, sans-serif' },
+                    color: '#475569'
+                }
+            },
+            tooltip: commonTooltip
+        },
         scales: commonScales
     };
 
-    // Stacked Cash vs M-Pesa
+    // Stacked Cash vs M-Pesa Bar Chart
     const cashMpesaData = {
         labels,
         datasets: [
-            { label: 'Cash', data: analytics.map(a => a.cashCollected), backgroundColor: 'rgba(59,130,246,0.65)', borderColor: '#3b82f6', borderWidth: 1.5, borderRadius: 6, barPercentage: 0.65 },
-            { label: 'M-Pesa', data: analytics.map(a => a.mpesaCollected), backgroundColor: 'rgba(16,185,129,0.65)', borderColor: '#10b981', borderWidth: 1.5, borderRadius: 6, barPercentage: 0.65 },
+            {
+                label: 'Cash Inflow',
+                data: analytics.map(a => a.cashCollected),
+                backgroundColor: 'rgba(59, 130, 246, 0.85)',
+                borderColor: '#2563eb',
+                borderWidth: 1,
+                borderRadius: 8,
+                barPercentage: 0.62
+            },
+            {
+                label: 'M-Pesa Inflow',
+                data: analytics.map(a => a.mpesaCollected),
+                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                borderColor: '#059669',
+                borderWidth: 1,
+                borderRadius: 8,
+                barPercentage: 0.62
+            },
         ]
-    };
-    const cashMpesaOpts: any = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyleWidth: 10, padding: 20, font: { size: 11, weight: '600', family: 'Inter' }, color: '#64748b' } }, tooltip: commonTooltip },
-        scales: { ...commonScales, x: { ...commonScales.x, stacked: true }, y: { ...commonScales.y, stacked: true } }
     };
 
-    // Collection rate line
-    const rateLineData = {
-        labels,
-        datasets: [
-            { label: 'Collection Rate %', data: analytics.map(a => a.rate), borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.08)', borderWidth: 2.5, tension: 0.45, fill: true, pointBackgroundColor: '#6366f1', pointRadius: 4, pointHoverRadius: 7 },
-            { label: 'Unpaid KES', data: analytics.map(a => a.unpaid), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 2, tension: 0.45, fill: true, pointBackgroundColor: '#ef4444', pointRadius: 3, pointHoverRadius: 6, yAxisID: 'y1' },
-        ]
-    };
-    const rateLineOpts: any = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyleWidth: 10, padding: 20, font: { size: 11, weight: '600', family: 'Inter' }, color: '#64748b' } }, tooltip: commonTooltip },
+    const cashMpesaOpts: any = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    usePointStyle: true,
+                    pointStyleWidth: 10,
+                    padding: 18,
+                    font: { size: 12, weight: '600', family: 'Inter, sans-serif' },
+                    color: '#475569'
+                }
+            },
+            tooltip: commonTooltip
+        },
         scales: {
-            y: { beginAtZero: true, max: 100, grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false }, ticks: { callback: (v: any) => `${v}%`, font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } },
-            y1: { position: 'right' as const, beginAtZero: true, grid: { display: false }, ticks: { callback: (v: any) => `${(v / 1000).toFixed(0)}K`, font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } },
-            x: { grid: { display: false }, ticks: { font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } }
+            ...commonScales,
+            x: { ...commonScales.x, stacked: true },
+            y: { ...commonScales.y, stacked: true }
         }
     };
 
-    // Radar - property health
+    // Collection Rate % vs Unpaid Rent Trend Chart
+    const rateLineData = {
+        labels,
+        datasets: [
+            {
+                label: 'Collection Rate %',
+                data: analytics.map(a => a.rate),
+                borderColor: '#4f46e5',
+                backgroundColor: 'rgba(79, 70, 229, 0.08)',
+                borderWidth: 2.5,
+                tension: 0.4,
+                fill: true,
+                pointBackgroundColor: '#4f46e5',
+                pointRadius: 4,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Unpaid Exposure (KES)',
+                data: analytics.map(a => a.unpaid),
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                borderWidth: 2.5,
+                tension: 0.4,
+                fill: true,
+                pointBackgroundColor: '#ef4444',
+                pointRadius: 4,
+                yAxisID: 'y1'
+            },
+        ]
+    };
+
+    const rateLineOpts: any = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    usePointStyle: true,
+                    pointStyleWidth: 10,
+                    padding: 18,
+                    font: { size: 12, weight: '600', family: 'Inter, sans-serif' },
+                    color: '#475569'
+                }
+            },
+            tooltip: commonTooltip
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                max: 100,
+                grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                ticks: {
+                    callback: (v: any) => `${v}%`,
+                    font: { size: 11, family: 'Inter, sans-serif' },
+                    color: '#64748b'
+                },
+                border: { display: false }
+            },
+            y1: {
+                position: 'right' as const,
+                beginAtZero: true,
+                grid: { display: false },
+                ticks: {
+                    callback: (v: any) => `${(v / 1000).toFixed(0)}K`,
+                    font: { size: 11, family: 'Inter, sans-serif' },
+                    color: '#64748b'
+                },
+                border: { display: false }
+            },
+            x: {
+                grid: { display: false },
+                ticks: { font: { size: 11, family: 'Inter, sans-serif' }, color: '#64748b' },
+                border: { display: false }
+            }
+        }
+    };
+
+    // Property Health Radar Chart
     const radarData = {
-        labels: ['Occupancy', 'Collection', 'Low Arrears', 'On-Time Pay', 'Rent Growth'],
+        labels: ['Occupancy', 'Collection Efficiency', 'Low Arrears Ratio', 'M-Pesa Velocity', 'Net Yield'],
         datasets: [{
-            label: 'Property Health',
+            label: 'Portfolio Health',
             data: [
                 occupancyRate,
                 collRate,
-                Math.max(0, 100 - Math.round((unpaidRentData.length / Math.max(stats?.activeTenants || 1, 1)) * 100)),
-                Math.max(0, collRate - 10),
-                75
+                Math.max(0, 100 - Math.round((filteredOverdue.length / Math.max(activeTenantsCount, 1)) * 100)),
+                mpesaAdoptionRate,
+                Math.min(100, Math.max(0, operatingMargin > 0 ? operatingMargin : collRate - 10))
             ],
-            backgroundColor: 'rgba(99,102,241,0.15)',
-            borderColor: '#6366f1',
-            borderWidth: 2,
-            pointBackgroundColor: '#6366f1',
+            backgroundColor: 'rgba(99, 102, 241, 0.22)',
+            borderColor: '#4f46e5',
+            borderWidth: 2.5,
+            pointBackgroundColor: '#4f46e5',
+            pointBorderColor: '#ffffff',
+            pointHoverBackgroundColor: '#ffffff',
+            pointHoverBorderColor: '#4f46e5',
             pointRadius: 4,
+            pointHoverRadius: 7
         }]
     };
+
     const radarOpts: any = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0f172a', padding: 12, cornerRadius: 10 } },
-        scales: { r: { beginAtZero: true, max: 100, ticks: { stepSize: 25, font: { size: 10 }, color: '#94a3b8', backdropColor: 'transparent' }, grid: { color: 'rgba(0,0,0,0.06)' }, pointLabels: { font: { size: 11, weight: '600' }, color: '#64748b' }, angleLines: { color: 'rgba(0,0,0,0.06)' } } }
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: '#0f172a',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: { label: (c: any) => ` Score: ${c.parsed.r}%` }
+            }
+        },
+        scales: {
+            r: {
+                beginAtZero: true,
+                max: 100,
+                ticks: { stepSize: 25, font: { size: 10 }, color: '#94a3b8', backdropColor: 'transparent' },
+                grid: { color: 'rgba(226, 232, 240, 0.8)' },
+                pointLabels: { font: { size: 11, weight: '700', family: 'Inter, sans-serif' }, color: '#475569' },
+                angleLines: { color: 'rgba(226, 232, 240, 0.8)' }
+            }
+        }
     };
 
-    // Occupancy donut
+    // Occupancy Donut
     const occupancyDoughnutData = {
-        labels: ['Occupied', 'Vacant'],
+        labels: ['Occupied Units', 'Vacant Units'],
         datasets: [{
-            data: [stats?.activeTenants || 0, Math.max(0, (stats?.totalUnits || 0) - (stats?.activeTenants || 0))],
-            backgroundColor: ['#6366f1', '#e2e8f0'],
-            borderWidth: 0, hoverOffset: 8
+            data: [activeTenantsCount, vacantUnitsCount],
+            backgroundColor: ['#4f46e5', '#cbd5e1'],
+            borderWidth: 0,
+            hoverOffset: 6
         }]
     };
+
     const occupancyDoughnutOpts: any = {
-        responsive: true, maintainAspectRatio: false, cutout: '75%',
-        plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 16, font: { size: 11, family: 'Inter' }, color: '#64748b' } }, tooltip: { backgroundColor: '#0f172a', padding: 12, cornerRadius: 10 } }
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '76%',
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    usePointStyle: true,
+                    padding: 14,
+                    font: { size: 11, family: 'Inter, sans-serif', weight: '600' },
+                    color: '#64748b'
+                }
+            },
+            tooltip: { backgroundColor: '#0f172a', padding: 12, cornerRadius: 10 }
+        }
     };
 
-    // Payment method donut
+    // Payment Methods Donut
+    const totalOther = Math.max(0, (stats?.monthlyCollected || 0) - (analytics[analytics.length - 1]?.cashCollected || 0) - (analytics[analytics.length - 1]?.mpesaCollected || 0));
     const payMethodData = {
-        labels: ['Cash', 'M-Pesa', 'Other'],
+        labels: ['M-Pesa Paybill', 'Cash Settlement', 'Bank / Direct'],
         datasets: [{
-            data: [totalCash, totalMpesa, Math.max(0, totalOther)],
-            backgroundColor: ['#3b82f6', '#10b981', '#f59e0b'],
-            borderWidth: 0, hoverOffset: 8
+            data: [totalMpesa, totalCash, totalOther],
+            backgroundColor: ['#10b981', '#3b82f6', '#f59e0b'],
+            borderWidth: 0,
+            hoverOffset: 6
         }]
     };
+
     const payMethodOpts: any = {
-        responsive: true, maintainAspectRatio: false, cutout: '70%',
-        plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 14, font: { size: 11, family: 'Inter' }, color: '#64748b' } }, tooltip: { backgroundColor: '#0f172a', padding: 12, cornerRadius: 10 } }
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '72%',
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    usePointStyle: true,
+                    padding: 14,
+                    font: { size: 11, family: 'Inter, sans-serif', weight: '600' },
+                    color: '#64748b'
+                }
+            },
+            tooltip: {
+                backgroundColor: '#0f172a',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: { label: (c: any) => ` ${c.label}: KES ${c.parsed.toLocaleString()}` }
+            }
+        }
     };
 
-    // Arrears histogram
+    // Arrears Histogram
     const arrearsHistData = {
         labels: arrearsBrackets.map(b => b.label),
         datasets: [{
             label: 'Tenants',
             data: arrearsBrackets.map(b => b.count),
-            backgroundColor: ['rgba(16,185,129,0.7)', 'rgba(245,158,11,0.7)', 'rgba(239,68,68,0.6)', 'rgba(185,28,28,0.7)'],
-            borderColor: ['#10b981', '#f59e0b', '#ef4444', '#b91c1c'],
-            borderWidth: 1.5, borderRadius: 8, barPercentage: 0.6
+            backgroundColor: [
+                'rgba(16, 185, 129, 0.85)',
+                'rgba(245, 158, 11, 0.85)',
+                'rgba(239, 68, 68, 0.85)',
+                'rgba(185, 28, 28, 0.85)'
+            ],
+            borderColor: ['#059669', '#d97706', '#dc2626', '#991b1b'],
+            borderWidth: 1.5,
+            borderRadius: 8,
+            barPercentage: 0.6
         }]
     };
+
     const arrearsHistOpts: any = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0f172a', padding: 12, cornerRadius: 10, callbacks: { label: (c: any) => ` ${c.parsed.y} tenant${c.parsed.y !== 1 ? 's' : ''}` } } },
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: '#0f172a',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: { label: (c: any) => ` ${c.parsed.y} tenant${c.parsed.y !== 1 ? 's' : ''}` }
+            }
+        },
         scales: {
-            y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false }, ticks: { stepSize: 1, font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } },
-            x: { grid: { display: false }, ticks: { font: { size: 11, family: 'Inter' }, color: '#94a3b8' }, border: { display: false } }
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                ticks: { stepSize: 1, font: { size: 11, family: 'Inter, sans-serif' }, color: '#64748b' },
+                border: { display: false }
+            },
+            x: {
+                grid: { display: false },
+                ticks: { font: { size: 11, family: 'Inter, sans-serif' }, color: '#64748b' },
+                border: { display: false }
+            }
         }
     };
 
-    // Urgency style helper
-    const urgencyStyle = (months: number) => {
-        if (months >= 3) return { dot: 'bg-red-500 animate-pulse', badge: 'bg-red-50 text-red-700 border-red-200', label: `${months} mo overdue` };
-        if (months >= 2) return { dot: 'bg-red-400', badge: 'bg-red-50 text-red-600 border-red-200', label: `${months} mo overdue` };
-        if (months >= 1) return { dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700 border-amber-200', label: `${months} mo` };
-        return { dot: 'bg-gray-300', badge: 'bg-gray-50 text-gray-500 border-gray-200', label: 'New' };
-    };
+    // Pagination for Billing Grid
+    const totalPages = Math.ceil(filteredGridItems.length / pageSize) || 1;
+    const paginatedGridItems = filteredGridItems.slice((gridPage - 1) * pageSize, gridPage * pageSize);
 
+    if (loading) {
+        return (
+            <div className="min-h-[500px] flex flex-col items-center justify-center gap-4">
+                <div className="relative">
+                    <div
+                        className="w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-xl animate-pulse"
+                        style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                    >
+                        🏘️
+                    </div>
+                    <div className="absolute -inset-2.5 rounded-full border-2 border-indigo-300 animate-ping opacity-35" />
+                </div>
+                <div className="text-center">
+                    <p className="text-base font-extrabold text-slate-800">Synchronizing ARMS Intelligence</p>
+                    <p className="text-xs text-slate-400 mt-1">Aggregating live portfolios, collections, and tenant metrics...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="animate-fadeIn space-y-5">
+        <div className="animate-fadeIn space-y-6 pb-12 font-sans text-slate-800">
 
-            {/*  Header  */}
-            <div className="flex items-center justify-between flex-wrap gap-3">
+            {/* ══════════════════════════════════════════════════════════════════════
+                1. EXECUTIVE TOP BAR & CONTEXT STRIP
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white/80 backdrop-blur-xl border border-slate-200/90 rounded-3xl p-5 shadow-sm flex items-center justify-between flex-wrap gap-4">
                 <div>
-                    <h1 className="page-title flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5">
                         <span className="text-2xl">🏘️</span>
-                        <span>Dashboard</span>
-                    </h1>
-                    <p className="text-sm text-gray-400 mt-1 font-medium">
-                        Your rental overview for&nbsp;
-                        <span className="font-bold text-gray-700">{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+                        <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                            ARMS Executive Hub
+                        </h1>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            Kenya Edition
+                        </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium mt-1 flex items-center gap-2 flex-wrap">
+                        <span>Portfolio Overview for <b className="text-slate-800">{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</b></span>
+                        <span className="text-slate-300">•</span>
+                        <span className="flex items-center gap-1 text-slate-600">
+                            <FiClock size={12} className="text-indigo-500" />
+                            {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="text-xs font-semibold text-gray-500 bg-white rounded-xl px-4 py-2.5 border border-gray-100 shadow-sm">
-                        📅 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
-                    </div>
-                    <button onClick={() => router.push('/dashboard/sms')}
-                        className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition"
-                        style={{ background: 'linear-gradient(135deg,#7c3aed,#6366f1)', color: '#fff' }}>
-                        <FiMessageSquare size={13} /> Send Bulk SMS
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                    <button
+                        onClick={() => router.push('/dashboard/sms')}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-white shadow-md shadow-indigo-500/25 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                        style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                    >
+                        <FiMessageSquare size={14} /> Send Bulk SMS
                     </button>
-                    <button onClick={() => loadData()} className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition text-xs font-semibold shadow-sm">
+                    <button
+                        onClick={() => router.push('/dashboard/payments')}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm"
+                    >
+                        <FiZap size={14} /> Record Payment
+                    </button>
+                    <button
+                        onClick={() => loadData()}
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-600 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50/50 transition text-xs font-bold shadow-sm"
+                        title="Reload portfolio data"
+                    >
                         <FiRefreshCw size={13} /> Refresh
                     </button>
                 </div>
             </div>
 
-            {/*  Smart Banner  */}
-            <SmartBanner
+            {/* ══════════════════════════════════════════════════════════════════════
+                2. INTELLIGENT RENTAL ADVISORY BANNER
+            ══════════════════════════════════════════════════════════════════════ */}
+            <IntelligentAdvisoryBanner
                 unpaidCount={unpaidRentData.length}
                 totalArrears={totalArrearsFromCalc}
                 collectionRate={collRate}
                 totalOwed={totalOwedFromCalc}
+                tenantsNewToday={tenantsNewToday}
+                paidTodayAmount={paidTodayAmount}
                 fmt={fmt}
+                router={router}
             />
 
-            {/*  Quick Actions  */}
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+            {/* ══════════════════════════════════════════════════════════════════════
+                3. QUICK ACTION TILES
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {quickActions.map((action, i) => (
-                    <button key={i} onClick={() => router.push(action.href)}
-                        className="flex flex-col items-center gap-2.5 p-4 rounded-2xl transition-all duration-250 group border"
-                        style={{ background: action.bg, borderColor: action.ring, color: action.color }}
-                        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-3px)'; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 8px 24px ${action.ring}80`; }}
-                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = ''; (e.currentTarget as HTMLButtonElement).style.boxShadow = ''; }}>
-                        <span className="text-xl leading-none">{action.emoji}</span>
-                        <span className="text-[11px] font-bold tracking-wide text-center leading-tight">{action.label}</span>
+                    <button
+                        key={i}
+                        onClick={() => router.push(action.href)}
+                        className="flex flex-col items-center justify-center gap-2 p-3.5 rounded-2xl border transition-all duration-200 group hover:-translate-y-1 hover:shadow-md active:translate-y-0"
+                        style={{ background: action.bg, borderColor: action.border, color: action.color }}
+                    >
+                        <span className="text-2xl transition-transform group-hover:scale-110 duration-200">
+                            {action.emoji}
+                        </span>
+                        <span className="text-xs font-bold tracking-tight text-center leading-tight">
+                            {action.label}
+                        </span>
                     </button>
                 ))}
             </div>
 
-            {/*  KPI Cards  */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                {kpiCards.map((card, i) => <KpiCard key={i} {...card} />)}
+            {/* ══════════════════════════════════════════════════════════════════════
+                4. SUPER PREMIUM GLASSMORPHIC KPI CARDS (8 HERO METRICS)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div>
+                <div className="flex items-center justify-between mb-3 px-1">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <span>✨</span> Strategic Portfolio Vitals
+                    </p>
+                    <span className="text-[11px] font-bold text-slate-500 bg-white border border-slate-200/80 px-2.5 py-0.5 rounded-full">
+                        Live Sync
+                    </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Card 1: Collected Rent */}
+                    <GlassmorphicKpiCard
+                        title="Collected This Month"
+                        value={fmt(stats?.monthlyCollected || 0)}
+                        subValue="Cash & M-Pesa Inflow"
+                        pillText={momChange !== 0 ? `${Math.abs(momChange)}% MoM` : 'On Target'}
+                        pillType={momChange >= 0 ? 'positive' : 'warning'}
+                        trend={momChange}
+                        icon={<FiDollarSign size={20} />}
+                        gradient="linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #7c3aed 100%)"
+                        shadowColor="rgba(79, 70, 229, 0.45)"
+                        href="/dashboard/payments"
+                    />
+
+                    {/* Card 2: Total Billed */}
+                    <GlassmorphicKpiCard
+                        title="Invoiced / Total Billed"
+                        value={fmt(stats?.monthlyBilled || 0)}
+                        subValue={`RevPAU: ${fmt(revPau)} / unit`}
+                        pillText={`${stats?.activeTenants || 0} Invoices`}
+                        pillType="neutral"
+                        icon={<FiFileText size={20} />}
+                        gradient="linear-gradient(135deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%)"
+                        shadowColor="rgba(2, 132, 199, 0.45)"
+                        href="/dashboard/billing"
+                    />
+
+                    {/* Card 3: Collection Efficiency Rate */}
+                    <GlassmorphicKpiCard
+                        title="Collection Efficiency"
+                        value={`${collRate}%`}
+                        subValue={collRate >= 80 ? 'Exceeding target' : collRate >= 50 ? 'Moderate velocity' : 'Collection deficit'}
+                        pillText={collRate >= 90 ? '🌟 Optimal' : collRate >= 70 ? 'Good' : '⚠️ Action'}
+                        pillType={collRate >= 80 ? 'positive' : collRate >= 50 ? 'warning' : 'danger'}
+                        pulse={collRate < 50 && totalArrearsFromCalc > 0}
+                        icon={<FiTrendingUp size={20} />}
+                        gradient="linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)"
+                        shadowColor="rgba(5, 150, 105, 0.45)"
+                        href="/dashboard/reports"
+                    />
+
+                    {/* Card 4: Total Outstanding Arrears */}
+                    <GlassmorphicKpiCard
+                        title="Outstanding Arrears"
+                        value={fmt(totalArrearsFromCalc)}
+                        subValue={`+ ${fmt(totalPenaltiesFromCalc)} late penalties`}
+                        pillText={`${filteredOverdue.length} Overdue`}
+                        pillType={totalArrearsFromCalc > 0 ? 'danger' : 'positive'}
+                        pulse={totalArrearsFromCalc > 0}
+                        icon={<FiAlertTriangle size={20} />}
+                        gradient="linear-gradient(135deg, #e11d48 0%, #f43f5e 50%, #fb7185 100%)"
+                        shadowColor="rgba(225, 29, 72, 0.45)"
+                        href="/dashboard/unpaid"
+                    />
+
+                    {/* Card 5: Occupancy Rate */}
+                    <GlassmorphicKpiCard
+                        title="Active Occupancy"
+                        value={`${occupancyRate}%`}
+                        subValue={`${activeTenantsCount} Occupied · ${vacantUnitsCount} Vacant`}
+                        pillText={`${totalUnitsCount} Total Units`}
+                        pillType={occupancyRate >= 90 ? 'positive' : 'neutral'}
+                        icon={<FiHome size={20} />}
+                        gradient="linear-gradient(135deg, #ea580c 0%, #f59e0b 50%, #fbbf24 100%)"
+                        shadowColor="rgba(234, 88, 12, 0.45)"
+                        href="/dashboard/units"
+                    />
+
+                    {/* Card 6: Collected Today */}
+                    <GlassmorphicKpiCard
+                        title="Today's Collections"
+                        value={fmt(paidTodayAmount)}
+                        subValue={`${paidTodayCount} payments logged today`}
+                        pillText={paidTodayCount > 0 ? '⚡ Live Inflow' : 'Pending Inflow'}
+                        pillType={paidTodayCount > 0 ? 'positive' : 'neutral'}
+                        pulse={paidTodayCount > 0}
+                        icon={<FiZap size={20} />}
+                        gradient="linear-gradient(135deg, #0d9488 0%, #14b8a6 50%, #2dd4bf 100%)"
+                        shadowColor="rgba(13, 148, 136, 0.45)"
+                        href="/dashboard/payments"
+                    />
+
+                    {/* Card 7: Max Capacity Revenue */}
+                    <GlassmorphicKpiCard
+                        title="Max Potential Yield"
+                        value={fmt(stats?.maxExpectedRevenue || 0)}
+                        subValue={`Vacancy Loss: ${fmt(vacancyOpportunityLoss)}`}
+                        pillText="100% Capacity"
+                        pillType="neutral"
+                        icon={<FiPercent size={20} />}
+                        gradient="linear-gradient(135deg, #7e22ce 0%, #9333ea 50%, #c026d3 100%)"
+                        shadowColor="rgba(126, 34, 206, 0.45)"
+                        href="/dashboard/units"
+                    />
+
+                    {/* Card 8: Net Operating Income */}
+                    <GlassmorphicKpiCard
+                        title="Net Operating Margin"
+                        value={fmt(netMonthProfit)}
+                        subValue={`Margin: ${operatingMargin}% of collections`}
+                        pillText={netMonthProfit >= 0 ? '▲ Net Positive' : '▼ Net Deficit'}
+                        pillType={netMonthProfit >= 0 ? 'positive' : 'danger'}
+                        icon={<FiActivity size={20} />}
+                        gradient="linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #4f46e5 100%)"
+                        shadowColor="rgba(29, 78, 216, 0.45)"
+                        href="/dashboard/reports"
+                    />
+                </div>
             </div>
 
-            {/*  Net Revenue Cards  */}
-            <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">💹 Net Revenue (Collected − Expenses)</p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* ══════════════════════════════════════════════════════════════════════
+                5. FINANCIAL INTELLIGENCE STRIP (NET REVENUE SUMMARY)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <div>
+                        <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+                            <span>💹</span> Net Operating Inflow Ledger (Collected − Operating Expenses)
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            Real-time profitability tracking across four operational time horizons
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => router.push('/dashboard/reports')}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition"
+                    >
+                        Full P&L Breakdown <FiChevronRight size={13} />
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
                         {
                             period: 'Today',
                             emoji: '📅',
-                            collected: netRevenue?.today?.collected || 0,
-                            expenses: netRevenue?.today?.expenses || 0,
-                            net: netRevenue?.today?.net || 0,
-                            bg: '#f0fdf4', border: '#34d399',
+                            data: netRevenue?.today,
+                            bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                            border: '#86efac',
+                            accent: '#15803d'
                         },
                         {
                             period: 'This Week',
                             emoji: '🗓️',
-                            collected: netRevenue?.week?.collected || 0,
-                            expenses: netRevenue?.week?.expenses || 0,
-                            net: netRevenue?.week?.net || 0,
-                            bg: '#eff6ff', border: '#60a5fa',
+                            data: netRevenue?.week,
+                            bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                            border: '#93c5fd',
+                            accent: '#1d4ed8'
                         },
                         {
                             period: 'This Month',
                             emoji: '📆',
-                            collected: netRevenue?.month?.collected || 0,
-                            expenses: netRevenue?.month?.expenses || 0,
-                            net: netRevenue?.month?.net || 0,
-                            bg: '#faf5ff', border: '#a78bfa',
+                            data: netRevenue?.month,
+                            bg: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)',
+                            border: '#d8b4fe',
+                            accent: '#7e22ce'
                         },
                         {
-                            period: 'This Year',
+                            period: 'This Year (YTD)',
                             emoji: '🏆',
-                            collected: netRevenue?.year?.collected || 0,
-                            expenses: netRevenue?.year?.expenses || 0,
-                            net: netRevenue?.year?.net || 0,
-                            bg: '#fff7ed', border: '#fb923c',
+                            data: netRevenue?.year,
+                            bg: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
+                            border: '#fed7aa',
+                            accent: '#c2410c'
                         },
-                    ].map((c, i) => (
-                        <div key={i} className="bg-white rounded-2xl p-4 border-2 shadow-sm hover:shadow-md transition-all relative overflow-hidden"
-                            style={{ borderColor: c.border, background: c.bg }}>
-                            <div className="flex items-center justify-between mb-2">
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{c.emoji} {c.period}</p>
-                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${c.net >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                                    {c.net >= 0 ? '▲' : '▼'} Net
-                                </span>
-                            </div>
-                            <p className={`text-lg font-extrabold ${c.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                                {fmt(c.net)}
-                            </p>
-                            <div className="mt-2 space-y-0.5">
-                                <div className="flex justify-between text-[10px] text-gray-500">
-                                    <span>💵 Collected</span>
-                                    <span className="font-bold text-green-600">{fmt(c.collected)}</span>
+                    ].map((item, i) => {
+                        const netVal = item.data?.net || 0;
+                        const collVal = item.data?.collected || 0;
+                        const expVal = item.data?.expenses || 0;
+                        return (
+                            <div
+                                key={i}
+                                className="rounded-2xl p-4 border transition-all duration-200 relative overflow-hidden"
+                                style={{ background: item.bg, borderColor: item.border }}
+                            >
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
+                                        {item.emoji} {item.period}
+                                    </span>
+                                    <span
+                                        className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                            netVal >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                        }`}
+                                    >
+                                        {netVal >= 0 ? '▲ Surpl.' : '▼ Def.'}
+                                    </span>
                                 </div>
-                                <div className="flex justify-between text-[10px] text-gray-500">
-                                    <span>🧾 Expenses</span>
-                                    <span className="font-bold text-red-500">{fmt(c.expenses)}</span>
+                                <p className={`text-xl font-black ${netVal >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>
+                                    {fmt(netVal)}
+                                </p>
+                                <div className="mt-2.5 pt-2 border-t border-slate-200/60 space-y-1 text-[11px]">
+                                    <div className="flex justify-between items-center text-slate-600">
+                                        <span>Inflow (Rent):</span>
+                                        <b className="text-emerald-700 font-semibold">{fmt(collVal)}</b>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-600">
+                                        <span>Expenses:</span>
+                                        <b className="text-rose-600 font-semibold">{fmt(expVal)}</b>
+                                    </div>
                                 </div>
                             </div>
-                            <div className="absolute -bottom-5 -right-5 w-16 h-16 rounded-full opacity-10" style={{ background: c.border }} />
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 
-            {/*  Month-over-Month Banner  */}
-            {prevMonthAnalytics && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-2">
-                        <FiActivity size={16} className="text-indigo-500" />
-                        <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">Month-over-Month</span>
-                    </div>
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-50 border border-gray-100">
-                            <span className="text-xs text-gray-500">{prevMonthAnalytics.label}</span>
-                            <span className="text-xs font-bold text-gray-700">{fmt(prevMonthAnalytics.collected)}</span>
-                        </div>
-                        <span className="text-gray-300"></span>
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100">
-                            <span className="text-xs text-indigo-500">{currentMonthAnalytics?.label}</span>
-                            <span className="text-xs font-bold text-indigo-700">{fmt(currentMonthAnalytics?.collected)}</span>
-                        </div>
-                        <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-bold ${momChange >= 0 ? 'bg-green-50 border-green-100 text-green-700' : 'bg-red-50 border-red-100 text-red-700'}`}>
-                            {momChange >= 0 ? <FiArrowUpRight size={12} /> : <FiArrowDownRight size={12} />}
-                            {Math.abs(momChange)}% vs last month
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/*  Search & Filter Bar  */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-                <div className="flex items-center gap-3 p-4">
-                    <div className="relative flex-1" ref={searchRef}>
-                        <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
-                        <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+            {/* ══════════════════════════════════════════════════════════════════════
+                6. OMNI-SEARCH & RICH FILTER COMMAND BAR
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4">
+                <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+                    {/* Live Omni-Search */}
+                    <div className="relative flex-1 min-w-[260px]" ref={searchRef}>
+                        <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
                             onKeyDown={handleSearchKeyDown}
                             onFocus={() => { if (searchQuery.trim() && searchResults.length > 0) setShowSearchDropdown(true); }}
-                            placeholder="Search tenant, phone, room, location"
-                            className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-indigo-300 focus:ring-4 focus:ring-indigo-50 transition-all" />
+                            placeholder="Omni-Search: tenant name, room number, phone, location..."
+                            className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200/90 rounded-2xl text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100/60 transition-all font-medium"
+                        />
                         {searchQuery && (
-                            <button onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 transition">
+                            <button
+                                onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-600 p-1"
+                            >
                                 <FiX size={15} />
                             </button>
                         )}
+
+                        {/* Search Dropdown Results */}
                         {showSearchDropdown && searchResults.length > 0 && (
-                            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-2xl shadow-2xl overflow-hidden" style={{ border: '1px solid #e2e8f0', zIndex: 9999 }}>
-                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                                    <p className="text-xs font-bold text-gray-500">{searchResults.length} tenant{searchResults.length !== 1 ? 's' : ''} found</p>
-                                    <span className="text-[10px] text-gray-400">↑↓ navigate · Enter select</span>
+                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-fadeIn">
+                                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-xs">
+                                    <span className="font-bold text-slate-600">{searchResults.length} Tenant Match{searchResults.length !== 1 ? 'es' : ''}</span>
+                                    <span className="text-[10px] text-slate-400">↑↓ keys navigate · Enter selects</span>
                                 </div>
-                                <div className="max-h-[300px] overflow-y-auto divide-y divide-gray-50">
+                                <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-100">
                                     {searchResults.map((t, i) => (
-                                        <button key={t.tenant_id} onClick={() => { setSearchQuery(t.tenant_name); setShowSearchDropdown(false); }}
-                                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${highlightedIndex === i ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
-                                            <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                                                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                                        <button
+                                            key={t.tenant_id}
+                                            onClick={() => {
+                                                setSearchQuery(t.tenant_name);
+                                                setShowSearchDropdown(false);
+                                            }}
+                                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition ${
+                                                highlightedIndex === i ? 'bg-indigo-50/80' : 'hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            <div
+                                                className="w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black text-white flex-shrink-0 shadow-sm"
+                                                style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                                            >
                                                 {t.tenant_name?.charAt(0)?.toUpperCase()}
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-bold text-gray-900 truncate">{t.tenant_name}</p>
-                                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                                    <span className="text-xs font-mono text-gray-400">{t.phone || 'No phone'}</span>
-                                                    <span className="text-gray-200">·</span>
-                                                    <span className="text-xs text-gray-500">Room <b className="text-gray-700">{t.arms_units?.unit_name || '-'}</b></span>
-                                                    <span className="text-gray-200">·</span>
-                                                    <span className="text-xs text-gray-400">{t.arms_locations?.location_name || '-'}</span>
+                                                <p className="text-sm font-bold text-slate-900 truncate">{t.tenant_name}</p>
+                                                <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500 flex-wrap">
+                                                    <span className="font-mono text-slate-400">{t.phone || 'No phone'}</span>
+                                                    <span>•</span>
+                                                    <span>Room <b className="text-slate-700">{t.arms_units?.unit_name || '-'}</b></span>
+                                                    <span>•</span>
+                                                    <span className="text-slate-400">{t.arms_locations?.location_name || '-'}</span>
                                                 </div>
                                             </div>
                                             <div className="text-right flex-shrink-0">
-                                                <p className={`text-xs font-bold ${t.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                                    {t.balance > 0 ? `Owes ${fmt(t.balance)}` : '✅ Clear'}
+                                                <p className={`text-xs font-black ${(t.balance || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                    {(t.balance || 0) > 0 ? `Owes ${fmt(t.balance)}` : '✅ Paid Up'}
                                                 </p>
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${t.status === 'Active' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
+                                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
                                                     {t.status}
                                                 </span>
                                             </div>
@@ -714,85 +1349,200 @@ export default function DashboardPage() {
                             </div>
                         )}
                     </div>
-                    <button onClick={() => setShowFilters(f => !f)}
-                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition ${showFilters ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-indigo-200 hover:text-indigo-600'}`}>
-                        <FiFilter size={13} /> Filters {hasActiveFilters && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+
+                    {/* Filter Toggle Button */}
+                    <button
+                        onClick={() => setShowFilters(f => !f)}
+                        className={`flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold border transition-all ${
+                            showFilters || hasActiveFilters
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-200 hover:text-indigo-600'
+                        }`}
+                    >
+                        <FiFilter size={14} />
+                        <span>Filter Matrix</span>
+                        {hasActiveFilters && (
+                            <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+                        )}
                     </button>
+
                     {hasActiveFilters && (
-                        <button onClick={clearFilters} className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-red-500 bg-red-50 border border-red-100 hover:bg-red-100 transition">
-                            <FiX size={12} /> Clear
+                        <button
+                            onClick={clearFilters}
+                            className="flex items-center gap-1.5 px-3.5 py-3 rounded-2xl text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition"
+                        >
+                            <FiX size={13} /> Reset
                         </button>
                     )}
                 </div>
+
+                {/* Expanded Rich Filters Row */}
                 {showFilters && (
-                    <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 gap-3 border-t border-gray-50 pt-3">
-                        <select value={filterLocation} onChange={e => setFilterLocation(e.target.value)}
-                            className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-600 focus:outline-none focus:border-indigo-300">
-                            <option value="">All Locations</option>
-                            {locations.map(l => <option key={l.location_id} value={String(l.location_id)}>{l.location_name}</option>)}
-                        </select>
-                        <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
-                            className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-600 focus:outline-none focus:border-indigo-300" placeholder="From date" />
-                        <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
-                            className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-600 focus:outline-none focus:border-indigo-300" placeholder="To date" />
-                        <select value={filterArrears} onChange={e => setFilterArrears(e.target.value)}
-                            className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-600 focus:outline-none focus:border-indigo-300">
-                            <option value="">All Arrears</option>
-                            <option value="below5k">Below 5K</option>
-                            <option value="5kto10k">5K – 10K</option>
-                            <option value="above10k">Above 10K</option>
-                        </select>
+                    <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-fadeIn">
+                        <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                                Property / Location
+                            </label>
+                            <select
+                                value={filterLocation}
+                                onChange={e => { setFilterLocation(e.target.value); setGridPage(1); }}
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-semibold focus:outline-none focus:border-indigo-400"
+                            >
+                                <option value="">All Locations & Estates</option>
+                                {locations.map(l => (
+                                    <option key={l.location_id} value={String(l.location_id)}>
+                                        {l.location_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                                Billed From Date
+                            </label>
+                            <input
+                                type="date"
+                                value={filterDateFrom}
+                                onChange={e => { setFilterDateFrom(e.target.value); setGridPage(1); }}
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-semibold focus:outline-none focus:border-indigo-400"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                                Billed To Date
+                            </label>
+                            <input
+                                type="date"
+                                value={filterDateTo}
+                                onChange={e => { setFilterDateTo(e.target.value); setGridPage(1); }}
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-semibold focus:outline-none focus:border-indigo-400"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                                Arrears Exposure Tier
+                            </label>
+                            <select
+                                value={filterArrears}
+                                onChange={e => { setFilterArrears(e.target.value); setGridPage(1); }}
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-semibold focus:outline-none focus:border-indigo-400"
+                            >
+                                <option value="">All Balances</option>
+                                <option value="below5k">Below KES 5,000</option>
+                                <option value="5kto10k">KES 5,000 – 10,000</option>
+                                <option value="above10k">Above KES 10,000 (High Risk)</option>
+                            </select>
+                        </div>
                     </div>
                 )}
             </div>
 
+            {/* ══════════════════════════════════════════════════════════════════════
+                7. VISUAL ANALYTICS HUB (TABBED LINEAR, BAR & RADAR CHARTS)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-wrap gap-3">
+                    <div>
+                        <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                            <span>📈</span> Visual Revenue Analytics & Portfolio Health
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            Comprehensive 12-month historical trends and multi-dimensional performance
+                        </p>
+                    </div>
 
-            {/*  Charts Section  */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                {/* Chart Tab Switcher */}
-                <div className="flex items-center gap-1 p-4 border-b border-gray-50">
-                    <span className="text-xs font-bold text-gray-500 mr-2 uppercase tracking-wider">Charts</span>
-                    {[
-                        { key: 'revenue', label: '📈 Revenue Trend' },
-                        { key: 'cashmpesa', label: '💳 Cash vs M-Pesa' },
-                        { key: 'rate', label: '📊 Collection Rate' },
-                        { key: 'radar', label: '🎯 Health Score' },
-                    ].map(tab => (
-                        <button key={tab.key} onClick={() => setChartTab(tab.key as any)}
-                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${chartTab === tab.key ? 'bg-indigo-600 text-white shadow-sm' : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'}`}>
-                            {tab.label}
-                        </button>
-                    ))}
+                    {/* Chart Tab Pills */}
+                    <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-2xl">
+                        {[
+                            { key: 'revenue', label: '📊 Invoiced vs Collected', icon: <FiTrendingUp size={12} /> },
+                            { key: 'cashmpesa', label: '📱 Cash vs M-Pesa', icon: <FiSmartphone size={12} /> },
+                            { key: 'rate', label: '⚡ Collection % & Arrears', icon: <FiPercent size={12} /> },
+                            { key: 'radar', label: '🎯 Health Matrix', icon: <FiShield size={12} /> },
+                        ].map(tab => (
+                            <button
+                                key={tab.key}
+                                onClick={() => setChartTab(tab.key as any)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                    chartTab === tab.key
+                                        ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/70'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                {tab.icon}
+                                <span className="hidden sm:inline">{tab.label}</span>
+                            </button>
+                        ))}
+                    </div>
                 </div>
+
                 <div className="p-5">
                     {chartTab === 'revenue' && (
                         <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">12-Month Revenue Trend (Billed vs Collected)</p>
-                            <div style={{ height: 280 }}>
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                    12-Month Invoicing vs Realized Collection Trajectory
+                                </span>
+                                <div className="flex items-center gap-3 text-xs">
+                                    <span className="flex items-center gap-1.5 text-indigo-700 font-bold">
+                                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block" /> Billed
+                                    </span>
+                                    <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Collected
+                                    </span>
+                                </div>
+                            </div>
+                            <div style={{ height: 320 }}>
                                 <Line data={revenueLineData} options={revenueLineOpts} />
                             </div>
                         </div>
                     )}
+
                     {chartTab === 'cashmpesa' && (
                         <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Cash vs M-Pesa by Month (Stacked)</p>
-                            <div style={{ height: 280 }}>
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                    Payment Channel Distribution (M-Pesa vs Cash Inflow)
+                                </span>
+                                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                    M-Pesa Adoption: {mpesaAdoptionRate}%
+                                </span>
+                            </div>
+                            <div style={{ height: 320 }}>
                                 <Bar data={cashMpesaData} options={cashMpesaOpts} />
                             </div>
                         </div>
                     )}
+
                     {chartTab === 'rate' && (
                         <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Collection Rate % vs Unpaid Amount</p>
-                            <div style={{ height: 280 }}>
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                    Monthly Collection Efficiency Rate % vs Outstanding Balances
+                                </span>
+                                <span className="text-xs font-bold text-slate-600">
+                                    Target Collection: 95%+
+                                </span>
+                            </div>
+                            <div style={{ height: 320 }}>
                                 <Line data={rateLineData} options={rateLineOpts} />
                             </div>
                         </div>
                     )}
+
                     {chartTab === 'radar' && (
                         <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Property Health Score</p>
-                            <div style={{ height: 280 }}>
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                    5-Pillar Portfolio Health Assessment (0–100 Benchmark)
+                                </span>
+                                <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200">
+                                    Holistic Score
+                                </span>
+                            </div>
+                            <div style={{ height: 320 }}>
                                 <Radar data={radarData} options={radarOpts} />
                             </div>
                         </div>
@@ -800,151 +1550,304 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/*  3-Column Analytics Row  */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                8. THREE-COLUMN DEEP-DIVE ANALYSIS ROW
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* 1. Occupancy Donut */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Occupancy & Capacity
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                            {totalUnitsCount} Units
+                        </span>
+                    </div>
 
-                {/* Occupancy Donut */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Occupancy Rate</p>
-                    <div className="relative" style={{ height: 200 }}>
+                    <div className="relative" style={{ height: 210 }}>
                         <Doughnut data={occupancyDoughnutData} options={occupancyDoughnutOpts} />
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                            <span className="text-3xl font-black text-indigo-600">{occupancyRate}%</span>
-                            <span className="text-xs text-gray-400 font-semibold">Occupied</span>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-4">
+                            <span className="text-3xl font-black text-indigo-600 font-sans">{occupancyRate}%</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Occupied</span>
                         </div>
                     </div>
-                    <div className="mt-3 flex items-center justify-center gap-4 text-xs text-gray-500">
-                        <span><b className="text-indigo-600">{stats?.activeTenants || 0}</b> occupied</span>
-                        <span>·</span>
-                        <span><b className="text-gray-400">{Math.max(0, (stats?.totalUnits || 0) - (stats?.activeTenants || 0))}</b> vacant</span>
+
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-around text-xs">
+                        <div className="text-center">
+                            <p className="font-black text-indigo-700 text-sm">{activeTenantsCount}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">Occupied</p>
+                        </div>
+                        <div className="w-px h-6 bg-slate-200" />
+                        <div className="text-center">
+                            <p className="font-black text-slate-500 text-sm">{vacantUnitsCount}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">Vacant</p>
+                        </div>
+                        <div className="w-px h-6 bg-slate-200" />
+                        <div className="text-center">
+                            <p className="font-black text-emerald-600 text-sm">{fmt(revPau)}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">RevPAU</p>
+                        </div>
                     </div>
                 </div>
 
-                {/* Payment Method Donut */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Payment Methods (12-Month)</p>
-                    <div style={{ height: 200 }}>
+                {/* 2. Payment Channel Dynamics */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Payment Channels
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                            12-Mo Volume
+                        </span>
+                    </div>
+
+                    <div style={{ height: 210 }}>
                         <Doughnut data={payMethodData} options={payMethodOpts} />
                     </div>
-                    <div className="mt-3 flex items-center justify-center gap-3 text-xs text-gray-500 flex-wrap">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /><b>{fmt(totalCash)}</b></span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /><b>{fmt(totalMpesa)}</b></span>
+
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-around text-xs">
+                        <div className="text-center">
+                            <p className="font-black text-emerald-600 text-xs truncate max-w-[90px]">{fmt(totalMpesa)}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">M-Pesa</p>
+                        </div>
+                        <div className="w-px h-6 bg-slate-200" />
+                        <div className="text-center">
+                            <p className="font-black text-blue-600 text-xs truncate max-w-[90px]">{fmt(totalCash)}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">Cash</p>
+                        </div>
+                        <div className="w-px h-6 bg-slate-200" />
+                        <div className="text-center">
+                            <p className="font-black text-amber-600 text-xs">{mpesaAdoptionRate}%</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">M-Pesa %</p>
+                        </div>
                     </div>
                 </div>
 
-                {/* Arrears Histogram */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Arrears Distribution</p>
-                    <div style={{ height: 200 }}>
+                {/* 3. Arrears Exposure Brackets */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Arrears Aging Brackets
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+                            {filteredOverdue.length} in Debt
+                        </span>
+                    </div>
+
+                    <div style={{ height: 210 }}>
                         <Bar data={arrearsHistData} options={arrearsHistOpts} />
                     </div>
-                    <p className="text-[10px] text-gray-400 text-center mt-2">Tenants by arrears bracket (KES)</p>
+
+                    <p className="text-[11px] text-slate-400 text-center mt-3 pt-3 border-t border-slate-100">
+                        Tenants segmented by outstanding balance magnitude
+                    </p>
                 </div>
             </div>
 
-            {/*  Live Activity Feed + Top Overdue  */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                9. LIVE ACTIVITY STREAM & HIGH-RISK OVERDUE WATCHLIST
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                {/* Live Activity Feed */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-                        <div className="flex items-center gap-2">
-                            <FiActivity size={14} className="text-indigo-500" />
-                            <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Live Activity Feed</p>
-                            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                        </div>
-                        <button onClick={() => router.push('/dashboard/payments')} className="text-xs text-indigo-500 font-semibold hover:underline">View all</button>
-                    </div>
-                    <div className="divide-y divide-gray-50 max-h-[340px] overflow-y-auto">
-                        {recentPayments.slice(0, 8).length === 0 ? (
-                            <div className="px-5 py-8 text-center text-xs text-gray-400">No recent payments</div>
-                        ) : recentPayments.slice(0, 8).map((p: any, i: number) => (
-                            <div key={p.payment_id || i} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white flex-shrink-0 ${p.payment_method === 'M-Pesa' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
-                                    {p.payment_method === 'M-Pesa' ? '📱' : '💵'}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-bold text-gray-800 truncate">{p.arms_tenants?.tenant_name || 'Unknown'}</p>
-                                    <p className="text-[10px] text-gray-400 truncate">{p.arms_locations?.location_name || ''}  {p.payment_method}</p>
-                                </div>
-                                <div className="text-right flex-shrink-0">
-                                    <p className="text-xs font-black text-green-600">{fmt(p.amount)}</p>
-                                    <p className="text-[10px] text-gray-400">{timeAgo(p.payment_date)}</p>
-                                </div>
-                                {p.payment_date?.startsWith(todayStr) && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-600 flex-shrink-0">TODAY</span>
-                                )}
+                {/* Left: Real-time Inflow Stream */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                                <FiActivity size={14} />
                             </div>
-                        ))}
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                Live Inflow Activity Stream
+                            </h3>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        </div>
+                        <button
+                            onClick={() => router.push('/dashboard/payments')}
+                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition"
+                        >
+                            View All →
+                        </button>
+                    </div>
+
+                    <div className="divide-y divide-slate-100 max-h-[360px] overflow-y-auto">
+                        {recentPayments.length === 0 ? (
+                            <div className="px-5 py-12 text-center text-xs text-slate-400">
+                                No recent payments recorded yet
+                            </div>
+                        ) : (
+                            recentPayments.slice(0, 10).map((p: any, i: number) => {
+                                const isMpesa = p.payment_method === 'M-Pesa';
+                                const isToday = p.payment_date?.startsWith(todayStr);
+                                return (
+                                    <div key={p.payment_id || i} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition">
+                                        <div
+                                            className={`w-9 h-9 rounded-2xl flex items-center justify-center text-xs font-black text-white flex-shrink-0 shadow-sm ${
+                                                isMpesa ? 'bg-emerald-500' : 'bg-blue-500'
+                                            }`}
+                                        >
+                                            {isMpesa ? '📱' : '💵'}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-bold text-slate-900 truncate">
+                                                {p.arms_tenants?.tenant_name || 'Tenant Payment'}
+                                            </p>
+                                            <p className="text-[10px] text-slate-400 truncate">
+                                                {p.arms_locations?.location_name || 'Property'} • {p.payment_method}
+                                            </p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0">
+                                            <p className="text-xs font-black text-emerald-600 font-mono">
+                                                {fmt(p.amount)}
+                                            </p>
+                                            <p className="text-[10px] text-slate-400">
+                                                {timeAgo(p.payment_date)}
+                                            </p>
+                                        </div>
+                                        {isToday && (
+                                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">
+                                                TODAY
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
                 </div>
 
-                {/* Top 5 Overdue Leaderboard */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-                        <div className="flex items-center gap-2">
-                            <FiAlertTriangle size={14} className="text-red-500" />
-                            <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Top 5 Overdue</p>
+                {/* Right: Top Overdue Watchlist */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                                <FiAlertTriangle size={14} />
+                            </div>
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                High-Exposure Debt Watchlist
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700">
+                                Top {top5Overdue.length}
+                            </span>
                         </div>
-                        <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-red-500 font-semibold hover:underline">View all</button>
+                        <button
+                            onClick={() => router.push('/dashboard/unpaid')}
+                            className="text-xs font-bold text-rose-600 hover:text-rose-800 transition"
+                        >
+                            View All Unpaid →
+                        </button>
                     </div>
-                    <div className="divide-y divide-gray-50">
+
+                    <div className="divide-y divide-slate-100 max-h-[360px] overflow-y-auto">
                         {top5Overdue.length === 0 ? (
-                            <div className="px-5 py-8 text-center text-xs text-gray-400">🏆 No overdue tenants!</div>
-                        ) : top5Overdue.map((t: any, i: number) => {
-                            const months = t.monthsOwed || 0;
-                            const urg = urgencyStyle(months);
-                            return (
-                                <div key={t.tenant_id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition">
-                                    <div className="flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black text-white flex-shrink-0"
-                                        style={{ background: i === 0 ? '#ef4444' : i === 1 ? '#f97316' : '#f59e0b' }}>
-                                        {i + 1}
+                            <div className="px-5 py-12 text-center text-xs text-slate-400">
+                                🏆 No overdue balances found in this scope!
+                            </div>
+                        ) : (
+                            top5Overdue.map((t: any, i: number) => {
+                                const months = t.monthsOwed || 0;
+                                const urg = urgencyStyle(months);
+                                return (
+                                    <div key={t.tenant_id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition">
+                                        <div
+                                            className="w-6 h-6 rounded-xl flex items-center justify-center text-[10px] font-black text-white flex-shrink-0 shadow-sm"
+                                            style={{
+                                                background: i === 0 ? '#e11d48' : i === 1 ? '#ea580c' : '#f59e0b'
+                                            }}
+                                        >
+                                            {i + 1}
+                                        </div>
+                                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${urg.dot}`} />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-bold text-slate-900 truncate">
+                                                {t.tenant_name}
+                                            </p>
+                                            <p className="text-[10px] text-slate-400 truncate">
+                                                {t.arms_units?.unit_name || '-'} • {t.arms_locations?.location_name || '-'}
+                                            </p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0">
+                                            <p className="text-xs font-black text-rose-600 font-mono">
+                                                {fmt(t.totalOwed)}
+                                            </p>
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold border ${urg.badge}`}>
+                                                {urg.label}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                                            {t.phone && (
+                                                <a
+                                                    href={`tel:${t.phone}`}
+                                                    className="w-7 h-7 rounded-xl flex items-center justify-center bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition border border-emerald-200"
+                                                    title={`Call ${t.tenant_name}`}
+                                                >
+                                                    <FiPhone size={11} />
+                                                </a>
+                                            )}
+                                            <button
+                                                onClick={() => router.push('/dashboard/sms')}
+                                                className="w-7 h-7 rounded-xl flex items-center justify-center bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition border border-indigo-200"
+                                                title={`Send SMS to ${t.tenant_name}`}
+                                            >
+                                                <FiMessageSquare size={11} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${urg.dot}`} />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-xs font-bold text-gray-800 truncate">{t.tenant_name}</p>
-                                        <p className="text-[10px] text-gray-400 truncate">{t.arms_units?.unit_name || '-'}  {t.arms_locations?.location_name || '-'}</p>
-                                    </div>
-                                    <div className="text-right flex-shrink-0">
-                                        <p className="text-xs font-black text-red-600">{fmt(t.totalOwed)}</p>
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold border ${urg.badge}`}>
-                                            {urg.label}
-                                        </span>
-                                    </div>
-                                </div>
-                            );
-                        })}
+                                );
+                            })
+                        )}
                     </div>
                 </div>
             </div>
 
-
-            {/*  Vacancy by Location + Mini Tenant Search  */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                10. VACANCY BY LOCATION & QUICK BALANCE LOOKUP
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                {/* Vacancy Status by Location */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <div className="flex items-center gap-2 mb-4">
-                        <FiMapPin size={14} className="text-indigo-500" />
-                        <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Vacancy by Location</p>
+                {/* Location Occupancy Portfolio */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <FiMapPin size={15} className="text-indigo-600" />
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                Portfolio Occupancy by Property
+                            </h3>
+                        </div>
+                        <button
+                            onClick={() => router.push('/dashboard/units')}
+                            className="text-xs font-bold text-indigo-600 hover:underline"
+                        >
+                            Manage Units →
+                        </button>
                     </div>
+
                     {locations.length === 0 ? (
-                        <p className="text-xs text-gray-400 text-center py-4">No locations configured</p>
+                        <p className="text-xs text-slate-400 text-center py-6">No locations configured</p>
                     ) : (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[220px] overflow-y-auto">
                             {locations.map(loc => {
                                 const locTenants = allTenants.filter((t: any) => t.location_id === loc.location_id && t.status === 'Active');
                                 const occupied = locTenants.length;
                                 const pct = occupied > 0 ? Math.min(100, Math.round((occupied / Math.max(occupied + 1, 1)) * 100)) : 0;
                                 return (
-                                    <div key={loc.location_id} className="p-3 rounded-xl border border-gray-100 bg-gray-50 hover:bg-indigo-50 hover:border-indigo-100 transition cursor-pointer"
-                                        onClick={() => router.push('/dashboard/units')}>
-                                        <p className="text-xs font-bold text-gray-700 truncate">{loc.location_name}</p>
-                                        <div className="flex items-center gap-2 mt-1.5">
-                                            <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                                <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                                    <div
+                                        key={loc.location_id}
+                                        className="p-3 rounded-2xl border border-slate-200/80 bg-slate-50/60 hover:bg-indigo-50/60 hover:border-indigo-200 transition cursor-pointer"
+                                        onClick={() => router.push('/dashboard/units')}
+                                    >
+                                        <p className="text-xs font-bold text-slate-800 truncate">{loc.location_name}</p>
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                                <div
+                                                    className="h-full rounded-full transition-all duration-500"
+                                                    style={{
+                                                        width: `${pct}%`,
+                                                        background: 'linear-gradient(90deg, #4f46e5, #06b6d4)'
+                                                    }}
+                                                />
                                             </div>
-                                            <span className="text-[10px] font-bold text-indigo-600">{occupied} active</span>
+                                            <span className="text-[10px] font-black text-indigo-700 font-mono">
+                                                {occupied} Active
+                                            </span>
                                         </div>
                                     </div>
                                 );
@@ -953,215 +1856,321 @@ export default function DashboardPage() {
                     )}
                 </div>
 
-                {/* Mini Tenant Search with Balance */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <div className="flex items-center gap-2 mb-4">
-                        <FiZap size={14} className="text-amber-500" />
-                        <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Quick Balance Lookup</p>
-                    </div>
-                    <div className="relative mb-3">
-                        <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={13} />
-                        <input type="text" value={miniSearch} onChange={e => setMiniSearch(e.target.value)}
-                            placeholder="Type tenant name or phone"
-                            className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-amber-300 focus:ring-4 focus:ring-amber-50 transition-all" />
-                    </div>
-                    <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                        {miniSearch.trim() === '' ? (
-                            <p className="text-[11px] text-gray-400 text-center py-4">Start typing to search tenants</p>
-                        ) : miniResults.length === 0 ? (
-                            <p className="text-[11px] text-gray-400 text-center py-4">No tenants found</p>
-                        ) : miniResults.map((t: any) => (
-                            <div key={t.tenant_id} className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 hover:bg-amber-50 transition cursor-pointer"
-                                onClick={() => router.push('/dashboard/tenants')}>
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black text-white flex-shrink-0"
-                                    style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
-                                    {t.tenant_name?.charAt(0)?.toUpperCase()}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-bold text-gray-800 truncate">{t.tenant_name}</p>
-                                    <p className="text-[10px] text-gray-400">{t.arms_units?.unit_name || '-'}  {t.phone || 'No phone'}</p>
-                                </div>
-                                <div className="text-right flex-shrink-0">
-                                    <p className={`text-xs font-black ${(t.balance || 0) > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                        {(t.balance || 0) > 0 ? fmt(t.balance) : '✅ Clear'}
-                                    </p>
-                                    <p className="text-[9px] text-gray-400">{(t.balance || 0) > 0 ? 'owes' : 'paid up'}</p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-
-            {/*  Current Month Grid  */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50 flex-wrap gap-3">
-                    <div className="flex items-center gap-3">
-                        <FiCalendar size={15} className="text-indigo-500" />
-                        <p className="text-sm font-bold text-gray-700">
-                            {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} — Billing Grid
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-                            {(['unpaid', 'paid'] as const).map(tab => (
-                                <button key={tab} onClick={() => setGridTab(tab)}
-                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${gridTab === tab ? (tab === 'paid' ? 'bg-green-500 text-white shadow-sm' : 'bg-red-500 text-white shadow-sm') : 'text-gray-500 hover:text-gray-700'}`}>
-                                    {tab === 'paid' ? `✅ Paid (${monthGrid?.paid?.length || 0})` : `⚠️ Unpaid (${monthGrid?.unpaid?.length || 0})`}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-                <div className="p-4">
-                    {filteredGridItems.length === 0 ? (
-                        <div className="text-center py-10">
-                            <span className="text-4xl">{gridTab === 'paid' ? '🎉' : '⚠️'}</span>
-                            <p className="text-sm font-bold text-gray-500 mt-3">{gridTab === 'paid' ? 'No paid bills match filters' : 'No unpaid bills — great!'}</p>
-                        </div>
-                    ) : (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-xs">
-                                <thead>
-                                    <tr className="border-b border-gray-100">
-                                        <th className="text-left py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tenant</th>
-                                        <th className="text-left py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Unit</th>
-                                        <th className="text-left py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Location</th>
-                                        <th className="text-right py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Rent</th>
-                                        <th className="text-right py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Paid</th>
-                                        <th className="text-right py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Balance</th>
-                                        <th className="text-center py-2.5 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50">
-                                    {filteredGridItems.slice(0, 20).map((b: any) => (
-                                        <tr key={b.billing_id} className="hover:bg-gray-50 transition">
-                                            <td className="py-2.5 px-3 font-semibold text-gray-800">{b.arms_tenants?.tenant_name || '-'}</td>
-                                            <td className="py-2.5 px-3 text-gray-500">{b.arms_units?.unit_name || '-'}</td>
-                                            <td className="py-2.5 px-3 text-gray-400">{b.arms_locations?.location_name || '-'}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-gray-700">{fmt(b.rent_amount)}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-green-600">{fmt(b.amount_paid)}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono font-bold text-red-500">{fmt(b.balance)}</td>
-                                            <td className="py-2.5 px-3 text-center">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'Paid' ? 'bg-green-50 text-green-600' : b.status === 'Partial' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                                                    {b.status}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            {filteredGridItems.length > 20 && (
-                                <p className="text-center text-xs text-gray-400 mt-3 py-2">
-                                    Showing 20 of {filteredGridItems.length} · <button onClick={() => router.push('/dashboard/billing')} className="text-indigo-500 font-semibold hover:underline">View all in Billing</button>
-                                </p>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                        <span>Total Due: <b className="text-red-600">{fmt(monthGrid?.totalDue || 0)}</b></span>
-                        <span>Total Paid: <b className="text-green-600">{fmt(monthGrid?.totalPaid || 0)}</b></span>
-                    </div>
-                    <button onClick={() => router.push('/dashboard/billing')} className="text-xs text-indigo-500 font-semibold hover:underline">Open Billing →</button>
-                </div>
-            </div>
-
-            {/*  Overdue Tenants Full List  */}
-            {filteredOverdue.length > 0 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
+                {/* Instant Quick Balance Terminal */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
-                            <FiAlertTriangle size={14} className="text-red-500" />
-                            <p className="text-sm font-bold text-gray-700">Overdue Tenants</p>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-100">{filteredOverdue.length}</span>
+                            <FiZap size={15} className="text-amber-500" />
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                Instant Balance Verification Terminal
+                            </h3>
                         </div>
-                        <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-red-500 font-semibold hover:underline">View Unpaid Page →</button>
+                        <span className="text-[10px] font-bold text-slate-400">Fast Query</span>
                     </div>
-                    <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
-                        {filteredOverdue.slice(0, 15).map((t: any) => {
-                            const months = t.monthsOwed || 0;
-                            const urg = urgencyStyle(months);
-                            return (
-                                <div key={t.tenant_id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition">
-                                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${urg.dot}`} />
-                                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                                        style={{ background: 'linear-gradient(135deg,#ef4444,#f97316)' }}>
+
+                    <div className="relative mb-3">
+                        <FiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                        <input
+                            type="text"
+                            value={miniSearch}
+                            onChange={e => setMiniSearch(e.target.value)}
+                            placeholder="Type tenant name, phone, or unit number..."
+                            className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-amber-400 focus:ring-4 focus:ring-amber-50 transition"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
+                        {miniSearch.trim() === '' ? (
+                            <p className="text-[11px] text-slate-400 text-center py-6">
+                                Enter any tenant name or phone number for an immediate balance check
+                            </p>
+                        ) : miniResults.length === 0 ? (
+                            <p className="text-[11px] text-slate-400 text-center py-6">
+                                No matching tenants found
+                            </p>
+                        ) : (
+                            miniResults.map((t: any) => (
+                                <div
+                                    key={t.tenant_id}
+                                    onClick={() => router.push('/dashboard/tenants')}
+                                    className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-amber-50/80 transition cursor-pointer border border-transparent hover:border-amber-200"
+                                >
+                                    <div
+                                        className="w-7 h-7 rounded-xl flex items-center justify-center text-[10px] font-black text-white flex-shrink-0"
+                                        style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                                    >
                                         {t.tenant_name?.charAt(0)?.toUpperCase()}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-bold text-gray-800 truncate">{t.tenant_name}</p>
-                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                            <span className="text-xs text-gray-400">{t.arms_units?.unit_name || '-'}</span>
-                                            <span className="text-gray-200"></span>
-                                            <span className="text-xs text-gray-400">{t.arms_locations?.location_name || '-'}</span>
-                                            {t.phone && <><span className="text-gray-200"></span><span className="text-xs font-mono text-gray-400">{t.phone}</span></>}
-                                        </div>
+                                        <p className="text-xs font-bold text-slate-800 truncate">{t.tenant_name}</p>
+                                        <p className="text-[10px] text-slate-400">Unit: {t.arms_units?.unit_name || '-'} • {t.phone || 'No phone'}</p>
                                     </div>
                                     <div className="text-right flex-shrink-0">
-                                        <p className="text-sm font-black text-red-600">{fmt(t.totalOwed)}</p>
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${urg.badge}`}>
-                                            {urg.label}
+                                        <p className={`text-xs font-black ${(t.balance || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                            {(t.balance || 0) > 0 ? fmt(t.balance) : '✅ Paid Up'}
+                                        </p>
+                                        <span className="text-[9px] text-slate-400 font-semibold">
+                                            {(t.balance || 0) > 0 ? 'Current debt' : 'Zero balance'}
                                         </span>
                                     </div>
-                                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                                        {t.phone && (
-                                            <a href={`tel:${t.phone}`} className="w-8 h-8 rounded-xl flex items-center justify-center bg-green-50 text-green-600 hover:bg-green-100 transition border border-green-100">
-                                                <FiPhone size={12} />
-                                            </a>
-                                        )}
-                                        <button onClick={() => router.push('/dashboard/sms')} className="w-8 h-8 rounded-xl flex items-center justify-center bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition border border-indigo-100">
-                                            <FiMessageSquare size={12} />
-                                        </button>
-                                    </div>
                                 </div>
-                            );
-                        })}
+                            ))
+                        )}
                     </div>
-                    {filteredOverdue.length > 15 && (
-                        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 text-center">
-                            <button onClick={() => router.push('/dashboard/unpaid')} className="text-xs text-indigo-500 font-semibold hover:underline">
-                                +{filteredOverdue.length - 15} more · View all on Unpaid page
+                </div>
+            </div>
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                11. SUPER PREMIUM BILLING & PAYMENT DATAGRID
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-wrap gap-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                            <FiCalendar size={16} />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-extrabold text-slate-900">
+                                {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} — Master Billing Ledger
+                            </h2>
+                            <p className="text-[11px] text-slate-400">
+                                Showing {filteredGridItems.length} matching billing record{filteredGridItems.length !== 1 ? 's' : ''}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Status Tabs */}
+                    <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-2xl">
+                        {[
+                            { key: 'all', label: `All Bills (${(monthGrid?.paid?.length || 0) + (monthGrid?.unpaid?.length || 0)})` },
+                            { key: 'unpaid', label: `⚠️ Unpaid (${monthGrid?.unpaid?.length || 0})` },
+                            { key: 'paid', label: `✅ Paid (${monthGrid?.paid?.length || 0})` },
+                        ].map(tab => (
+                            <button
+                                key={tab.key}
+                                onClick={() => { setGridTab(tab.key as any); setGridPage(1); }}
+                                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                    gridTab === tab.key
+                                        ? tab.key === 'paid'
+                                            ? 'bg-emerald-600 text-white shadow-sm'
+                                            : tab.key === 'unpaid'
+                                            ? 'bg-rose-600 text-white shadow-sm'
+                                            : 'bg-indigo-600 text-white shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="p-4 overflow-x-auto">
+                    {filteredGridItems.length === 0 ? (
+                        <div className="text-center py-14">
+                            <span className="text-5xl">{gridTab === 'paid' ? '🎉' : '✅'}</span>
+                            <p className="text-sm font-extrabold text-slate-700 mt-3">
+                                {gridTab === 'paid' ? 'No paid bills match the active filters' : 'No outstanding unpaid bills in this view!'}
+                            </p>
+                            <p className="text-xs text-slate-400 mt-1">Adjust filters or search parameters</p>
+                        </div>
+                    ) : (
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="border-b border-slate-100 text-slate-400 uppercase tracking-wider text-[10px] font-extrabold">
+                                    <th className="text-left py-3 px-3">Tenant Folio</th>
+                                    <th className="text-left py-3 px-3">Unit Name</th>
+                                    <th className="text-left py-3 px-3">Location</th>
+                                    <th className="text-right py-3 px-3">Monthly Rent</th>
+                                    <th className="text-right py-3 px-3">Amount Paid</th>
+                                    <th className="text-right py-3 px-3">Balance Due</th>
+                                    <th className="text-center py-3 px-3">Status</th>
+                                    <th className="text-center py-3 px-3">Quick Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {paginatedGridItems.map((b: any) => {
+                                    const isPaid = b.status === 'Paid';
+                                    const isPartial = b.status === 'Partial';
+                                    return (
+                                        <tr key={b.billing_id} className="hover:bg-slate-50/80 transition group">
+                                            <td className="py-3 px-3 font-semibold text-slate-800">
+                                                <div className="flex items-center gap-2.5">
+                                                    <div
+                                                        className="w-7 h-7 rounded-xl flex items-center justify-center text-[10px] font-black text-white flex-shrink-0"
+                                                        style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                                                    >
+                                                        {b.arms_tenants?.tenant_name?.charAt(0)?.toUpperCase()}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-bold text-slate-900">{b.arms_tenants?.tenant_name || 'Tenant'}</p>
+                                                        <p className="text-[10px] text-slate-400 font-mono">{b.arms_tenants?.phone || 'No phone'}</p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="py-3 px-3 font-bold text-slate-700">
+                                                {b.arms_units?.unit_name || '-'}
+                                            </td>
+                                            <td className="py-3 px-3 text-slate-400">
+                                                {b.arms_locations?.location_name || '-'}
+                                            </td>
+                                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                                                {fmt(b.rent_amount)}
+                                            </td>
+                                            <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">
+                                                {fmt(b.amount_paid)}
+                                            </td>
+                                            <td className="py-3 px-3 text-right font-mono font-black text-rose-600">
+                                                {fmt(b.balance)}
+                                            </td>
+                                            <td className="py-3 px-3 text-center">
+                                                <span
+                                                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                                        isPaid
+                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                            : isPartial
+                                                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                            : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                                    }`}
+                                                >
+                                                    {b.status}
+                                                </span>
+                                            </td>
+                                            <td className="py-3 px-3 text-center">
+                                                <div className="flex items-center justify-center gap-1.5 opacity-90 group-hover:opacity-100 transition">
+                                                    {b.arms_tenants?.phone && (
+                                                        <a
+                                                            href={`tel:${b.arms_tenants?.phone}`}
+                                                            className="w-7 h-7 rounded-xl flex items-center justify-center bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 transition"
+                                                            title="Call Tenant"
+                                                        >
+                                                            <FiPhone size={11} />
+                                                        </a>
+                                                    )}
+                                                    <button
+                                                        onClick={() => router.push('/dashboard/sms')}
+                                                        className="w-7 h-7 rounded-xl flex items-center justify-center bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 transition"
+                                                        title="Send SMS"
+                                                    >
+                                                        <FiMessageSquare size={11} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => router.push('/dashboard/billing')}
+                                                        className="w-7 h-7 rounded-xl flex items-center justify-center bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200 transition"
+                                                        title="View Folio"
+                                                    >
+                                                        <FiEye size={11} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+
+                {/* Datagrid Footer & Pagination */}
+                <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between flex-wrap gap-3 text-xs">
+                    <div className="flex items-center gap-4 text-slate-600">
+                        <span>Due in Scope: <b className="text-rose-600 font-mono font-bold">{fmt(monthGrid?.totalDue || 0)}</b></span>
+                        <span>•</span>
+                        <span>Paid in Scope: <b className="text-emerald-600 font-mono font-bold">{fmt(monthGrid?.totalPaid || 0)}</b></span>
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                disabled={gridPage <= 1}
+                                onClick={() => setGridPage(p => Math.max(p - 1, 1))}
+                                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:bg-slate-50 transition"
+                            >
+                                <FiChevronLeft size={14} />
+                            </button>
+                            <span className="text-xs font-bold text-slate-700">
+                                Page {gridPage} of {totalPages}
+                            </span>
+                            <button
+                                disabled={gridPage >= totalPages}
+                                onClick={() => setGridPage(p => Math.min(p + 1, totalPages))}
+                                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:bg-slate-50 transition"
+                            >
+                                <FiChevronRight size={14} />
                             </button>
                         </div>
                     )}
-                </div>
-            )}
 
-            {/*  Arrears Payments Detail  */}
-            {arrearsPaymentsDetail.length > 0 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <button onClick={() => setShowArrearsGrid(g => !g)}
-                        className="w-full flex items-center justify-between px-5 py-4 border-b border-gray-50 hover:bg-gray-50 transition">
-                        <div className="flex items-center gap-2">
-                            <FiCheckCircle size={14} className="text-emerald-500" />
-                            <p className="text-sm font-bold text-gray-700">Arrears Payments History</p>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">{arrearsPaymentsDetail.length}</span>
-                        </div>
-                        <span className="text-xs text-gray-400">{showArrearsGrid ? '▲ Hide' : '▼ Show'}</span>
+                    <button
+                        onClick={() => router.push('/dashboard/billing')}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition"
+                    >
+                        Launch Full Billing Ledger →
                     </button>
+                </div>
+            </div>
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                12. ARREARS PAYMENTS HISTORY AUDIT TRAIL
+            ══════════════════════════════════════════════════════════════════════ */}
+            {arrearsPaymentsDetail.length > 0 && (
+                <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                    <button
+                        onClick={() => setShowArrearsGrid(g => !g)}
+                        className="w-full flex items-center justify-between px-5 py-4 border-b border-slate-100 hover:bg-slate-50 transition"
+                    >
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                                <FiCheckCircle size={14} />
+                            </div>
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                Historical Arrears Recovery Ledger
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                                {arrearsPaymentsDetail.length} Cleared Records
+                            </span>
+                        </div>
+                        <span className="text-xs font-bold text-indigo-600">
+                            {showArrearsGrid ? '▲ Hide Details' : '▼ View Recovered Arrears'}
+                        </span>
+                    </button>
+
                     {showArrearsGrid && (
-                        <div className="overflow-x-auto">
+                        <div className="p-4 overflow-x-auto">
                             <table className="w-full text-xs">
                                 <thead>
-                                    <tr className="border-b border-gray-100 bg-gray-50">
-                                        <th className="text-left py-2.5 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tenant</th>
-                                        <th className="text-left py-2.5 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Date</th>
-                                        <th className="text-right py-2.5 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Paid</th>
-                                        <th className="text-right py-2.5 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Arrears Cleared</th>
-                                        <th className="text-left py-2.5 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Method</th>
+                                    <tr className="border-b border-slate-100 bg-slate-50/80 text-slate-400 uppercase tracking-wider text-[10px] font-extrabold">
+                                        <th className="text-left py-2.5 px-4">Tenant Name</th>
+                                        <th className="text-left py-2.5 px-4">Payment Date</th>
+                                        <th className="text-right py-2.5 px-4">Total Amount Paid</th>
+                                        <th className="text-right py-2.5 px-4">Arrears Cleared</th>
+                                        <th className="text-center py-2.5 px-4">Settlement Channel</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-50">
+                                <tbody className="divide-y divide-slate-100">
                                     {arrearsPaymentsDetail.slice(0, 20).map((p: any) => (
-                                        <tr key={p.payment_id} className="hover:bg-gray-50 transition">
-                                            <td className="py-2.5 px-4 font-semibold text-gray-800">{p.arms_tenants?.tenant_name || '-'}</td>
-                                            <td className="py-2.5 px-4 text-gray-500">{p.payment_date?.split('T')[0] || '-'}</td>
-                                            <td className="py-2.5 px-4 text-right font-mono text-green-600">{fmt(p.amount)}</td>
-                                            <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-600">{fmt(p.arrears_paid)}</td>
-                                            <td className="py-2.5 px-4">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${p.payment_method === 'M-Pesa' ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
+                                        <tr key={p.payment_id} className="hover:bg-slate-50 transition">
+                                            <td className="py-2.5 px-4 font-bold text-slate-800">
+                                                {p.arms_tenants?.tenant_name || '-'}
+                                            </td>
+                                            <td className="py-2.5 px-4 text-slate-500 font-mono">
+                                                {p.payment_date?.split('T')[0] || '-'}
+                                            </td>
+                                            <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-700">
+                                                {fmt(p.amount)}
+                                            </td>
+                                            <td className="py-2.5 px-4 text-right font-mono font-black text-emerald-600">
+                                                {fmt(p.arrears_paid)}
+                                            </td>
+                                            <td className="py-2.5 px-4 text-center">
+                                                <span
+                                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                        p.payment_method === 'M-Pesa'
+                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                                    }`}
+                                                >
                                                     {p.payment_method}
                                                 </span>
                                             </td>
