@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull,
-    getTenants, getLocations, getMpesaTransactions, autoMatchMpesa, autoMatchAllUnmatched,
+    getTenants, getLocations, getMpesaTransactions, getKcbStkRequests, autoMatchMpesa, autoMatchAllUnmatched,
     c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
@@ -390,6 +390,7 @@ export default function PaymentsPage() {
     const [tenants, setTenants] = useState<any[]>([]);
     const [locations, setLocations] = useState<any[]>([]);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
+    const [kcbRequests, setKcbRequests] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [showPayModal, setShowPayModal] = useState(false);
     const [locationId, setLocationId] = useState<number | null>(null);
@@ -403,7 +404,7 @@ export default function PaymentsPage() {
     const [actionLoading, setActionLoading] = useState(false);
 
     // ── Filter State ──────────────────────────────────────────────────────────
-    const [filterMethodTab, setFilterMethodTab] = useState<'all' | 'mpesa' | 'cash' | 'bank'>('all');
+    const [filterMethodTab, setFilterMethodTab] = useState<'all' | 'kcb' | 'cash' | 'mpesa' | 'bank'>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [filterLocation, setFilterLocation] = useState<string>('');
     const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -417,16 +418,18 @@ export default function PaymentsPage() {
         setLoading(true);
         topProgress.start();
         try {
-            const [p, t, l, m] = await Promise.all([
+            const [p, t, l, m, k] = await Promise.all([
                 getPayments({ locationId: locId ?? undefined }),
                 getTenants(locId ?? undefined),
                 getLocations(),
-                getMpesaTransactions(false)
+                getMpesaTransactions(false),
+                getKcbStkRequests(30),
             ]);
             setPayments(p || []);
             setTenants((t || []).filter((te: any) => te.status === 'Active'));
             setLocations(l || []);
             setMpesaTxns(m || []);
+            setKcbRequests(k || []);
         } catch {
             toast.error('Failed to load payment records');
         } finally {
@@ -532,17 +535,32 @@ export default function PaymentsPage() {
     const totalArrearsPaid = useMemo(() => payments.reduce((s, p) => s + (p.arrears_paid || 0), 0), [payments]);
     const totalCurrentRentPaid = useMemo(() => payments.reduce((s, p) => s + (p.current_rent_paid || 0), 0), [payments]);
 
-    const mpesaPayments = useMemo(() => payments.filter(p => p.payment_method === 'M-Pesa' || p.payment_method?.startsWith('Jenga-M-Pesa')), [payments]);
-    const cashPayments = useMemo(() => payments.filter(p => p.payment_method === 'Cash'), [payments]);
-    const bankPayments = useMemo(() => payments.filter(p => p.payment_method === 'Bank Transfer' || p.payment_method?.includes('Equitel')), [payments]);
+    const isKcbPayment = (p: any) =>
+        p.payment_method === 'KCB Buni' ||
+        p.payment_method === 'KCB' ||
+        p.payment_method === 'stk_push' ||
+        p.payment_method?.startsWith('KCB') ||
+        p.recorded_by === 'KCB Buni STK Auto';
 
-    const mpesaTotal = mpesaPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const isMpesaDirect = (p: any) =>
+        (p.payment_method === 'M-Pesa' || p.payment_method?.startsWith('Jenga')) && !isKcbPayment(p);
+
+    const kcbPayments = useMemo(() => payments.filter(isKcbPayment), [payments]);
+    const mpesaOnlyPayments = useMemo(() => payments.filter(isMpesaDirect), [payments]);
+    const cashPayments = useMemo(() => payments.filter(p => p.payment_method === 'Cash'), [payments]);
+    const bankPayments = useMemo(() => payments.filter(p => p.payment_method === 'Bank Transfer' || p.payment_method?.includes('Equitel') || p.payment_method === 'Cheque'), [payments]);
+
+    const kcbTotal = kcbPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const mpesaTotal = mpesaOnlyPayments.reduce((s, p) => s + (p.amount || 0), 0);
     const cashTotal = cashPayments.reduce((s, p) => s + (p.amount || 0), 0);
     const bankTotal = bankPayments.reduce((s, p) => s + (p.amount || 0), 0);
-    const mpesaAdoptionRate = totalAll > 0 ? Math.round((mpesaTotal / totalAll) * 100) : 0;
+    const kcbAdoptionRate = totalAll > 0 ? Math.round((kcbTotal / totalAll) * 100) : 0;
     const avgTicket = payments.length > 0 ? Math.round(totalAll / payments.length) : 0;
     const currentDay = Math.max(1, new Date().getDate());
     const dailyPace = Math.round(todayTotal > 0 ? todayTotal : totalAll / Math.max(payments.length, 1));
+
+    const kcbCompletedCount = kcbRequests.filter((r: any) => r.status === 'Completed').length;
+    const kcbSuccessRate = kcbRequests.length > 0 ? Math.round((kcbCompletedCount / kcbRequests.length) * 100) : 100;
 
     // ── Filtered Payments List ────────────────────────────────────────────────
     const filteredPayments = useMemo(() => {
@@ -553,9 +571,10 @@ export default function PaymentsPage() {
             const receipt = (p.mpesa_receipt || p.reference_no || '').toLowerCase();
             const q = searchQuery.toLowerCase().trim();
 
-            if (filterMethodTab === 'mpesa' && p.payment_method !== 'M-Pesa' && !p.payment_method?.startsWith('Jenga-M-Pesa')) return false;
+            if (filterMethodTab === 'kcb' && !isKcbPayment(p)) return false;
+            if (filterMethodTab === 'mpesa' && !isMpesaDirect(p)) return false;
             if (filterMethodTab === 'cash' && p.payment_method !== 'Cash') return false;
-            if (filterMethodTab === 'bank' && p.payment_method !== 'Bank Transfer' && !p.payment_method?.includes('Equitel')) return false;
+            if (filterMethodTab === 'bank' && p.payment_method !== 'Bank Transfer' && !p.payment_method?.includes('Equitel') && p.payment_method !== 'Cheque') return false;
 
             if (filterLocation && String(p.location_id) !== filterLocation) return false;
 
@@ -579,10 +598,10 @@ export default function PaymentsPage() {
 
     // ── Charts Data ───────────────────────────────────────────────────────────
     const channelDonutData = {
-        labels: ['M-Pesa Paybill', 'Cash Settlement', 'Bank Transfer'],
+        labels: ['KCB Buni STK', 'Cash Settlement', 'Bank Transfer', 'Direct M-Pesa'],
         datasets: [{
-            data: [mpesaTotal, cashTotal, bankTotal],
-            backgroundColor: ['#10b981', '#3b82f6', '#8b5cf6'],
+            data: [kcbTotal, cashTotal, bankTotal, mpesaTotal],
+            backgroundColor: ['#10b981', '#f59e0b', '#6366f1', '#06b6d4'],
             borderWidth: 0,
             hoverOffset: 6
         }]
@@ -695,15 +714,15 @@ export default function PaymentsPage() {
                     <div>
                         <div className="flex items-center gap-2.5 flex-wrap">
                             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-sans">
-                                Rent Collections & M-Pesa Payment Ledger
+                                Rent Collections & KCB Buni STK Payment Ledger
                             </h1>
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-300">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                LIVE SETTLEMENTS
+                                KCB BUNI LIVE GATEWAY
                             </span>
                         </div>
                         <p className="text-xs text-slate-500 font-medium mt-0.5">
-                            Real-time Kenya payment settlements, M-Pesa Daraja/C2B reconciliation & FIFO rent allocation
+                            Real-time Kenya payment settlements, KCB Buni STK Push reconciliation & FIFO rent allocation
                         </p>
                     </div>
                 </div>
@@ -721,7 +740,7 @@ export default function PaymentsPage() {
                         className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
                         style={{ background: '#4f46e5' }}
                     >
-                        <FiSmartphone size={13} /> M-Pesa STK Push
+                        <FiSmartphone size={13} /> KCB STK Push
                     </button>
                     <button
                         onClick={() => loadData(locationId)}
@@ -781,32 +800,33 @@ export default function PaymentsPage() {
                     shadowColor="rgba(234, 88, 12, 0.4)"
                 />
 
-                {/* 5. Teal/Green Card: M-PESA VOLUME */}
+                {/* 5. Teal/Green Card: KCB BUNI STK INFLOW */}
                 <CompactKpiCard
-                    icon="📱"
-                    label="M-PESA VOLUME"
-                    value={fmt(mpesaTotal)}
-                    sub={`${mpesaAdoptionRate}% digital adoption`}
+                    icon="💳"
+                    label="KCB BUNI STK INFLOW"
+                    value={fmt(kcbTotal)}
+                    sub={`${kcbPayments.length} KCB settlements`}
                     gradient="linear-gradient(135deg, #0d9488 0%, #14b8a6 50%, #10b981 100%)"
                     shadowColor="rgba(13, 148, 136, 0.4)"
+                    pulse={kcbPayments.length > 0}
                 />
 
-                {/* 6. Slate Card: CASH SETTLEMENTS */}
-                <CompactKpiCard
-                    icon="💵"
-                    label="CASH INFLOW"
-                    value={fmt(cashTotal)}
-                    sub={`${cashPayments.length} cash entries`}
-                    gradient="linear-gradient(135deg, #1e293b 0%, #334155 100%)"
-                    shadowColor="rgba(30, 41, 59, 0.4)"
-                />
-
-                {/* 7. Crimson/Red Card: COLLECTION VELOCITY */}
+                {/* 6. Ocean Blue Card: KCB STK ADOPTION */}
                 <CompactKpiCard
                     icon="📈"
-                    label="AVG TICKET SIZE"
-                    value={fmt(avgTicket)}
-                    sub="Per settlement receipt"
+                    label="KCB STK ADOPTION"
+                    value={`${kcbAdoptionRate}%`}
+                    sub={`${fmt(kcbTotal)} digital collection`}
+                    gradient="linear-gradient(135deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%)"
+                    shadowColor="rgba(2, 132, 199, 0.4)"
+                />
+
+                {/* 7. Crimson/Red Card: STK PROMPT SUCCESS */}
+                <CompactKpiCard
+                    icon="📲"
+                    label="STK PROMPT SUCCESS"
+                    value={`${kcbSuccessRate}%`}
+                    sub={`${kcbRequests.length} mobile APK prompts`}
                     gradient="linear-gradient(135deg, #e11d48 0%, #f43f5e 50%, #fb7185 100%)"
                     shadowColor="rgba(225, 29, 72, 0.4)"
                 />
@@ -943,7 +963,7 @@ export default function PaymentsPage() {
                             Channel Distribution
                         </span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-                            {mpesaAdoptionRate}% M-Pesa
+                            {kcbAdoptionRate}% KCB STK
                         </span>
                     </div>
                     <div style={{ height: 160 }}>
@@ -966,38 +986,61 @@ export default function PaymentsPage() {
                     </div>
                 </div>
 
-                {/* 3. Real-time Payment Reconciler Summary */}
+                {/* 3. KCB Buni STK Live Stream & Reconciler */}
                 <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 flex flex-col justify-between">
                     <div>
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">
-                                M-Pesa Auto-Reconciler
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                                KCB Buni STK Live Gateway
                             </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                                Daraja C2B
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                {kcbSuccessRate}% Success
                             </span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Tenant payments via Paybill / Till are automatically matched via phone number and cleared via FIFO arrears-first allocation.
+                        <p className="text-xs text-slate-500 mb-2">
+                            Real-time STK prompts initiated by tenants in the ARMS mobile APK.
                         </p>
-                    </div>
 
-                    <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5 text-xs">
-                        <div className="flex justify-between items-center text-slate-600">
-                            <span>Unmatched M-Pesa Transactions:</span>
-                            <b className="text-indigo-600 font-mono">{mpesaTxns.length} pending</b>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                            <span>Active Tenant Folios:</span>
-                            <b className="text-slate-800 font-mono">{tenants.length} tenants</b>
+                        <div className="space-y-1.5 max-h-[135px] overflow-y-auto">
+                            {kcbRequests.length === 0 ? (
+                                <p className="text-xs text-slate-400 py-3 text-center">No recent KCB STK requests logged</p>
+                            ) : kcbRequests.slice(0, 3).map((req: any) => {
+                                const isDone = req.status === 'Completed';
+                                const isFail = req.status === 'Failed' || req.status === 'Cancelled';
+                                return (
+                                    <div key={req.id} className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-100 text-xs">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="font-extrabold text-slate-800 truncate">
+                                                    {req.arms_tenants?.tenant_name || `Tenant #${req.tenant_id}`}
+                                                </span>
+                                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                                                    isDone ? 'bg-emerald-100 text-emerald-700' :
+                                                    isFail ? 'bg-rose-100 text-rose-700' :
+                                                    'bg-amber-100 text-amber-700 animate-pulse'
+                                                }`}>
+                                                    {isDone ? '✓ Paid' : isFail ? 'Failed' : 'Pending'}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] font-mono text-slate-400 truncate">
+                                                {req.mpesa_receipt ? `Receipt: ${req.mpesa_receipt}` : req.phone}
+                                            </div>
+                                        </div>
+                                        <div className="text-right flex-shrink-0 font-mono font-black text-emerald-700 ml-2">
+                                            {fmt(req.amount_paid || req.amount)}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
 
                     <button
                         onClick={() => setShowPayModal(true)}
-                        className="mt-3 w-full py-2 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition flex items-center justify-center gap-1.5"
+                        className="mt-3 w-full py-2 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition flex items-center justify-center gap-1.5 shadow-sm"
                     >
-                        <FiLink size={13} /> Link Callback Transaction
+                        <FiSmartphone size={13} /> Initiate KCB STK Push
                     </button>
                 </div>
             </div>
@@ -1019,9 +1062,10 @@ export default function PaymentsPage() {
                     {/* Method Channel Tabs */}
                     <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-2xl">
                         {[
-                            { key: 'all', label: `All (${payments.length})` },
-                            { key: 'mpesa', label: `📱 M-Pesa (${mpesaPayments.length})` },
+                            { key: 'all', label: `All Settlements (${payments.length})` },
+                            { key: 'kcb', label: `💳 KCB Buni STK (${kcbPayments.length})` },
                             { key: 'cash', label: `💵 Cash (${cashPayments.length})` },
+                            { key: 'mpesa', label: `📱 Direct M-Pesa (${mpesaOnlyPayments.length})` },
                             { key: 'bank', label: `🏦 Bank (${bankPayments.length})` },
                         ].map(tab => (
                             <button
@@ -1078,7 +1122,8 @@ export default function PaymentsPage() {
                                 const currentRentPaid = p.current_rent_paid || 0;
                                 const tenantBalance = p.arms_tenants?.balance || 0;
                                 const arrearsRemaining = Math.max(0, tenantBalance);
-                                const isMpesa = p.payment_method === 'M-Pesa' || p.payment_method?.startsWith('Jenga');
+                                const isKcb = isKcbPayment(p);
+                                const isMpesa = isMpesaDirect(p);
 
                                 return (
                                     <tr key={p.payment_id} className="hover:bg-slate-50/80 transition group">
@@ -1142,23 +1187,31 @@ export default function PaymentsPage() {
                                         </td>
                                         <td className="px-3.5 py-3 text-center">
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                                isMpesa
-                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                isKcb
+                                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-sm'
+                                                    : isMpesa
+                                                    ? 'bg-teal-50 text-teal-700 border border-teal-200'
                                                     : p.payment_method === 'Cash'
-                                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                                     : 'bg-purple-50 text-purple-700 border border-purple-200'
                                             }`}>
-                                                {isMpesa ? '📱' : p.payment_method === 'Cash' ? '💵' : '🏦'} {p.payment_method}
+                                                {isKcb ? '💳' : isMpesa ? '📱' : p.payment_method === 'Cash' ? '💵' : '🏦'}{' '}
+                                                {isKcb ? 'KCB Buni STK' : p.payment_method}
                                             </span>
                                         </td>
-                                        <td className="px-3.5 py-3 text-[10px] font-mono text-slate-600">
+                                        <td className="px-3.5 py-3 text-[10px] font-mono text-slate-700">
                                             <div className="flex items-center gap-1">
-                                                <span>{p.mpesa_receipt || p.reference_no || '-'}</span>
+                                                {isKcb && p.mpesa_receipt && (
+                                                    <span className="text-[9px] font-black px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 font-sans">
+                                                        KCB
+                                                    </span>
+                                                )}
+                                                <span className="font-bold">{p.mpesa_receipt || p.reference_no || '-'}</span>
                                                 {(p.mpesa_receipt || p.reference_no) && (
                                                     <button
                                                         onClick={() => {
                                                             navigator.clipboard.writeText(p.mpesa_receipt || p.reference_no);
-                                                            toast.success('Code copied to clipboard!');
+                                                            toast.success('Receipt code copied to clipboard!');
                                                         }}
                                                         className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 transition"
                                                         title="Copy Code"
@@ -1168,8 +1221,14 @@ export default function PaymentsPage() {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-3.5 py-3 text-[10px] text-slate-400">
-                                            {p.recorded_by || '-'}
+                                        <td className="px-3.5 py-3 text-[10px] text-slate-500 font-medium">
+                                            {p.recorded_by === 'KCB Buni STK Auto' ? (
+                                                <span className="inline-flex items-center gap-1 text-emerald-700 font-bold">
+                                                    🤖 ARMS APK Auto
+                                                </span>
+                                            ) : (
+                                                p.recorded_by || '-'
+                                            )}
                                         </td>
                                         <td className="px-3.5 py-3 text-center">
                                             <div className="flex items-center justify-center gap-1.5 opacity-90 group-hover:opacity-100 transition">
@@ -1251,7 +1310,7 @@ export default function PaymentsPage() {
             {/* ════════════════ EDIT PAYMENT MODAL ════════════════ */}
             {editingPayment && (() => {
                 const editAmount = parseFloat(editForm.amount) || 0;
-                const isMpesa = editForm.payment_method === 'M-Pesa' || editForm.payment_method?.startsWith('Jenga');
+                const isMpesa = editForm.payment_method === 'M-Pesa' || editForm.payment_method === 'KCB Buni' || editForm.payment_method?.startsWith('Jenga');
                 return (
                     <div className="modal-overlay" onClick={() => setEditingPayment(null)}>
                         <div className="modal-content" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
@@ -1307,10 +1366,10 @@ export default function PaymentsPage() {
                                     <label className="text-xs font-bold text-slate-700 mb-1 block">Payment Method</label>
                                     <div className="flex flex-wrap gap-2">
                                         {[
+                                            { id: 'KCB Buni', icon: '💳', color: '#10b981' },
                                             { id: 'Cash', icon: '💵', color: '#3b82f6' },
-                                            { id: 'M-Pesa', icon: '📱', color: '#10b981' },
+                                            { id: 'M-Pesa', icon: '📱', color: '#06b6d4' },
                                             { id: 'Bank Transfer', icon: '🏦', color: '#6366f1' },
-                                            { id: 'Jenga-M-Pesa', icon: '⚡', color: '#f59e0b' },
                                         ].map(m => (
                                             <button
                                                 key={m.id}

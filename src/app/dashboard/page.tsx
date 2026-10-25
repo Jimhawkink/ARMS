@@ -510,7 +510,7 @@ export default function DashboardPage() {
                 barPercentage: 0.62
             },
             {
-                label: 'M-Pesa Inflow',
+                label: 'KCB STK / Digital Inflow',
                 data: analytics.map(a => a.mpesaCollected),
                 backgroundColor: 'rgba(16, 185, 129, 0.85)',
                 borderColor: '#059669',
@@ -624,7 +624,7 @@ export default function DashboardPage() {
 
     // Property Health Radar Chart
     const radarData = {
-        labels: ['Occupancy', 'Collection Efficiency', 'Low Arrears Ratio', 'M-Pesa Velocity', 'Net Yield'],
+        labels: ['Occupancy', 'Collection Efficiency', 'Low Arrears Ratio', 'KCB Digital Pace', 'Net Yield'],
         datasets: [{
             label: 'Portfolio Health',
             data: [
@@ -700,7 +700,7 @@ export default function DashboardPage() {
     // Payment Methods Donut
     const totalOther = Math.max(0, (stats?.monthlyCollected || 0) - (analytics[analytics.length - 1]?.cashCollected || 0) - (analytics[analytics.length - 1]?.mpesaCollected || 0));
     const payMethodData = {
-        labels: ['M-Pesa Paybill', 'Cash Settlement', 'Bank / Direct'],
+        labels: ['KCB STK Inflow', 'Cash Settlement', 'Bank / Direct'],
         datasets: [{
             data: [totalMpesa, totalCash, totalOther],
             backgroundColor: ['#10b981', '#3b82f6', '#f59e0b'],
@@ -1272,7 +1272,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-2xl">
                         {[
                             { key: 'revenue', label: '📊 Invoiced vs Collected', icon: <FiTrendingUp size={12} /> },
-                            { key: 'cashmpesa', label: '📱 Cash vs M-Pesa', icon: <FiSmartphone size={12} /> },
+                            { key: 'cashmpesa', label: '💳 Cash vs KCB STK', icon: <FiSmartphone size={12} /> },
                             { key: 'rate', label: '⚡ Collection % & Arrears', icon: <FiPercent size={12} /> },
                             { key: 'radar', label: '🎯 Health Matrix', icon: <FiShield size={12} /> },
                         ].map(tab => (
@@ -1318,10 +1318,10 @@ export default function DashboardPage() {
                         <div>
                             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                    Payment Channel Distribution (M-Pesa vs Cash Inflow)
+                                    Payment Channel Distribution (KCB STK vs Cash Inflow)
                                 </span>
                                 <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                                    M-Pesa Adoption: {mpesaAdoptionRate}%
+                                    KCB STK Adoption: {mpesaAdoptionRate}%
                                 </span>
                             </div>
                             <div style={{ height: 320 }}>
@@ -1579,16 +1579,17 @@ export default function DashboardPage() {
                             </div>
                         ) : (
                             recentPayments.slice(0, 10).map((p: any, i: number) => {
+                                const isKcb = p.payment_method === 'KCB Buni' || p.payment_method?.startsWith('KCB');
                                 const isMpesa = p.payment_method === 'M-Pesa';
                                 const isToday = p.payment_date?.startsWith(todayStr);
                                 return (
                                     <div key={p.payment_id || i} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition">
                                         <div
                                             className={`w-9 h-9 rounded-2xl flex items-center justify-center text-xs font-black text-white flex-shrink-0 shadow-sm ${
-                                                isMpesa ? 'bg-emerald-500' : 'bg-blue-500'
+                                                isKcb ? 'bg-teal-500' : isMpesa ? 'bg-emerald-500' : 'bg-blue-500'
                                             }`}
                                         >
-                                            {isMpesa ? '📱' : '💵'}
+                                            {isKcb ? '💳' : isMpesa ? '📱' : '💵'}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-xs font-bold text-slate-900 truncate">

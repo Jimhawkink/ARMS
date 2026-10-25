@@ -41,7 +41,7 @@ function ReceiptCard({ receipt }: ReceiptCardProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="text-[11px] font-black text-green-800 uppercase tracking-wider mb-0.5">
-                        M-Pesa Receipt
+                        KCB M-Pesa Receipt
                     </p>
                     <p
                         className="text-lg font-black text-green-900 tracking-widest font-mono"
@@ -137,9 +137,9 @@ export default function StkPushSection({
             <div className="px-4 py-3 border-b border-green-200 flex items-center gap-2">
                 <span className="text-base">📱</span>
                 <div>
-                    <p className="text-xs font-extrabold text-green-900">M-Pesa STK Push</p>
+                    <p className="text-xs font-extrabold text-green-900">KCB Buni STK Push</p>
                     <p className="text-[10px] text-green-700 mt-0.5">
-                        Send a payment prompt directly to the tenant's phone
+                        Send instant payment prompt directly to tenant's mobile phone via KCB Buni
                     </p>
                 </div>
             </div>
@@ -196,7 +196,7 @@ export default function StkPushSection({
                         }}
                     >
                         <FiZap size={15} />
-                        Send M-Pesa Payment Prompt
+                        Send KCB STK Payment Prompt
                     </button>
                 )}
 
@@ -205,7 +205,7 @@ export default function StkPushSection({
                         <FiRefreshCw size={16} className="text-green-600 animate-spin flex-shrink-0" />
                         <div>
                             <p className="text-sm font-bold text-green-800">Sending payment prompt…</p>
-                            <p className="text-[10px] text-green-600 mt-0.5">Connecting to M-Pesa Daraja API</p>
+                            <p className="text-[10px] text-green-600 mt-0.5">Connecting to KCB Buni API gateway</p>
                         </div>
                     </div>
                 )}
@@ -219,7 +219,7 @@ export default function StkPushSection({
                         <div>
                             <p className="text-sm font-bold text-amber-800">Waiting for payment…</p>
                             <p className="text-[10px] text-amber-600 mt-0.5">
-                                Checking every 1.5s · Tenant should see a prompt on their phone
+                                Checking every 1.5s · Tenant enters M-Pesa PIN on phone
                             </p>
                         </div>
                     </div>

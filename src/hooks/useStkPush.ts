@@ -65,6 +65,8 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
     const startTimeRef = useRef<number>(0);
     const lastParamsRef = useRef<StkSendParams | null>(null);
     const checkoutRequestIdRef = useRef<string | null>(null);
+    const isKcbRef = useRef<boolean>(false);
+    const tenantIdRef = useRef<number | null>(null);
     const activeRef = useRef(false); // prevents stale closures from continuing after reset
 
     const stopPolling = useCallback(() => {
@@ -108,6 +110,31 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
             }
 
             try {
+                if (isKcbRef.current) {
+                    const kcbRes = await fetch(
+                        `/api/kcb/status?checkoutRequestId=${encodeURIComponent(checkoutRequestId)}&tenantId=${tenantIdRef.current || ''}`
+                    );
+                    if (kcbRes.ok) {
+                        const kcbData = await kcbRes.json();
+                        if (!activeRef.current) return;
+                        if (kcbData.status === 'Completed') {
+                            stopPolling();
+                            const receiptCode = kcbData.receipt || '';
+                            setReceipt(receiptCode);
+                            setStatus('success');
+                            onReceiptReceived(receiptCode);
+                            return;
+                        } else if (kcbData.status === 'Failed' || kcbData.status === 'Cancelled') {
+                            stopPolling();
+                            setStatus('failed');
+                            setError(kcbData.resultDesc || 'KCB STK prompt was cancelled or failed');
+                            return;
+                        }
+                    }
+                    scheduleNextPoll(checkoutRequestId, poll);
+                    return;
+                }
+
                 // ── Strategy: poll DB first (fast), fall back to M-Pesa Query API ──
                 // The DB is updated by the STK callback (usually within 5-30s after action)
                 // The M-Pesa Query API is the authoritative source but is rate-limited
@@ -218,7 +245,32 @@ export function useStkPush({ onReceiptReceived }: UseStkPushOptions): UseStkPush
         setReceipt(null);
 
         try {
-            const res = await fetch('/api/mpesa/stk-push', {
+        tenantIdRef.current = tenantId;
+
+        // Try KCB Buni STK Push first (primary tenant payment gateway in ARMS)
+        try {
+            const kcbRes = await fetch('/api/kcb/stk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone,
+                    amount: Math.ceil(amount),
+                    tenantId,
+                    description: `Rent - ${tenantName}`,
+                }),
+            });
+            const kcbData = await kcbRes.json();
+            if (kcbRes.ok && kcbData.checkoutRequestId) {
+                isKcbRef.current = true;
+                checkoutRequestIdRef.current = kcbData.checkoutRequestId;
+                setStatus('pending');
+                startPolling(kcbData.checkoutRequestId);
+                return;
+            }
+        } catch { /* fallback to standard M-Pesa STK */ }
+
+        isKcbRef.current = false;
+        const res = await fetch('/api/mpesa/stk-push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

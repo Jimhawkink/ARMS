@@ -1300,6 +1300,31 @@ export async function autoMatchAllUnmatched() {
     return results;
 }
 
+// ==================== KCB BUNI STK PUSH ====================
+export async function getKcbStkRequests(limit: number = 30) {
+    try {
+        const { data, error } = await supabase
+            .from('arms_kcb_stk_requests')
+            .select('*, arms_tenants(tenant_name, phone, arms_units(unit_name), arms_locations(location_name))')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        if (!error && data) return data;
+    } catch { /* fallback to flat query if foreign relations differ */ }
+
+    try {
+        const { data, error } = await supabase
+            .from('arms_kcb_stk_requests')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        if (error) throw error;
+        return data || [];
+    } catch (err: any) {
+        console.error('getKcbStkRequests error:', err.message);
+        return [];
+    }
+}
+
 // ==================== REPORTS ====================
 export async function getTenantStatement(tenantId: number) {
     const [tenant, bills, payments] = await Promise.all([
@@ -1523,7 +1548,15 @@ export async function get12MonthAnalytics(locationId?: number) {
         const billed = monthBills.reduce((s, b) => s + (b.rent_amount || 0), 0);
         const collected = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
         const cashCollected = monthPayments.filter(p => p.payment_method === 'Cash').reduce((s, p) => s + (p.amount || 0), 0);
-        const mpesaCollected = monthPayments.filter(p => p.payment_method === 'M-Pesa').reduce((s, p) => s + (p.amount || 0), 0);
+        const mpesaCollected = monthPayments.filter(p =>
+            p.payment_method === 'M-Pesa' ||
+            p.payment_method === 'KCB Buni' ||
+            p.payment_method === 'KCB' ||
+            p.payment_method?.startsWith('KCB') ||
+            p.payment_method?.startsWith('M-Pesa') ||
+            p.payment_method === 'Jenga IPN' ||
+            p.recorded_by === 'KCB Buni STK Auto'
+        ).reduce((s, p) => s + (p.amount || 0), 0);
         const unpaid = monthBills.filter(b => b.status !== 'Paid').reduce((s, b) => s + (b.balance || 0), 0);
         const paidCount = monthBills.filter(b => b.status === 'Paid').length;
         const unpaidCount = monthBills.filter(b => b.status !== 'Paid').length;
@@ -2293,7 +2326,15 @@ export async function getCashFlowStatement(locationId?: number, months: number =
     const { data: payments } = await revQuery;
 
     const cashInflows = (payments || []).filter(p => p.payment_method === 'Cash').reduce((s, p) => s + (p.amount || 0), 0);
-    const mpesaInflows = (payments || []).filter(p => p.payment_method === 'M-Pesa').reduce((s, p) => s + (p.amount || 0), 0);
+    const mpesaInflows = (payments || []).filter(p =>
+        p.payment_method === 'M-Pesa' ||
+        p.payment_method === 'KCB Buni' ||
+        p.payment_method === 'KCB' ||
+        p.payment_method?.startsWith('KCB') ||
+        p.payment_method?.startsWith('M-Pesa') ||
+        p.payment_method === 'Jenga IPN' ||
+        p.recorded_by === 'KCB Buni STK Auto'
+    ).reduce((s, p) => s + (p.amount || 0), 0);
 
     let billQ = supabase.from('arms_billing').select('balance').gt('balance', 0);
     if (locationId) billQ = billQ.eq('location_id', locationId);
