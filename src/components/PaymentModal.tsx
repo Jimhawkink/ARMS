@@ -8,10 +8,12 @@ import {
 import toast from 'react-hot-toast';
 import {
     FiX, FiRefreshCw, FiCheck, FiDollarSign, FiCalendar, FiUser,
-    FiSmartphone, FiCreditCard, FiZap
+    FiSmartphone, FiCreditCard, FiZap, FiList
 } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import SearchableTenantSelector from '@/components/SearchableTenantSelector';
+import ArrearsBreakdownTable from '@/components/ArrearsBreakdownTable';
+import AllocationPreviewPanel from '@/components/AllocationPreviewPanel';
 import StkPushSection from '@/components/StkPushSection';
 import { useStkPush } from '@/hooks/useStkPush';
 
@@ -25,7 +27,7 @@ interface PaymentModalProps {
     onPaymentRecorded: () => void;
 }
 
-// Clean month generator without vacation text
+// Clean month generator without vacation tags
 function getMonthOptions() {
     const options: { value: string; label: string }[] = [];
     const now = new Date();
@@ -51,7 +53,8 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
     const [tenantArrearData, setTenantArrearData] = useState<any>(null);
     const [loadingArrears, setLoadingArrears] = useState(false);
-    // Cash is default as requested
+    const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
+    // Cash is default on web app
     const [paymentMethod, setPaymentMethod] = useState('Cash');
     const [amount, setAmount] = useState('');
     const [mpesaReceipt, setMpesaReceipt] = useState('');
@@ -82,7 +85,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         return selectedTenant?.balance || 0;
     }, [tenantArrearData, selectedTenant]);
 
-    // KCB STK Push integration - available when KCB STK is selected
+    // KCB STK Push integration
     const { status: stkStatus, error: stkError, send: stkSend, retry: stkRetry, reset: stkReset } = useStkPush({
         onReceiptReceived: (receipt) => {
             setMpesaReceipt(receipt);
@@ -96,6 +99,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         if (isOpen) {
             setSelectedTenantId(null);
             setTenantArrearData(null);
+            setSelectedMonths(new Set());
             setPaymentMethod('Cash');
             setAmount('');
             setMpesaReceipt('');
@@ -111,9 +115,9 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
-    // Fetch arrears when tenant changes
+    // Fetch arrears & billing history when tenant changes
     useEffect(() => {
-        if (!selectedTenantId) { setTenantArrearData(null); return; }
+        if (!selectedTenantId) { setTenantArrearData(null); setSelectedMonths(new Set()); return; }
         setLoadingArrears(true);
         getAccumulatedArrearsForTenant(selectedTenantId)
             .then(d => setTenantArrearData(d))
@@ -136,10 +140,24 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     const handleTenantSelect = useCallback((id: number | null) => {
         setSelectedTenantId(id);
+        setSelectedMonths(new Set());
         const t = tenants.find((x: any) => x.tenant_id === id);
         if (t?.phone) setMpesaPhone(t.phone);
         stkReset();
     }, [tenants, stkReset]);
+
+    // When selecting specific months in the monthly breakdown table
+    const handleMonthsSelectionChange = (newMonths: Set<string>) => {
+        setSelectedMonths(newMonths);
+        if (newMonths.size > 0 && tenantArrearData?.bills) {
+            const sum = tenantArrearData.bills
+                .filter((b: any) => newMonths.has(b.billing_month))
+                .reduce((s: number, b: any) => s + (b.balance || 0), 0);
+            if (sum > 0) {
+                setAmount(sum.toString());
+            }
+        }
+    };
 
     const selectCallback = (txn: any) => {
         const amt = txn.trans_amount || txn.amount || 0;
@@ -237,16 +255,12 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         );
     }
 
-    // Calculation for FIFO settlement preview
     const numAmount = parseFloat(amount) || 0;
-    const arrearsCovered = Math.min(totalTenantDebt, numAmount);
-    const rentCovered = Math.max(0, numAmount - totalTenantDebt);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-            {/* Compact non-buggy width: max-w-[490px] */}
             <div
-                className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[90vh] max-w-[490px] animate-scaleUp"
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
             >
                 {/* ── 1. Header (Compact rounded gradient banner) ── */}
                 <div
@@ -280,7 +294,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 </div>
 
                 {/* ── 2. Scrollable Body ── */}
-                <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3.5 bg-slate-50/50">
+                <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4 bg-slate-50/50">
 
                     {/* Section 1: Tenant Selector */}
                     <div>
@@ -348,7 +362,26 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         )}
                     </div>
 
-                    {/* Section 2: Amount & Month (2 Columns) */}
+                    {/* Section 2: Monthly Arrears Breakdown & Billing History */}
+                    {selectedTenantId && (
+                        <div>
+                            {loadingArrears ? (
+                                <div className="flex items-center justify-center gap-2 py-4 rounded-xl bg-white border border-slate-200 text-xs text-slate-500 font-semibold shadow-xs">
+                                    <FiRefreshCw size={12} className="animate-spin text-indigo-600" />
+                                    <span>Loading tenant monthly billing history…</span>
+                                </div>
+                            ) : tenantArrearData ? (
+                                <ArrearsBreakdownTable
+                                    arrearsData={tenantArrearData}
+                                    selectedMonths={selectedMonths}
+                                    onSelectionChange={handleMonthsSelectionChange}
+                                    tenantIsOnVacation={false}
+                                />
+                            ) : null}
+                        </div>
+                    )}
+
+                    {/* Section 3: Amount & Month (2 Columns) */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
@@ -387,7 +420,16 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     </div>
 
-                    {/* Section 3: Payment Method Pills */}
+                    {/* Section 4: Live FIFO Allocation Preview */}
+                    {selectedTenantId && numAmount > 0 && (
+                        <AllocationPreviewPanel
+                            amount={numAmount}
+                            arrearsData={tenantArrearData}
+                            selectedMonths={selectedMonths}
+                        />
+                    )}
+
+                    {/* Section 5: Payment Method Pills */}
                     <div>
                         <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
                             <FiCreditCard size={12} className="text-indigo-600" />
@@ -415,9 +457,9 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     </div>
 
-                    {/* Section 4: Contextual Method Details */}
+                    {/* Section 6: Contextual Method Details */}
 
-                    {/* 4A. KCB STK Push Section (Active when user clicks KCB STK) */}
+                    {/* 6A. KCB STK Push Section (Active when user clicks KCB STK) */}
                     {paymentMethod === 'stk_push' && (
                         <div className="bg-white rounded-2xl p-3 border border-emerald-200 shadow-xs">
                             <StkPushSection
@@ -438,7 +480,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     )}
 
-                    {/* 4B. Direct M-Pesa or KCB Buni Details */}
+                    {/* 6B. Direct M-Pesa or KCB Buni Details */}
                     {(paymentMethod === 'M-Pesa' || paymentMethod === 'KCB Buni') && (
                         <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs space-y-2">
                             <div className="grid grid-cols-2 gap-2">
@@ -470,7 +512,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     )}
 
-                    {/* 4C. Bank Slip / Cheque Reference */}
+                    {/* 6C. Bank Slip / Cheque Reference */}
                     {(paymentMethod === 'Bank Transfer' || paymentMethod === 'Cheque') && (
                         <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs">
                             <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
@@ -486,7 +528,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     )}
 
-                    {/* 4D. C2B Callback Reconciler */}
+                    {/* 6D. C2B Callback Reconciler */}
                     {paymentMethod === 'mpesa_callback' && (
                         <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs space-y-1.5">
                             <div className="flex items-center justify-between">
@@ -526,22 +568,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     )}
 
-                    {/* Section 5: Compact FIFO Allocation Preview */}
-                    {selectedTenant && numAmount > 0 && totalTenantDebt > 0 && (
-                        <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs text-indigo-900 flex items-center justify-between">
-                            <span className="font-bold">
-                                ℹ️ FIFO Settlement:
-                            </span>
-                            <div className="space-x-1.5 font-bold">
-                                <span className="text-rose-700">{fmt(arrearsCovered)} to arrears</span>
-                                {rentCovered > 0 && (
-                                    <span className="text-emerald-700">· {fmt(rentCovered)} to rent</span>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Section 6: Notes */}
+                    {/* Section 7: Notes */}
                     <div>
                         <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 block">
                             Notes (Optional)
