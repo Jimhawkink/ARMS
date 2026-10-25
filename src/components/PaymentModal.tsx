@@ -2,18 +2,16 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-    recordPayment, getAccumulatedArrearsForTenant, isVacationMonth,
+    recordPayment, getAccumulatedArrearsForTenant,
     getEffectiveRent, c2bSupabase, getMpesaTransactions
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
     FiX, FiRefreshCw, FiCheck, FiDollarSign, FiCalendar, FiUser,
-    FiSmartphone, FiCreditCard, FiZap, FiCopy, FiInfo, FiTag, FiHash
+    FiSmartphone, FiCreditCard, FiZap
 } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import SearchableTenantSelector from '@/components/SearchableTenantSelector';
-import ArrearsBreakdownTable from '@/components/ArrearsBreakdownTable';
-import AllocationPreviewPanel from '@/components/AllocationPreviewPanel';
 import StkPushSection from '@/components/StkPushSection';
 import { useStkPush } from '@/hooks/useStkPush';
 
@@ -27,93 +25,34 @@ interface PaymentModalProps {
     onPaymentRecorded: () => void;
 }
 
-function getMonthOptions(isVacationTenant: boolean) {
+// Clean month generator without vacation text
+function getMonthOptions() {
     const options: { value: string; label: string }[] = [];
     const now = new Date();
     for (let i = -12; i <= 3; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
         const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const isVac = isVacationTenant && ['05', '06', '07', '08'].includes(mm);
-        const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) + (isVac ? ' 🏖️ 50%' : '');
+        const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
         options.push({ value: val, label });
     }
     return options;
 }
 
 const PAYMENT_METHODS = [
-    {
-        key: 'stk_push',
-        icon: '💳',
-        label: 'KCB Buni STK',
-        badge: 'FASTEST',
-        desc: 'Instant M-Pesa push prompt to phone',
-        border: 'border-emerald-200 hover:border-emerald-400',
-        activeBg: 'bg-emerald-50/90 text-emerald-950 border-emerald-500 shadow-emerald-500/10'
-    },
-    {
-        key: 'Cash',
-        icon: '💵',
-        label: 'Cash Counter',
-        badge: 'CASHIER',
-        desc: 'Direct physical cash received',
-        border: 'border-amber-200 hover:border-amber-400',
-        activeBg: 'bg-amber-50/90 text-amber-950 border-amber-500 shadow-amber-500/10'
-    },
-    {
-        key: 'M-Pesa',
-        icon: '📱',
-        label: 'Direct M-Pesa',
-        badge: 'PAYBILL',
-        desc: 'Enter Paybill / Till code manually',
-        border: 'border-teal-200 hover:border-teal-400',
-        activeBg: 'bg-teal-50/90 text-teal-950 border-teal-500 shadow-teal-500/10'
-    },
-    {
-        key: 'Bank Transfer',
-        icon: '🏦',
-        label: 'Bank Transfer',
-        badge: 'DIRECT',
-        desc: 'EFT, RTGS or bank deposit slip',
-        border: 'border-indigo-200 hover:border-indigo-400',
-        activeBg: 'bg-indigo-50/90 text-indigo-950 border-indigo-500 shadow-indigo-500/10'
-    },
-    {
-        key: 'Cheque',
-        icon: '📄',
-        label: 'Cheque Slip',
-        badge: 'CLEARANCE',
-        desc: 'Cheque serial & clearance details',
-        border: 'border-purple-200 hover:border-purple-400',
-        activeBg: 'bg-purple-50/90 text-purple-950 border-purple-500 shadow-purple-500/10'
-    },
-    {
-        key: 'mpesa_callback',
-        icon: '🔄',
-        label: 'C2B Reconciler',
-        badge: 'AUTO-MATCH',
-        desc: 'Link unallocated incoming callback',
-        border: 'border-blue-200 hover:border-blue-400',
-        activeBg: 'bg-blue-50/90 text-blue-950 border-blue-500 shadow-blue-500/10'
-    },
+    { key: 'Cash', icon: '💵', label: 'Cash' },
+    { key: 'M-Pesa', icon: '📱', label: 'M-Pesa' },
+    { key: 'stk_push', icon: '💳', label: 'KCB STK' },
+    { key: 'Bank Transfer', icon: '🏦', label: 'Bank' },
+    { key: 'Cheque', icon: '📄', label: 'Cheque' },
+    { key: 'mpesa_callback', icon: '🔄', label: 'C2B Match' },
 ];
 
-/**
- * PaymentModal — Ultra-Premium Rent Payment Modal
- * Features:
- * - Direct KCB Buni STK Push support (primary ARMS payment channel)
- * - Searchable Tenant Selector with live folio intelligence
- * - 1-Click Quick Debt Liquidation chips (Full Debt, 1 Month Rent, 50% Rent)
- * - ArrearsBreakdownTable with per-month checkboxes
- * - Real-time FIFO AllocationPreviewPanel
- * - RentReceipt modal trigger on success
- */
 export default function PaymentModal({ isOpen, onClose, tenants, locationId, onPaymentRecorded }: PaymentModalProps) {
     const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
     const [tenantArrearData, setTenantArrearData] = useState<any>(null);
     const [loadingArrears, setLoadingArrears] = useState(false);
-    const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
-    const [paymentMethod, setPaymentMethod] = useState('stk_push');
+    // Cash is default as requested
+    const [paymentMethod, setPaymentMethod] = useState('Cash');
     const [amount, setAmount] = useState('');
     const [mpesaReceipt, setMpesaReceipt] = useState('');
     const [mpesaPhone, setMpesaPhone] = useState('');
@@ -133,12 +72,8 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         return tenants.find((t: any) => t.tenant_id === selectedTenantId) ?? null;
     }, [tenants, selectedTenantId]);
 
-    const isVacationTenant = selectedTenant?.is_on_vacation ?? false;
-    const isCurrentVacMonth = isVacationMonth(paymentMonth);
-    const effectiveRent = selectedTenant
-        ? getEffectiveRent(selectedTenant.monthly_rent || 0, paymentMonth, isVacationTenant)
-        : 0;
-    const monthOptions = useMemo(() => getMonthOptions(isVacationTenant), [isVacationTenant]);
+    const effectiveRent = selectedTenant?.monthly_rent || 0;
+    const monthOptions = useMemo(() => getMonthOptions(), []);
 
     const totalTenantDebt = useMemo(() => {
         if (tenantArrearData && typeof tenantArrearData.totalDue === 'number') {
@@ -147,6 +82,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         return selectedTenant?.balance || 0;
     }, [tenantArrearData, selectedTenant]);
 
+    // KCB STK Push integration - available when KCB STK is selected
     const { status: stkStatus, error: stkError, send: stkSend, retry: stkRetry, reset: stkReset } = useStkPush({
         onReceiptReceived: (receipt) => {
             setMpesaReceipt(receipt);
@@ -155,13 +91,12 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         },
     });
 
-    // Reset state when modal opens
+    // Reset modal state on open - ensure Cash is always default
     useEffect(() => {
         if (isOpen) {
             setSelectedTenantId(null);
             setTenantArrearData(null);
-            setSelectedMonths(new Set());
-            setPaymentMethod('stk_push');
+            setPaymentMethod('Cash');
             setAmount('');
             setMpesaReceipt('');
             setMpesaPhone('');
@@ -191,7 +126,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         try {
             const [m, c2b] = await Promise.all([
                 getMpesaTransactions(false),
-                c2bSupabase.from('c2b_transactions').select('*').order('created_at', { ascending: false }).limit(100),
+                c2bSupabase.from('c2b_transactions').select('*').order('created_at', { ascending: false }).limit(60),
             ]);
             setMpesaTxns(m || []);
             setC2bPayments((c2b as any).data || []);
@@ -201,7 +136,6 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     const handleTenantSelect = useCallback((id: number | null) => {
         setSelectedTenantId(id);
-        setSelectedMonths(new Set());
         const t = tenants.find((x: any) => x.tenant_id === id);
         if (t?.phone) setMpesaPhone(t.phone);
         stkReset();
@@ -223,7 +157,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         setPaymentMethod('M-Pesa');
         if (matched) {
             setSelectedTenantId(matched.tenant_id);
-            toast.success(`🎯 Auto-matched → ${matched.tenant_name}`, { icon: '📱' });
+            toast.success(`🎯 Auto-matched → ${matched.tenant_name}`);
         }
     };
 
@@ -240,7 +174,8 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const handleSubmit = async () => {
         if (!selectedTenantId) { toast.error('Please select a tenant'); return; }
         if (!amount) { toast.error('Please enter a payment amount'); return; }
-        if (parseFloat(amount) <= 0) { toast.error('Payment amount must be greater than zero'); return; }
+        const parsedAmount = parseFloat(amount);
+        if (isNaN(parsedAmount) || parsedAmount <= 0) { toast.error('Payment amount must be greater than zero'); return; }
         const tenant = tenants.find((t: any) => t.tenant_id === selectedTenantId);
         if (!tenant) { toast.error('Tenant not found'); return; }
 
@@ -251,12 +186,11 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
             const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             const actualMethod = paymentMethod === 'stk_push' ? 'KCB Buni'
                 : paymentMethod === 'mpesa_callback' ? 'M-Pesa'
-                : paymentMethod === 'jenga_callback' ? 'Jenga IPN'
                 : paymentMethod;
 
             const result = await recordPayment({
                 tenant_id: selectedTenantId,
-                amount: parseFloat(amount),
+                amount: parsedAmount,
                 payment_method: actualMethod,
                 mpesa_receipt: mpesaReceipt || undefined,
                 mpesa_phone: mpesaPhone || undefined,
@@ -266,7 +200,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 location_id: tenant.location_id,
             });
 
-            toast.success('Payment recorded! Generating official receipt…');
+            toast.success('Payment recorded successfully!');
             const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
             setShowReceipt({
                 tenant_name: tenant.tenant_name,
@@ -275,13 +209,13 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 unit_name: tenant.arms_units?.unit_name || '-',
                 location_name: tenant.arms_locations?.location_name || '-',
                 monthly_rent: tenant.monthly_rent || 0,
-                amount: parseFloat(amount),
+                amount: parsedAmount,
                 payment_method: actualMethod,
                 mpesa_receipt: mpesaReceipt || '',
                 payment_date: paymentTime,
                 payment_month: paymentMonth,
                 balance_before: balanceBefore,
-                balance_after: Math.max(0, balanceBefore - parseFloat(amount)),
+                balance_after: Math.max(0, balanceBefore - parsedAmount),
                 recorded_by: user.name || 'Admin',
                 arrears_paid: (result as any).arrearsPaid ?? 0,
                 current_rent_paid: (result as any).currentRentPaid ?? 0,
@@ -295,7 +229,6 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     if (!isOpen) return null;
 
-    // Show receipt after successful payment
     if (showReceipt) {
         return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
@@ -304,49 +237,34 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         );
     }
 
-    const showMpesaFields = paymentMethod === 'M-Pesa' || paymentMethod === 'mpesa_callback' || paymentMethod === 'KCB Buni';
-    const showRefField = paymentMethod === 'Bank Transfer' || paymentMethod === 'Cheque';
-    const showCallbackList = paymentMethod === 'mpesa_callback' || paymentMethod === 'jenga_callback';
-    const activeCallbacks = paymentMethod === 'mpesa_callback' ? mpesaTxns : c2bPayments;
+    // Calculation for FIFO settlement preview
+    const numAmount = parseFloat(amount) || 0;
+    const arrearsCovered = Math.min(totalTenantDebt, numAmount);
+    const rentCovered = Math.max(0, numAmount - totalTenantDebt);
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-md animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
+            {/* Compact non-buggy width: max-w-[490px] */}
             <div
-                className="bg-white rounded-[28px] border border-slate-200/90 shadow-[0_25px_70px_rgba(0,0,0,0.30)] w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[760px] animate-scaleUp"
+                className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[90vh] max-w-[490px] animate-scaleUp"
             >
-
-                {/* ══════════════════════════════════════════════════════════════
-                    1. EXECUTIVE MODAL HEADER
-                ══════════════════════════════════════════════════════════════ */}
+                {/* ── 1. Header (Compact rounded gradient banner) ── */}
                 <div
-                    className="relative overflow-hidden px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0 text-white select-none"
+                    className="px-5 py-3.5 border-b border-indigo-500/20 flex items-center justify-between flex-shrink-0 text-white"
                     style={{
-                        background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 55%, #312e81 100%)',
+                        background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #7c3aed 100%)',
                     }}
                 >
-                    {/* Radial glow background effect */}
-                    <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-emerald-500/20 blur-3xl pointer-events-none" />
-                    <div className="absolute -bottom-12 -left-12 w-48 h-48 rounded-full bg-indigo-500/20 blur-3xl pointer-events-none" />
-
-                    <div className="relative z-10 flex items-center gap-3.5 min-w-0">
-                        <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-xl text-white shadow-lg shadow-indigo-950/40 bg-white/10 backdrop-blur-md border border-white/20 flex-shrink-0">
-                            💳
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg shadow-inner">
+                            💰
                         </div>
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <h2 className="text-base sm:text-lg font-black text-white tracking-tight leading-snug">
-                                    Record Rent Payment
-                                </h2>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                    FIFO ENGINE ON
-                                </span>
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
-                                    KCB BUNI
-                                </span>
-                            </div>
-                            <p className="text-xs text-indigo-200/90 font-medium truncate mt-0.5">
-                                Real-time Kenya payment settlement & automated arrears liquidation
+                        <div>
+                            <h2 className="text-base font-black text-white leading-tight">
+                                Record Rent Payment
+                            </h2>
+                            <p className="text-[11px] text-indigo-100 font-medium">
+                                FIFO arrears-first automated allocation
                             </p>
                         </div>
                     </div>
@@ -354,108 +272,75 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                     <button
                         type="button"
                         onClick={onClose}
-                        className="relative z-10 w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white/90 hover:text-white flex items-center justify-center transition hover:rotate-90 duration-200 flex-shrink-0"
+                        className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition active:scale-95"
                         title="Close Modal"
                     >
-                        <FiX size={18} />
+                        <FiX size={16} />
                     </button>
                 </div>
 
-                {/* ══════════════════════════════════════════════════════════════
-                    2. SCROLLABLE BODY
-                ══════════════════════════════════════════════════════════════ */}
-                <div className="overflow-y-auto flex-1 px-5 sm:px-7 py-5 space-y-5 bg-slate-50/40">
+                {/* ── 2. Scrollable Body ── */}
+                <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3.5 bg-slate-50/50">
 
-                    {/* ── Section 1: Tenant Selection & Intelligence ── */}
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm space-y-3">
-                        <div className="flex items-center justify-between">
-                            <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                <FiUser className="text-indigo-600" size={13} />
-                                <span>Select Tenant Folio</span>
-                            </label>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                Required
-                            </span>
-                        </div>
-
+                    {/* Section 1: Tenant Selector */}
+                    <div>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
+                            <FiUser size={12} className="text-indigo-600" />
+                            <span>Select Tenant</span>
+                        </label>
                         <SearchableTenantSelector
                             tenants={tenants}
                             selectedTenantId={selectedTenantId}
                             onSelect={handleTenantSelect}
+                            placeholder="Search tenant by name or phone…"
                         />
 
-                        {/* Selected Tenant Intelligence Card */}
+                        {/* Selected Tenant Quick Folio Strip */}
                         {selectedTenant && (
-                            <div className="mt-2.5 rounded-xl p-3 bg-gradient-to-r from-slate-50 via-indigo-50/30 to-slate-50 border border-indigo-100/90">
-                                <div className="flex items-start justify-between flex-wrap gap-2">
-                                    <div>
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-extrabold text-sm text-slate-900">
-                                                {selectedTenant.tenant_name}
-                                            </span>
-                                            <span className="text-[11px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                                                📞 {selectedTenant.phone || 'No phone'}
-                                            </span>
-                                            <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
-                                                Room {selectedTenant.arms_units?.unit_name || '—'}
-                                            </span>
-                                        </div>
-                                        <p className="text-xs text-slate-500 mt-1">
-                                            Estate / Location: <b className="text-slate-700">{selectedTenant.arms_locations?.location_name || '—'}</b>
+                            <div className="mt-2 rounded-xl p-2.5 bg-white border border-slate-200 shadow-xs">
+                                <div className="flex items-center justify-between text-xs">
+                                    <div className="min-w-0">
+                                        <p className="font-extrabold text-slate-900 truncate">
+                                            {selectedTenant.tenant_name}
+                                        </p>
+                                        <p className="text-[10px] text-slate-500">
+                                            Unit: <b className="text-indigo-700">{selectedTenant.arms_units?.unit_name || '—'}</b> · Rent: <b>{fmt(effectiveRent)}</b>
                                         </p>
                                     </div>
-
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-bold text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                                            Monthly: <b>{fmt(effectiveRent)}</b>
-                                        </span>
+                                    <div className="text-right flex-shrink-0">
                                         {totalTenantDebt > 0 ? (
-                                            <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200">
-                                                Debt: {fmt(totalTenantDebt)}
+                                            <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
+                                                Arrears: {fmt(totalTenantDebt)}
                                             </span>
                                         ) : (
-                                            <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                ✓ Zero Arrears
-                                            </span>
-                                        )}
-                                        {isVacationTenant && (
-                                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-300">
-                                                🏖️ Vacation Tenant (50% Rate)
+                                            <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                ✓ Up to Date
                                             </span>
                                         )}
                                     </div>
                                 </div>
 
                                 {/* 1-Click Quick Fill Chips */}
-                                <div className="flex items-center gap-2 flex-wrap mt-3 pt-2.5 border-t border-indigo-100/60">
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                                        <FiZap size={11} className="text-amber-500" /> Quick Fill:
+                                <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-slate-100 flex-wrap">
+                                    <span className="text-[9px] font-black uppercase text-slate-400 flex items-center gap-0.5">
+                                        <FiZap size={10} className="text-amber-500" /> Quick:
                                     </span>
                                     {totalTenantDebt > 0 && (
                                         <button
                                             type="button"
                                             onClick={() => setAmount(totalTenantDebt.toString())}
-                                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 shadow-sm transition active:scale-95"
+                                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
                                         >
-                                            ⚡ Clear Full Debt ({fmt(totalTenantDebt)})
+                                            Clear Debt ({fmt(totalTenantDebt)})
                                         </button>
                                     )}
                                     {effectiveRent > 0 && (
                                         <button
                                             type="button"
                                             onClick={() => setAmount(effectiveRent.toString())}
-                                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-sm transition active:scale-95"
+                                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition"
                                         >
-                                            🏠 1 Month Rent ({fmt(effectiveRent)})
-                                        </button>
-                                    )}
-                                    {effectiveRent > 0 && totalTenantDebt > effectiveRent && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setAmount(Math.round(effectiveRent / 2).toString())}
-                                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 shadow-sm transition active:scale-95"
-                                        >
-                                            ⚖️ 50% Rent ({fmt(Math.round(effectiveRent / 2))})
+                                            1 Mo. Rent ({fmt(effectiveRent)})
                                         </button>
                                     )}
                                 </div>
@@ -463,74 +348,52 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         )}
                     </div>
 
-                    {/* ── Section 2: Amount & Billing Month ── */}
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            {/* Payment Amount Input */}
-                            <div>
-                                <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                                    <span className="flex items-center gap-1.5">
-                                        <FiDollarSign className="text-emerald-600" size={13} />
-                                        Payment Amount (KES)
-                                    </span>
-                                    {amount && parseFloat(amount) > 0 && (
-                                        <span className="text-[10px] font-bold text-emerald-600 font-mono">
-                                            {fmt(parseFloat(amount))}
-                                        </span>
-                                    )}
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-extrabold text-slate-400 font-mono select-none">
-                                        KES
-                                    </span>
-                                    <input
-                                        type="number"
-                                        value={amount}
-                                        onChange={e => setAmount(e.target.value)}
-                                        placeholder="e.g. 15000"
-                                        min="1"
-                                        className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-extrabold text-slate-900 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100/60 transition"
-                                    />
-                                </div>
+                    {/* Section 2: Amount & Month (2 Columns) */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
+                                <FiDollarSign size={12} className="text-emerald-600" />
+                                <span>Amount (KES)</span>
+                            </label>
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400">
+                                    KES
+                                </span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={amount}
+                                    onChange={e => setAmount(e.target.value)}
+                                    placeholder="e.g. 15000"
+                                    className="w-full pl-11 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-extrabold text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
+                                />
                             </div>
+                        </div>
 
-                            {/* Billing Month Dropdown */}
-                            <div>
-                                <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                                    <span className="flex items-center gap-1.5">
-                                        <FiCalendar className="text-indigo-600" size={13} />
-                                        Target Billing Month
-                                    </span>
-                                    {isVacationTenant && isCurrentVacMonth && (
-                                        <span className="text-[10px] font-bold text-amber-600">🏖️ 50% Rate</span>
-                                    )}
-                                </label>
-                                <select
-                                    value={paymentMonth}
-                                    onChange={e => setPaymentMonth(e.target.value)}
-                                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100/60 transition cursor-pointer"
-                                >
-                                    {monthOptions.map(o => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                    ))}
-                                </select>
-                            </div>
+                        <div>
+                            <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
+                                <FiCalendar size={12} className="text-indigo-600" />
+                                <span>Payment Month</span>
+                            </label>
+                            <select
+                                value={paymentMonth}
+                                onChange={e => setPaymentMonth(e.target.value)}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition cursor-pointer"
+                            >
+                                {monthOptions.map(o => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
 
-                    {/* ── Section 3: Payment Method - Sleek Interactive Tiles ── */}
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm space-y-2.5">
-                        <div className="flex items-center justify-between">
-                            <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                <FiCreditCard className="text-emerald-600" size={13} />
-                                <span>Payment Settlement Channel</span>
-                            </label>
-                            <span className="text-[10px] font-bold text-slate-400">
-                                Select channel below
-                            </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    {/* Section 3: Payment Method Pills */}
+                    <div>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center gap-1">
+                            <FiCreditCard size={12} className="text-indigo-600" />
+                            <span>Payment Method</span>
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5">
                             {PAYMENT_METHODS.map(m => {
                                 const isActive = paymentMethod === m.key;
                                 return (
@@ -538,41 +401,25 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         key={m.key}
                                         type="button"
                                         onClick={() => setPaymentMethod(m.key)}
-                                        className={`relative p-3 rounded-2xl border text-left transition-all duration-200 flex flex-col justify-between ${
+                                        className={`flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-bold transition-all border ${
                                             isActive
-                                                ? `${m.activeBg} ring-2 ring-indigo-500/30 scale-[1.01] shadow-md`
-                                                : `bg-slate-50/70 border-slate-200/90 hover:bg-slate-100/80 text-slate-700 hover:scale-[1.005]`
+                                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
                                         }`}
                                     >
-                                        <div className="flex items-center justify-between gap-1 mb-1">
-                                            <span className="text-lg">{m.icon}</span>
-                                            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                                isActive
-                                                    ? 'bg-indigo-600 text-white'
-                                                    : 'bg-slate-200 text-slate-600'
-                                            }`}>
-                                                {m.badge}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs font-black leading-tight text-slate-900">
-                                                {m.label}
-                                            </p>
-                                            <p className="text-[10px] text-slate-500 mt-0.5 leading-snug line-clamp-1">
-                                                {m.desc}
-                                            </p>
-                                        </div>
+                                        <span>{m.icon}</span>
+                                        <span>{m.label}</span>
                                     </button>
                                 );
                             })}
                         </div>
                     </div>
 
-                    {/* ── Section 4: Contextual Method Inputs ── */}
+                    {/* Section 4: Contextual Method Details */}
 
-                    {/* 4A. KCB Buni STK Push UI */}
+                    {/* 4A. KCB STK Push Section (Active when user clicks KCB STK) */}
                     {paymentMethod === 'stk_push' && (
-                        <div className="bg-white rounded-2xl p-4 border border-emerald-200/90 shadow-sm">
+                        <div className="bg-white rounded-2xl p-3 border border-emerald-200 shadow-xs">
                             <StkPushSection
                                 tenantId={selectedTenantId}
                                 amount={amount}
@@ -591,190 +438,130 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         </div>
                     )}
 
-                    {/* Auto-filled Receipt Notification if STK succeeded */}
-                    {paymentMethod === 'stk_push' && mpesaReceipt && (
-                        <div className="flex items-center justify-between px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-800">
-                            <div className="flex items-center gap-2">
-                                <FiCheck size={16} className="text-emerald-600" />
-                                <span className="text-xs font-black">
-                                    Receipt verified & attached: <span className="font-mono">{mpesaReceipt}</span>
-                                </span>
-                            </div>
-                            <span className="text-[10px] font-bold uppercase bg-emerald-200 px-2 py-0.5 rounded text-emerald-900">
-                                KCB Buni
-                            </span>
-                        </div>
-                    )}
-
-                    {/* 4B. Direct M-Pesa / KCB Buni Manual Inputs */}
-                    {showMpesaFields && (
-                        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm space-y-3">
-                            <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                    <FiSmartphone className="text-emerald-600" size={13} />
-                                    <span>M-Pesa / KCB Transaction Verification</span>
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                    Format: UJOJFBAFCM
-                                </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* 4B. Direct M-Pesa or KCB Buni Details */}
+                    {(paymentMethod === 'M-Pesa' || paymentMethod === 'KCB Buni') && (
+                        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">
-                                        Receipt Reference Code
+                                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">
+                                        Receipt Code
                                     </label>
                                     <input
                                         type="text"
                                         value={mpesaReceipt}
                                         onChange={e => setMpesaReceipt(e.target.value.toUpperCase())}
                                         placeholder="e.g. UJOJFBAFCM"
-                                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition"
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800 uppercase focus:outline-none focus:border-indigo-500 focus:bg-white"
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">
-                                        Sender Phone Number
+                                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">
+                                        Sender Phone
                                     </label>
                                     <input
                                         type="tel"
                                         value={mpesaPhone}
                                         onChange={e => setMpesaPhone(e.target.value)}
                                         placeholder="e.g. 0712345678"
-                                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-800 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition"
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
                                     />
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* 4C. Bank Reference / Cheque Input */}
-                    {showRefField && (
-                        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm">
-                            <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5 block">
-                                🔖 Bank Slip / Cheque Reference Serial
+                    {/* 4C. Bank Slip / Cheque Reference */}
+                    {(paymentMethod === 'Bank Transfer' || paymentMethod === 'Cheque') && (
+                        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs">
+                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                                {paymentMethod === 'Bank Transfer' ? 'Bank Slip / Wire Reference' : 'Cheque Serial Number'}
                             </label>
                             <input
                                 type="text"
                                 value={referenceNo}
                                 onChange={e => setReferenceNo(e.target.value)}
-                                placeholder="e.g. CHQ-98231 or Wire Ref #..."
-                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition"
+                                placeholder={paymentMethod === 'Bank Transfer' ? 'e.g. Equity Ref #...' : 'e.g. CHQ-82910'}
+                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
                             />
                         </div>
                     )}
 
-                    {/* 4D. C2B / Jenga Callback Matcher */}
-                    {showCallbackList && (
-                        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm space-y-2">
+                    {/* 4D. C2B Callback Reconciler */}
+                    {paymentMethod === 'mpesa_callback' && (
+                        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs space-y-1.5">
                             <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-black uppercase tracking-wider text-slate-700">
-                                    {paymentMethod === 'mpesa_callback' ? '🔄 Unmatched M-Pesa C2B Inflows' : '🏦 Jenga IPN Callbacks'}
-                                </label>
+                                <span className="text-[10px] font-bold text-slate-600 uppercase">Incoming C2B Callbacks</span>
                                 <button
                                     type="button"
                                     onClick={loadCallbacks}
-                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50"
+                                    className="text-[9px] text-indigo-600 font-bold flex items-center gap-0.5"
                                 >
-                                    <FiRefreshCw size={10} className={loadingCallbacks ? 'animate-spin' : ''} />
-                                    <span>Refresh Queue</span>
+                                    <FiRefreshCw size={9} className={loadingCallbacks ? 'animate-spin' : ''} /> Refresh
                                 </button>
                             </div>
-
-                            <div className="rounded-xl border border-slate-200 overflow-hidden max-h-48 overflow-y-auto divide-y divide-slate-100">
-                                {activeCallbacks.length === 0 ? (
-                                    <div className="p-6 text-center text-xs text-slate-400">
-                                        No unallocated incoming callback transactions found.
-                                    </div>
-                                ) : activeCallbacks.map((txn: any, i: number) => {
-                                    const amt = txn.trans_amount || txn.amount || 0;
-                                    const phone = txn.msisdn || txn.phone || '—';
-                                    const code = txn.trans_id || txn.mpesa_receipt || txn.reference || '—';
-                                    return (
-                                        <div
-                                            key={i}
-                                            onClick={() => selectCallback(txn)}
-                                            className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer hover:bg-indigo-50/70 transition"
-                                        >
-                                            <div>
-                                                <p className="text-xs font-bold text-slate-800">{phone}</p>
-                                                <p className="text-[10px] text-slate-400 font-mono">{code}</p>
+                            <div className="rounded-lg border border-slate-100 divide-y divide-slate-100 max-h-32 overflow-y-auto">
+                                {c2bPayments.length === 0 && mpesaTxns.length === 0 ? (
+                                    <div className="p-3 text-center text-[11px] text-slate-400">No incoming transactions found</div>
+                                ) : (
+                                    [...c2bPayments, ...mpesaTxns].slice(0, 15).map((txn: any, i: number) => {
+                                        const amt = txn.trans_amount || txn.amount || 0;
+                                        const phone = txn.msisdn || txn.phone || '—';
+                                        const code = txn.trans_id || txn.mpesa_receipt || txn.reference || '—';
+                                        return (
+                                            <div
+                                                key={i}
+                                                onClick={() => selectCallback(txn)}
+                                                className="flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 transition"
+                                            >
+                                                <div>
+                                                    <p className="font-bold text-slate-800 leading-tight">{phone}</p>
+                                                    <p className="text-[9px] text-slate-400 font-mono">{code}</p>
+                                                </div>
+                                                <span className="font-mono font-black text-emerald-700">{fmt(amt)}</span>
                                             </div>
-                                            <span className="text-xs font-black text-emerald-600 font-mono">
-                                                {fmt(amt)}
-                                            </span>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })
+                                )}
                             </div>
                         </div>
                     )}
 
-                    {/* ── Section 5: Arrears Breakdown Table ── */}
-                    {selectedTenantId && (
-                        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm space-y-2">
-                            <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                    <FiTag className="text-amber-600" size={13} />
-                                    <span>Historical Arrears Ledger</span>
-                                </label>
-                                <span className="text-[10px] text-slate-400">
-                                    Select specific months to clear
-                                </span>
+                    {/* Section 5: Compact FIFO Allocation Preview */}
+                    {selectedTenant && numAmount > 0 && totalTenantDebt > 0 && (
+                        <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs text-indigo-900 flex items-center justify-between">
+                            <span className="font-bold">
+                                ℹ️ FIFO Settlement:
+                            </span>
+                            <div className="space-x-1.5 font-bold">
+                                <span className="text-rose-700">{fmt(arrearsCovered)} to arrears</span>
+                                {rentCovered > 0 && (
+                                    <span className="text-emerald-700">· {fmt(rentCovered)} to rent</span>
+                                )}
                             </div>
-
-                            {loadingArrears ? (
-                                <div className="flex items-center justify-center gap-2 py-6 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 font-semibold">
-                                    <FiRefreshCw size={14} className="animate-spin text-indigo-600" />
-                                    <span>Computing tenant arrears ledger via FIFO engine…</span>
-                                </div>
-                            ) : tenantArrearData ? (
-                                <ArrearsBreakdownTable
-                                    arrearsData={tenantArrearData}
-                                    selectedMonths={selectedMonths}
-                                    onSelectionChange={setSelectedMonths}
-                                    tenantIsOnVacation={isVacationTenant}
-                                />
-                            ) : (
-                                <div className="px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-400">
-                                    No prior bills found. Payment will be credited directly to active billing month.
-                                </div>
-                            )}
                         </div>
                     )}
 
-                    {/* ── Section 6: Real-time FIFO Allocation Preview ── */}
-                    {selectedTenantId && amount && parseFloat(amount) > 0 && (
-                        <AllocationPreviewPanel
-                            amount={parseFloat(amount)}
-                            arrearsData={tenantArrearData}
-                            selectedMonths={selectedMonths}
-                        />
-                    )}
-
-                    {/* ── Section 7: Notes ── */}
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm">
-                        <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5 block">
-                            📝 Transaction Notes (Optional)
+                    {/* Section 6: Notes */}
+                    <div>
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-600 mb-1 block">
+                            Notes (Optional)
                         </label>
                         <textarea
                             value={notes}
                             onChange={e => setNotes(e.target.value)}
                             rows={2}
-                            placeholder="e.g. Paid at rental management office, caretaker verified receipt..."
-                            className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition resize-none"
+                            placeholder="Any transaction notes…"
+                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition resize-none"
                         />
                     </div>
                 </div>
 
-                {/* ══════════════════════════════════════════════════════════════
-                    3. STICKY MODAL FOOTER
-                ══════════════════════════════════════════════════════════════ */}
-                <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between gap-3 flex-shrink-0">
+                {/* ── 3. Footer ── */}
+                <div className="px-5 py-3 bg-white border-t border-slate-100 flex items-center justify-between gap-3 flex-shrink-0">
                     <button
                         type="button"
                         onClick={onClose}
-                        className="px-5 py-2.5 rounded-2xl text-xs sm:text-sm font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:bg-slate-100 shadow-sm transition active:scale-98"
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:bg-slate-50 transition"
                     >
                         Cancel
                     </button>
@@ -783,15 +570,14 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         type="button"
                         onClick={handleSubmit}
                         disabled={submitting || !selectedTenantId || !amount || parseFloat(amount) <= 0}
-                        className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all shadow-md active:scale-98"
+                        className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-black transition-all shadow-sm active:scale-98"
                         style={{
                             background: (submitting || !selectedTenantId || !amount || parseFloat(amount) <= 0)
-                                ? '#cbd5e1'
-                                : 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                            color: 'white',
-                            boxShadow: (submitting || !selectedTenantId || !amount || parseFloat(amount) <= 0)
-                                ? 'none'
-                                : '0 8px 20px -4px rgba(16, 185, 129, 0.45)',
+                                ? '#e2e8f0'
+                                : 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
+                            color: (submitting || !selectedTenantId || !amount || parseFloat(amount) <= 0)
+                                ? '#94a3b8'
+                                : 'white',
                             cursor: (submitting || !selectedTenantId || !amount || parseFloat(amount) <= 0)
                                 ? 'not-allowed'
                                 : 'pointer',
@@ -799,14 +585,14 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                     >
                         {submitting ? (
                             <>
-                                <FiRefreshCw size={14} className="animate-spin" />
-                                <span>Processing FIFO Settlement…</span>
+                                <FiRefreshCw size={13} className="animate-spin" />
+                                <span>Recording…</span>
                             </>
                         ) : (
                             <>
-                                <FiCheck size={16} />
+                                <FiCheck size={14} />
                                 <span>
-                                    Record Payment {amount && parseFloat(amount) > 0 ? `(${fmt(parseFloat(amount))})` : ''}
+                                    Record Payment {numAmount > 0 ? `(${fmt(numAmount)})` : ''}
                                 </span>
                             </>
                         )}

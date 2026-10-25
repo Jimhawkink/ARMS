@@ -752,9 +752,6 @@ export default function PaymentsPage() {
                 </div>
             </div>
 
-            {/* Vacation Month Warning Banner */}
-            {isCurrentVacationMonth && <VacationBanner />}
-
             {/* ══════════════════════════════════════════════════════════════════════
                 2. THE 7 SLEEK COMPACT KPI CARDS IN 1 ROW (EXACT REFERENCE PROPORTIONS)
             ══════════════════════════════════════════════════════════════════════ */}
