@@ -219,18 +219,29 @@ export default function ReportsPage() {
             setPayments(p || []);
             setArrearsData(arr || []);
 
-            // Location summaries
-            const summaries = await Promise.all((l || []).map(async (loc: any) => {
-                const s = await getLocationSummary(loc.location_id);
+            // Location summaries computed directly in-memory from loaded units, tenants & arrears (0 network roundtrips!)
+            const summaries = (l || []).map((loc: any) => {
+                const locUnits = (u || []).filter((un: any) => un.location_id === loc.location_id && (un.active !== false));
+                const locTenants = (t || []).filter((te: any) => te.location_id === loc.location_id && te.status === 'Active');
                 const locArr = (arr || []).filter((a: any) => a.location_id === loc.location_id);
+                const totalUnits = locUnits.length;
+                const occupiedUnits = locUnits.filter((un: any) => un.status === 'Occupied').length;
+                const vacantUnits = Math.max(0, totalUnits - occupiedUnits);
+                const expectedRevenue = locTenants.reduce((sum: number, te: any) => sum + (te.monthly_rent || 0), 0);
+                const maxExpectedRevenue = locUnits.reduce((sum: number, un: any) => sum + (un.monthly_rent || 0), 0);
                 return {
                     ...loc,
-                    ...s,
+                    totalUnits,
+                    occupiedUnits,
+                    vacantUnits,
+                    activeTenants: locTenants.length,
+                    expectedRevenue,
+                    maxExpectedRevenue,
                     totalArrears: locArr.reduce((sum: number, a: any) => sum + (a.totalUnpaid || 0), 0),
                     totalOwed: locArr.reduce((sum: number, a: any) => sum + (a.totalOwed || 0), 0),
                     tenantsWithArrears: locArr.length,
                 };
-            }));
+            });
             setLocationSummaries(summaries);
         } catch (e) {
             toast.error('Failed to load portfolio analytics');

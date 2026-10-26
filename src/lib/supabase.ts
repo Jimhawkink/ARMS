@@ -76,58 +76,147 @@ export async function loginUser(username: string, password: string) {
     return data;
 }
 
+// ==================== IN-MEMORY CLIENT CACHE & DEDUPLICATION ====================
+interface CacheEntry<T> {
+    data: T;
+    timestamp: number;
+    ttl: number;
+}
+
+const clientCache = new Map<string, CacheEntry<any>>();
+const inFlightPromises = new Map<string, Promise<any>>();
+
+export function getCached<T>(key: string): T | null {
+    const entry = clientCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > entry.ttl) {
+        clientCache.delete(key);
+        return null;
+    }
+    return entry.data;
+}
+
+export function setCached<T>(key: string, data: T, ttlMs = 30000): T {
+    clientCache.set(key, { data, timestamp: Date.now(), ttl: ttlMs });
+    return data;
+}
+
+export function invalidateCache(prefix?: string) {
+    if (!prefix) {
+        clientCache.clear();
+        inFlightPromises.clear();
+        return;
+    }
+    for (const key of Array.from(clientCache.keys())) {
+        if (key.startsWith(prefix)) {
+            clientCache.delete(key);
+        }
+    }
+    for (const key of Array.from(inFlightPromises.keys())) {
+        if (key.startsWith(prefix)) {
+            inFlightPromises.delete(key);
+        }
+    }
+}
+
+export async function fetchWithCache<T>(
+    key: string,
+    ttlMs: number,
+    fetchFn: () => Promise<T>,
+    forceRefresh = false
+): Promise<T> {
+    if (!forceRefresh) {
+        const cached = getCached<T>(key);
+        if (cached !== null) return cached;
+    }
+
+    const existing = inFlightPromises.get(key);
+    if (existing) {
+        return existing;
+    }
+
+    const promise = fetchFn()
+        .then(result => {
+            setCached(key, result, ttlMs);
+            return result;
+        })
+        .finally(() => {
+            inFlightPromises.delete(key);
+        });
+
+    inFlightPromises.set(key, promise);
+    return promise;
+}
+
 // ==================== LOCATIONS ====================
-export async function getLocations() {
-    const { data, error } = await supabase
-        .from('arms_locations')
-        .select('*')
-        .eq('active', true)
-        .order('location_name');
-    if (error) throw error;
-    return data || [];
+export async function getLocations(forceRefresh = false) {
+    return fetchWithCache('locations', 60000, async () => {
+        const { data, error } = await supabase
+            .from('arms_locations')
+            .select('*')
+            .eq('active', true)
+            .order('location_name');
+        if (error) throw error;
+        return data || [];
+    }, forceRefresh);
 }
 
 export async function addLocation(location: { location_name: string; address?: string; description?: string }) {
     const { data, error } = await supabase.from('arms_locations').insert([location]).select().single();
     if (error) throw error;
+    invalidateCache('locations');
+    invalidateCache('stats');
     return data;
 }
 
 export async function updateLocation(id: number, updates: any) {
     const { data, error } = await supabase.from('arms_locations').update({ ...updates, updated_at: new Date().toISOString() }).eq('location_id', id).select().single();
     if (error) throw error;
+    invalidateCache('locations');
+    invalidateCache('stats');
     return data;
 }
 
 export async function deleteLocation(id: number) {
     const { error } = await supabase.from('arms_locations').update({ active: false }).eq('location_id', id);
     if (error) throw error;
+    invalidateCache('locations');
+    invalidateCache('stats');
 }
 
 // ==================== UNITS ====================
-export async function getUnits(locationId?: number) {
-    let query = supabase.from('arms_units').select('*, arms_locations(location_name)').eq('active', true).order('unit_name');
-    if (locationId) query = query.eq('location_id', locationId);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
+export async function getUnits(locationId?: number, forceRefresh = false) {
+    const key = `units:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 30000, async () => {
+        let query = supabase.from('arms_units').select('*, arms_locations(location_name)').eq('active', true).order('unit_name');
+        if (locationId) query = query.eq('location_id', locationId);
+        const { data, error } = await query;
+        if (error) throw error;
+        return data || [];
+    }, forceRefresh);
 }
 
 export async function addUnit(unit: { location_id: number; unit_name: string; unit_type?: string; monthly_rent: number; deposit_amount?: number; floor_number?: string; description?: string }) {
     const { data, error } = await supabase.from('arms_units').insert([unit]).select().single();
     if (error) throw error;
+    invalidateCache('units');
+    invalidateCache('stats');
     return data;
 }
 
 export async function updateUnit(id: number, updates: any) {
     const { data, error } = await supabase.from('arms_units').update({ ...updates, updated_at: new Date().toISOString() }).eq('unit_id', id).select().single();
     if (error) throw error;
+    invalidateCache('units');
+    invalidateCache('stats');
     return data;
 }
 
 export async function deleteUnit(id: number) {
     const { error } = await supabase.from('arms_units').update({ active: false }).eq('unit_id', id);
     if (error) throw error;
+    invalidateCache('units');
+    invalidateCache('stats');
 }
 
 // ==================== VACATION MONTHS (Kenyan University) ====================
@@ -269,12 +358,15 @@ export async function saveTenantUnits(
 }
 
 // ==================== TENANTS ====================
-export async function getTenants(locationId?: number) {
-    let query = supabase.from('arms_tenants').select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)').order('tenant_name');
-    if (locationId) query = query.eq('location_id', locationId);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
+export async function getTenants(locationId?: number, forceRefresh = false) {
+    const key = `tenants:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 20000, async () => {
+        let query = supabase.from('arms_tenants').select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)').order('tenant_name');
+        if (locationId) query = query.eq('location_id', locationId);
+        const { data, error } = await query;
+        if (error) throw error;
+        return data || [];
+    }, forceRefresh);
 }
 
 export async function getTenantById(id: number) {
@@ -386,11 +478,23 @@ export async function addTenant(tenant: {
                 });
                 // Return fresh balance after payment allocation
                 const { data: freshT } = await supabase.from('arms_tenants').select('balance').eq('tenant_id', data.tenant_id).single();
+                invalidateCache('tenants');
+                invalidateCache('units');
+                invalidateCache('unpaid');
+                invalidateCache('stats');
                 return { ...data, balance: freshT?.balance || 0 };
             }
+            invalidateCache('tenants');
+            invalidateCache('units');
+            invalidateCache('unpaid');
+            invalidateCache('stats');
             return { ...data, balance: Math.round(totalBalance * 100) / 100 };
         }
     }
+    invalidateCache('tenants');
+    invalidateCache('units');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
     return data;
 }
 
@@ -421,6 +525,10 @@ export async function updateTenant(id: number, updates: any) {
 
     const { data, error } = await supabase.from('arms_tenants').update({ ...safeUpdates, updated_at: new Date().toISOString() }).eq('tenant_id', id).select().single();
     if (error) throw error;
+    invalidateCache('tenants');
+    invalidateCache('units');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
     return data;
 }
 
@@ -642,6 +750,10 @@ export async function deactivateTenant(id: number) {
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', id);
     if (error) throw new Error(`Move-out failed: ${error.message} (code: ${error.code})`);
+    invalidateCache('tenants');
+    invalidateCache('units');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
 }
 
 // ==================== BILLING ====================
@@ -737,6 +849,9 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
         }
     }
 
+    invalidateCache('unpaid');
+    invalidateCache('stats');
+    invalidateCache('analytics');
     return { bills: allBills, generated: allBills.length, skipped, catchUpMonths, errors };
 }
 
@@ -854,22 +969,26 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
 }
 
 // ==================== PAYMENTS ====================
-export async function getPayments(filters?: { locationId?: number; tenantId?: number; startDate?: string; endDate?: string; method?: string }) {
-    let query = supabase.from('arms_payments')
-        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, id_number, arms_units(unit_name)), arms_locations(location_name), arms_billing(billing_month, balance, rent_amount, status)')
-        .order('payment_date', { ascending: false });
-    if (filters?.locationId) query = query.eq('location_id', filters.locationId);
-    if (filters?.tenantId) query = query.eq('tenant_id', filters.tenantId);
-    if (filters?.method) query = query.eq('payment_method', filters.method);
-    if (filters?.startDate) query = query.gte('payment_date', filters.startDate);
-    if (filters?.endDate) query = query.lte('payment_date', filters.endDate);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []).map(p => ({
-        ...p,
-        arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
-        current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
-    }));
+export async function getPayments(filters?: { locationId?: number; tenantId?: number; startDate?: string; endDate?: string; method?: string; limit?: number }, forceRefresh = false) {
+    const key = `payments:${filters?.locationId ?? 'all'}:${filters?.tenantId ?? 'all'}:${filters?.method ?? 'all'}:${filters?.startDate ?? ''}:${filters?.endDate ?? ''}:${filters?.limit ?? ''}`;
+    return fetchWithCache(key, 15000, async () => {
+        let query = supabase.from('arms_payments')
+            .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, id_number, arms_units(unit_name)), arms_locations(location_name), arms_billing(billing_month, balance, rent_amount, status)')
+            .order('payment_date', { ascending: false });
+        if (filters?.locationId) query = query.eq('location_id', filters.locationId);
+        if (filters?.tenantId) query = query.eq('tenant_id', filters.tenantId);
+        if (filters?.method) query = query.eq('payment_method', filters.method);
+        if (filters?.startDate) query = query.gte('payment_date', filters.startDate);
+        if (filters?.endDate) query = query.lte('payment_date', filters.endDate);
+        if (filters?.limit) query = query.limit(filters.limit);
+        const { data, error } = await query;
+        if (error) throw error;
+        return (data || []).map(p => ({
+            ...p,
+            arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+            current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+        }));
+    }, forceRefresh);
 }
 
 function parseNoteTag(notes: string | null, tag: string): number {
@@ -1019,6 +1138,13 @@ export async function recordPayment(payment: {
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', payment.tenant_id);
 
+    invalidateCache('payments');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
+    invalidateCache('analytics');
+    invalidateCache('netRevenue');
+    invalidateCache('tenants');
+
     return {
         ...paymentRecord,
         arrearsPaid,
@@ -1068,12 +1194,20 @@ export async function deletePayment(paymentId: number) {
 
     const { error: delErr } = await supabase.from('arms_payments').delete().eq('payment_id', paymentId);
     if (delErr) throw delErr;
+    invalidateCache('payments');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
+    invalidateCache('analytics');
+    invalidateCache('netRevenue');
+    invalidateCache('tenants');
 }
 
 // ==================== UPDATE PAYMENT (notes only — legacy) ====================
 export async function updatePaymentNotes(paymentId: number, updates: { reference_no?: string; notes?: string }) {
     const { data, error } = await supabase.from('arms_payments').update(updates).eq('payment_id', paymentId).select().single();
     if (error) throw error;
+    invalidateCache('payments');
+    invalidateCache('stats');
     return data;
 }
 
@@ -1225,6 +1359,13 @@ export async function updatePaymentFull(
         }).eq('payment_id', paymentId).select().single();
     if (updateErr) throw updateErr;
 
+    invalidateCache('payments');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
+    invalidateCache('analytics');
+    invalidateCache('netRevenue');
+    invalidateCache('tenants');
+
     return {
         ...updated,
         arrearsPaid: editedArrearsPaid,
@@ -1235,18 +1376,23 @@ export async function updatePaymentFull(
 }
 
 // ==================== ARREARS PAYMENTS DETAIL ====================
-export async function getArrearsPaymentsDetail(locationId?: number) {
-    let query = supabase.from('arms_payments')
-        .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, arms_units(unit_name)), arms_locations(location_name)')
-        .order('payment_date', { ascending: false });
-    if (locationId) query = query.eq('location_id', locationId);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []).map(p => ({
-        ...p,
-        arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
-        current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
-    })).filter(p => p.arrears_paid > 0);
+export async function getArrearsPaymentsDetail(locationId?: number, forceRefresh = false) {
+    const key = `arrearsDetail:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 20000, async () => {
+        let query = supabase.from('arms_payments')
+            .select('*, arms_tenants(tenant_name, phone, monthly_rent, balance, arms_units(unit_name)), arms_locations(location_name)')
+            .ilike('notes', '%ArrearsPaid%')
+            .order('payment_date', { ascending: false })
+            .limit(100);
+        if (locationId) query = query.eq('location_id', locationId);
+        const { data, error } = await query;
+        if (error) throw error;
+        return (data || []).map(p => ({
+            ...p,
+            arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+            current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+        })).filter(p => p.arrears_paid > 0);
+    }, forceRefresh);
 }
 
 // ==================== M-PESA C2B ====================
@@ -1353,34 +1499,46 @@ export async function getLocationSummary(locationId?: number) {
 }
 
 // ==================== DASHBOARD STATS ====================
-export async function getDashboardStats(locationId?: number) {
-    const summary = await getLocationSummary(locationId);
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const todayStr = new Date().toISOString().split('T')[0];
+export async function getDashboardStats(locationId?: number, forceRefresh = false) {
+    const key = `stats:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 20000, async () => {
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const todayStr = new Date().toISOString().split('T')[0];
 
-    let billQuery = supabase.from('arms_billing').select('*').eq('billing_month', currentMonth);
-    if (locationId) billQuery = billQuery.eq('location_id', locationId);
-    const { data: bills } = await billQuery;
+        let billQuery = supabase.from('arms_billing').select('rent_amount').eq('billing_month', currentMonth);
+        if (locationId) billQuery = billQuery.eq('location_id', locationId);
 
-    let paymentQuery = supabase.from('arms_payments').select('amount').gte('payment_date', `${currentMonth}-01`);
-    if (locationId) paymentQuery = paymentQuery.eq('location_id', locationId);
-    const { data: payments } = await paymentQuery;
+        let paymentQuery = supabase.from('arms_payments').select('amount').gte('payment_date', `${currentMonth}-01`);
+        if (locationId) paymentQuery = paymentQuery.eq('location_id', locationId);
 
-    let allPayQuery = supabase.from('arms_payments').select('amount, notes');
-    if (locationId) allPayQuery = allPayQuery.eq('location_id', locationId);
-    const { data: allPayments } = await allPayQuery;
-    const totalArrearsPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'ArrearsPaid'), 0);
-    const totalCurrentRentPaid = (allPayments || []).reduce((sum, p) => sum + parseNoteTag(p.notes, 'CurrentRentPaid'), 0);
+        let allPayQuery = supabase.from('arms_payments').select('notes').not('notes', 'is', null);
+        if (locationId) allPayQuery = allPayQuery.eq('location_id', locationId);
 
-    let todayQ = supabase.from('arms_tenants').select('tenant_id', { count: 'exact', head: true }).eq('status', 'Active').gte('move_in_date', todayStr).lte('move_in_date', todayStr);
-    if (locationId) todayQ = todayQ.eq('location_id', locationId);
-    const { count: tenantsNewToday } = await todayQ;
+        let todayQ = supabase.from('arms_tenants').select('tenant_id', { count: 'exact', head: true }).eq('status', 'Active').gte('move_in_date', todayStr).lte('move_in_date', todayStr);
+        if (locationId) todayQ = todayQ.eq('location_id', locationId);
 
-    const monthlyCollected = payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
-    const monthlyBilled = bills?.reduce((sum, b) => sum + (b.rent_amount || 0), 0) || 0;
-    const collectionRate = monthlyBilled > 0 ? Math.round((monthlyCollected / monthlyBilled) * 100) : 0;
+        const [summary, billsRes, paymentsRes, allPaymentsRes, todayCountRes] = await Promise.all([
+            getLocationSummary(locationId),
+            billQuery,
+            paymentQuery,
+            allPayQuery,
+            todayQ
+        ]);
 
-    return { ...summary, monthlyCollected, monthlyBilled, collectionRate, totalArrearsPaid, totalCurrentRentPaid, tenantsNewToday: tenantsNewToday || 0 };
+        const bills = billsRes.data || [];
+        const payments = paymentsRes.data || [];
+        const allPayments = allPaymentsRes.data || [];
+        const tenantsNewToday = todayCountRes.count || 0;
+
+        const totalArrearsPaid = allPayments.reduce((sum, p) => sum + parseNoteTag(p.notes, 'ArrearsPaid'), 0);
+        const totalCurrentRentPaid = allPayments.reduce((sum, p) => sum + parseNoteTag(p.notes, 'CurrentRentPaid'), 0);
+
+        const monthlyCollected = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        const monthlyBilled = bills.reduce((sum, b) => sum + (b.rent_amount || 0), 0);
+        const collectionRate = monthlyBilled > 0 ? Math.round((monthlyCollected / monthlyBilled) * 100) : 0;
+
+        return { ...summary, monthlyCollected, monthlyBilled, collectionRate, totalArrearsPaid, totalCurrentRentPaid, tenantsNewToday };
+    }, forceRefresh);
 }
 
 export async function getRecentPayments(limit = 10, locationId?: number) {
@@ -1400,170 +1558,173 @@ export async function getOverdueTenants(locationId?: number) {
 }
 
 // ==================== UNPAID RENT CALCULATOR ====================
-export async function calculateUnpaidRent(locationId?: number) {
-    let tenantQuery = supabase.from('arms_tenants')
-        .select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)')
-        .eq('status', 'Active')
-        .order('tenant_name');
-    if (locationId) tenantQuery = tenantQuery.eq('location_id', locationId);
-    const { data: tenants, error: tErr } = await tenantQuery;
-    if (tErr) throw tErr;
+export async function calculateUnpaidRent(locationId?: number, forceRefresh = false) {
+    const key = `unpaid:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 20000, async () => {
+        let tenantQuery = supabase.from('arms_tenants')
+            .select('*, arms_units(unit_name, monthly_rent), arms_locations(location_name)')
+            .eq('status', 'Active')
+            .order('tenant_name');
+        if (locationId) tenantQuery = tenantQuery.eq('location_id', locationId);
+        const { data: tenants, error: tErr } = await tenantQuery;
+        if (tErr) throw tErr;
 
-    const activeTenants = (tenants || []).filter(t => {
-        if (!t.move_out_date) return true;
-        return new Date(t.move_out_date) > new Date();
-    });
-
-    if (activeTenants.length === 0) return [];
-
-    const tenantIds = activeTenants.map(t => t.tenant_id);
-    const [billRes, payRes] = await Promise.all([
-        supabase.from('arms_billing').select('*').in('tenant_id', tenantIds),
-        supabase.from('arms_payments').select('*').in('tenant_id', tenantIds),
-    ]);
-    const allBills = billRes.data || [];
-    const allPayments = payRes.data || [];
-
-    // Use local date parts to avoid UTC timezone shifting (e.g. "2026-03-01" UTC = Feb 28 in EAT)
-    const nowLocal = new Date();
-    const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
-
-    const results = activeTenants.map(tenant => {
-        // billing_start_month is authoritative; fall back to move_in_date
-        const moveIn = tenant.billing_start_month || tenant.move_in_date || tenant.created_at?.slice(0, 10);
-        if (!moveIn) return null;
-
-        // Parse month directly from the string — never use new Date(dateStr) for month arithmetic
-        const moveInMonth = moveIn.slice(0, 7); // "2026-05"
-        const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
-
-        const expectedMonths: string[] = [];
-        let [sy, sm] = moveInMonth.split('-').map(Number);
-        const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
-        while (sy < ey || (sy === ey && sm <= em)) {
-            expectedMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
-            sm++;
-            if (sm > 12) { sm = 1; sy++; }
-        }
-
-        const tenantPayments = allPayments.filter(p => p.tenant_id === tenant.tenant_id);
-        const totalPaidAllTime = tenantPayments.reduce((s, p) => s + (p.amount || 0), 0);
-
-        // ── FIFO allocation: compute paid/balance per month from raw payments ──
-        // This is independent of billing table state — always accurate
-        const monthRents = expectedMonths.map(month => {
-            const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
-            const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
-            return { month, rent: effectiveRent, isVacation: isVac };
+        const activeTenants = (tenants || []).filter(t => {
+            if (!t.move_out_date) return true;
+            return new Date(t.move_out_date) > new Date();
         });
 
-        // Sort payments by date for FIFO
-        const sortedPayments = [...tenantPayments].sort((a, b) =>
-            (a.payment_date || a.created_at || '').localeCompare(b.payment_date || b.created_at || '')
-        );
+        if (activeTenants.length === 0) return [];
 
-        // Allocate payments to months in chronological order (FIFO)
-        const monthAllocations = monthRents.map(m => ({ ...m, paid: 0, balance: m.rent }));
-        for (const pmt of sortedPayments) {
-            let remaining = Math.round((pmt.amount || 0) * 100) / 100;
-            if (remaining <= 0) continue;
-            for (const ma of monthAllocations) {
-                if (remaining <= 0) break;
-                if (ma.balance <= 0) continue;
-                const alloc = Math.min(remaining, ma.balance);
-                ma.paid = Math.round((ma.paid + alloc) * 100) / 100;
-                ma.balance = Math.round((ma.balance - alloc) * 100) / 100;
-                remaining = Math.round((remaining - alloc) * 100) / 100;
+        const tenantIds = activeTenants.map(t => t.tenant_id);
+        const { data: allPayments } = await supabase.from('arms_payments')
+            .select('tenant_id, amount, payment_date, created_at')
+            .in('tenant_id', tenantIds);
+
+        const paymentsList = allPayments || [];
+        const nowLocal = new Date();
+        const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+
+        const results = activeTenants.map(tenant => {
+            // billing_start_month is authoritative; fall back to move_in_date
+            const moveIn = tenant.billing_start_month || tenant.move_in_date || tenant.created_at?.slice(0, 10);
+            if (!moveIn) return null;
+
+            // Parse month directly from the string — never use new Date(dateStr) for month arithmetic
+            const moveInMonth = moveIn.slice(0, 7); // "2026-05"
+            const monthlyRent = tenant.monthly_rent || tenant.arms_units?.monthly_rent || 0;
+
+            const expectedMonths: string[] = [];
+            let [sy, sm] = moveInMonth.split('-').map(Number);
+            const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+            while (sy < ey || (sy === ey && sm <= em)) {
+                expectedMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
+                sm++;
+                if (sm > 12) { sm = 1; sy++; }
             }
-        }
 
-        let totalUnpaid = 0;
-        let totalPenalty = 0;
-        const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
-        const allMonths: { month: string; rent: number; paid: number; balance: number; isVacation: boolean; status: string }[] = [];
+            const tenantPayments = paymentsList.filter(p => p.tenant_id === tenant.tenant_id);
+            const totalPaidAllTime = tenantPayments.reduce((s, p) => s + (p.amount || 0), 0);
 
-        for (const ma of monthAllocations) {
-            const status = ma.balance <= 0 ? 'Paid' : ma.paid > 0 ? 'Partial' : 'Unpaid';
-            allMonths.push({
-                month: ma.month,
-                rent: ma.rent,
-                paid: ma.paid,
-                balance: ma.balance,
-                isVacation: ma.isVacation,
-                status,
+            // ── FIFO allocation: compute paid/balance per month from raw payments ──
+            // This is independent of billing table state — always accurate
+            const monthRents = expectedMonths.map(month => {
+                const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
+                const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
+                return { month, rent: effectiveRent, isVacation: isVac };
             });
 
-            if (ma.balance > 0) {
-                const billMonthDate = new Date(ma.month + '-05');
-                const isLate = nowLocal > billMonthDate;
-                const penalty = isLate ? Math.round(ma.rent * 0.02) : 0;
+            // Sort payments by date for FIFO
+            const sortedPayments = [...tenantPayments].sort((a, b) =>
+                (a.payment_date || a.created_at || '').localeCompare(b.payment_date || b.created_at || '')
+            );
 
-                unpaidMonths.push({
+            // Allocate payments to months in chronological order (FIFO)
+            const monthAllocations = monthRents.map(m => ({ ...m, paid: 0, balance: m.rent }));
+            for (const pmt of sortedPayments) {
+                let remaining = Math.round((pmt.amount || 0) * 100) / 100;
+                if (remaining <= 0) continue;
+                for (const ma of monthAllocations) {
+                    if (remaining <= 0) break;
+                    if (ma.balance <= 0) continue;
+                    const alloc = Math.min(remaining, ma.balance);
+                    ma.paid = Math.round((ma.paid + alloc) * 100) / 100;
+                    ma.balance = Math.round((ma.balance - alloc) * 100) / 100;
+                    remaining = Math.round((remaining - alloc) * 100) / 100;
+                }
+            }
+
+            let totalUnpaid = 0;
+            let totalPenalty = 0;
+            const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
+            const allMonths: { month: string; rent: number; paid: number; balance: number; isVacation: boolean; status: string }[] = [];
+
+            for (const ma of monthAllocations) {
+                const status = ma.balance <= 0 ? 'Paid' : ma.paid > 0 ? 'Partial' : 'Unpaid';
+                allMonths.push({
                     month: ma.month,
                     rent: ma.rent,
                     paid: ma.paid,
                     balance: ma.balance,
-                    penalty,
+                    isVacation: ma.isVacation,
                     status,
                 });
-                totalUnpaid += ma.balance;
-                totalPenalty += penalty;
+
+                if (ma.balance > 0) {
+                    const billMonthDate = new Date(ma.month + '-05');
+                    const isLate = nowLocal > billMonthDate;
+                    const penalty = isLate ? Math.round(ma.rent * 0.02) : 0;
+
+                    unpaidMonths.push({
+                        month: ma.month,
+                        rent: ma.rent,
+                        paid: ma.paid,
+                        balance: ma.balance,
+                        penalty,
+                        status,
+                    });
+                    totalUnpaid += ma.balance;
+                    totalPenalty += penalty;
+                }
             }
-        }
 
-        return {
-            ...tenant,
-            allMonths,
-            unpaidMonths,
-            totalUnpaid,
-            totalPenalty,
-            totalOwed: totalUnpaid + totalPenalty,
-            monthsOwed: unpaidMonths.length,
-            totalPaidAllTime,
-        };
-    }).filter(r => r !== null) as any[];
+            return {
+                ...tenant,
+                allMonths,
+                unpaidMonths,
+                totalUnpaid,
+                totalPenalty,
+                totalOwed: totalUnpaid + totalPenalty,
+                monthsOwed: unpaidMonths.length,
+                totalPaidAllTime,
+            };
+        }).filter(r => r !== null) as any[];
 
-    return results;
+        return results;
+    }, forceRefresh);
 }
 
 // ==================== 12-MONTH ANALYTICS ====================
-export async function get12MonthAnalytics(locationId?: number) {
-    const months: string[] = [];
-    const now = new Date();
-    for (let i = 11; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        months.push(d.toISOString().slice(0, 7));
-    }
+export async function get12MonthAnalytics(locationId?: number, forceRefresh = false) {
+    const key = `analytics12:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 30000, async () => {
+        const months: string[] = [];
+        const now = new Date();
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            months.push(d.toISOString().slice(0, 7));
+        }
 
-    const startMonth = months[0];
-    const endMonth = months[months.length - 1];
-    let billQ = supabase.from('arms_billing').select('*').gte('billing_month', startMonth).lte('billing_month', endMonth);
-    let payQ = supabase.from('arms_payments').select('*').gte('payment_date', `${startMonth}-01`);
-    if (locationId) { billQ = billQ.eq('location_id', locationId); payQ = payQ.eq('location_id', locationId); }
-    const [{ data: allBills }, { data: allPayments }] = await Promise.all([billQ, payQ]);
+        const startMonth = months[0];
+        const endMonth = months[months.length - 1];
+        let billQ = supabase.from('arms_billing').select('billing_month, rent_amount, status, balance').gte('billing_month', startMonth).lte('billing_month', endMonth);
+        let payQ = supabase.from('arms_payments').select('payment_date, amount, payment_method, recorded_by').gte('payment_date', `${startMonth}-01`);
+        if (locationId) { billQ = billQ.eq('location_id', locationId); payQ = payQ.eq('location_id', locationId); }
+        const [{ data: allBills }, { data: allPayments }] = await Promise.all([billQ, payQ]);
 
-    const analytics = months.map(month => {
-        const monthBills = allBills?.filter(b => b.billing_month === month) || [];
-        const monthPayments = allPayments?.filter(p => p.payment_date?.startsWith(month)) || [];
-        const billed = monthBills.reduce((s, b) => s + (b.rent_amount || 0), 0);
-        const collected = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
-        const cashCollected = monthPayments.filter(p => p.payment_method === 'Cash').reduce((s, p) => s + (p.amount || 0), 0);
-        const mpesaCollected = monthPayments.filter(p =>
-            p.payment_method === 'M-Pesa' ||
-            p.payment_method === 'KCB Buni' ||
-            p.payment_method === 'KCB' ||
-            p.payment_method?.startsWith('KCB') ||
-            p.payment_method?.startsWith('M-Pesa') ||
-            p.payment_method === 'Jenga IPN' ||
-            p.recorded_by === 'KCB Buni STK Auto'
-        ).reduce((s, p) => s + (p.amount || 0), 0);
-        const unpaid = monthBills.filter(b => b.status !== 'Paid').reduce((s, b) => s + (b.balance || 0), 0);
-        const paidCount = monthBills.filter(b => b.status === 'Paid').length;
-        const unpaidCount = monthBills.filter(b => b.status !== 'Paid').length;
-        const label = new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-        return { month, label, billed, collected, cashCollected, mpesaCollected, unpaid, paidCount, unpaidCount, rate: billed > 0 ? Math.round((collected / billed) * 100) : 0 };
-    });
-    return analytics;
+        const analytics = months.map(month => {
+            const monthBills = allBills?.filter(b => b.billing_month === month) || [];
+            const monthPayments = allPayments?.filter(p => p.payment_date?.startsWith(month)) || [];
+            const billed = monthBills.reduce((s, b) => s + (b.rent_amount || 0), 0);
+            const collected = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
+            const cashCollected = monthPayments.filter(p => p.payment_method === 'Cash').reduce((s, p) => s + (p.amount || 0), 0);
+            const mpesaCollected = monthPayments.filter(p =>
+                p.payment_method === 'M-Pesa' ||
+                p.payment_method === 'KCB Buni' ||
+                p.payment_method === 'KCB' ||
+                p.payment_method?.startsWith('KCB') ||
+                p.payment_method?.startsWith('M-Pesa') ||
+                p.payment_method === 'Jenga IPN' ||
+                p.recorded_by === 'KCB Buni STK Auto'
+            ).reduce((s, p) => s + (p.amount || 0), 0);
+            const unpaid = monthBills.filter(b => b.status !== 'Paid').reduce((s, b) => s + (b.balance || 0), 0);
+            const paidCount = monthBills.filter(b => b.status === 'Paid').length;
+            const unpaidCount = monthBills.filter(b => b.status !== 'Paid').length;
+            const label = new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+            return { month, label, billed, collected, cashCollected, mpesaCollected, unpaid, paidCount, unpaidCount, rate: billed > 0 ? Math.round((collected / billed) * 100) : 0 };
+        });
+        return analytics;
+    }, forceRefresh);
 }
 
 export async function getCurrentMonthGrid(locationId?: number) {
@@ -1605,18 +1766,24 @@ export async function getExpenses(filters?: { locationId?: number; category?: st
 export async function addExpense(expense: { location_id?: number; expense_date: string; category: string; description?: string; amount: number; payment_method?: string; vendor?: string; receipt_number?: string; recorded_by?: string; recurring?: boolean; recurring_interval?: string; notes?: string }) {
     const { data, error } = await supabase.from('arms_expenses').insert(expense).select().single();
     if (error) throw error;
+    invalidateCache('netRevenue');
+    invalidateCache('stats');
     return data;
 }
 
 export async function updateExpense(id: number, updates: Record<string, any>) {
     const { data, error } = await supabase.from('arms_expenses').update(updates).eq('expense_id', id).select().single();
     if (error) throw error;
+    invalidateCache('netRevenue');
+    invalidateCache('stats');
     return data;
 }
 
 export async function deleteExpense(id: number) {
     const { error } = await supabase.from('arms_expenses').delete().eq('expense_id', id);
     if (error) throw error;
+    invalidateCache('netRevenue');
+    invalidateCache('stats');
 }
 
 export async function getExpenseCategories() {
@@ -1627,65 +1794,67 @@ export async function getExpenseCategories() {
 }
 
 // ==================== NET REVENUE SUMMARY ====================
-export async function getNetRevenueSummary(locationId?: number) {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+export async function getNetRevenueSummary(locationId?: number, forceRefresh = false) {
+    const key = `netRevenue:${locationId ?? 'all'}`;
+    return fetchWithCache(key, 20000, async () => {
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
 
-    // Week start (Monday)
-    const dayOfWeek = now.getDay(); // 0=Sun
-    const diffToMon = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() + diffToMon);
-    const weekStartStr = weekStart.toISOString().split('T')[0];
+        // Week start (Monday)
+        const dayOfWeek = now.getDay(); // 0=Sun
+        const diffToMon = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() + diffToMon);
+        const weekStartStr = weekStart.toISOString().split('T')[0];
 
-    const monthStr = now.toISOString().slice(0, 7);
-    const yearStr = now.getFullYear().toString();
-    const yearStartStr = `${yearStr}-01-01`;
+        const monthStr = now.toISOString().slice(0, 7);
+        const yearStr = now.getFullYear().toString();
+        const yearStartStr = `${yearStr}-01-01`;
 
-    // Fetch all payments
-    let payQ = supabase.from('arms_payments').select('amount, payment_date');
-    if (locationId) payQ = payQ.eq('location_id', locationId);
-    const { data: payments } = await payQ;
+        // Fetch payments and expenses bounded by year start in parallel
+        let payQ = supabase.from('arms_payments').select('amount, payment_date').gte('payment_date', yearStartStr);
+        if (locationId) payQ = payQ.eq('location_id', locationId);
 
-    // Fetch all expenses
-    let expQ = supabase.from('arms_expenses').select('amount, expense_date');
-    if (locationId) expQ = expQ.eq('location_id', locationId);
-    const { data: expenses } = await expQ;
+        let expQ = supabase.from('arms_expenses').select('amount, expense_date').gte('expense_date', yearStartStr);
+        if (locationId) expQ = expQ.eq('location_id', locationId);
 
-    const sumPayments = (from: string, to?: string) =>
-        (payments || []).filter(p => {
-            const d = (p.payment_date || '').slice(0, 10);
-            return d >= from && (to ? d <= to : true);
-        }).reduce((s, p) => s + (p.amount || 0), 0);
+        const [{ data: payments }, { data: expenses }] = await Promise.all([payQ, expQ]);
 
-    const sumExpenses = (from: string, to?: string) =>
-        (expenses || []).filter(e => {
-            const d = (e.expense_date || '').slice(0, 10);
-            return d >= from && (to ? d <= to : true);
-        }).reduce((s, e) => s + (e.amount || 0), 0);
+        const sumPayments = (from: string, to?: string) =>
+            (payments || []).filter(p => {
+                const d = (p.payment_date || '').slice(0, 10);
+                return d >= from && (to ? d <= to : true);
+            }).reduce((s, p) => s + (p.amount || 0), 0);
 
-    const collectedToday    = sumPayments(todayStr, todayStr);
-    const expensesToday     = sumExpenses(todayStr, todayStr);
-    const netToday          = collectedToday - expensesToday;
+        const sumExpenses = (from: string, to?: string) =>
+            (expenses || []).filter(e => {
+                const d = (e.expense_date || '').slice(0, 10);
+                return d >= from && (to ? d <= to : true);
+            }).reduce((s, e) => s + (e.amount || 0), 0);
 
-    const collectedWeek     = sumPayments(weekStartStr, todayStr);
-    const expensesWeek      = sumExpenses(weekStartStr, todayStr);
-    const netWeek           = collectedWeek - expensesWeek;
+        const collectedToday    = sumPayments(todayStr, todayStr);
+        const expensesToday     = sumExpenses(todayStr, todayStr);
+        const netToday          = collectedToday - expensesToday;
 
-    const collectedMonth    = sumPayments(monthStr + '-01');
-    const expensesMonth     = sumExpenses(monthStr + '-01');
-    const netMonth          = collectedMonth - expensesMonth;
+        const collectedWeek     = sumPayments(weekStartStr, todayStr);
+        const expensesWeek      = sumExpenses(weekStartStr, todayStr);
+        const netWeek           = collectedWeek - expensesWeek;
 
-    const collectedYear     = sumPayments(yearStartStr);
-    const expensesYear      = sumExpenses(yearStartStr);
-    const netYear           = collectedYear - expensesYear;
+        const collectedMonth    = sumPayments(monthStr + '-01');
+        const expensesMonth     = sumExpenses(monthStr + '-01');
+        const netMonth          = collectedMonth - expensesMonth;
 
-    return {
-        today:   { collected: collectedToday,  expenses: expensesToday,  net: netToday  },
-        week:    { collected: collectedWeek,   expenses: expensesWeek,   net: netWeek   },
-        month:   { collected: collectedMonth,  expenses: expensesMonth,  net: netMonth  },
-        year:    { collected: collectedYear,   expenses: expensesYear,   net: netYear   },
-    };
+        const collectedYear     = sumPayments(yearStartStr);
+        const expensesYear      = sumExpenses(yearStartStr);
+        const netYear           = collectedYear - expensesYear;
+
+        return {
+            today:   { collected: collectedToday,  expenses: expensesToday,  net: netToday  },
+            week:    { collected: collectedWeek,   expenses: expensesWeek,   net: netWeek   },
+            month:   { collected: collectedMonth,  expenses: expensesMonth,  net: netMonth  },
+            year:    { collected: collectedYear,   expenses: expensesYear,   net: netYear   },
+        };
+    }, forceRefresh);
 }
 
 export async function getExpenseSummary(locationId?: number) {
@@ -2321,7 +2490,7 @@ export async function getCashFlowStatement(locationId?: number, months: number =
     const now = new Date();
     const startMonth = new Date(now.getFullYear(), now.getMonth() - months + 1, 1).toISOString().slice(0, 7);
 
-    let revQuery = supabase.from('arms_payments').select('amount, payment_method, payment_date').gte('payment_date', `${startMonth}-01`);
+    let revQuery = supabase.from('arms_payments').select('amount, payment_method, payment_date, recorded_by').gte('payment_date', `${startMonth}-01`);
     if (locationId) revQuery = revQuery.eq('location_id', locationId);
     const { data: payments } = await revQuery;
 

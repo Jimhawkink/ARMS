@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
     getDashboardStats, getLocations, getTenants, getUnits, getPayments,
-    calculateUnpaidRent, get12MonthAnalytics, getLocationSummary, getExpenses,
+    calculateUnpaidRent, get12MonthAnalytics, getExpenses,
 } from '@/lib/supabase';
 import {
     Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement,
@@ -60,17 +60,29 @@ export default function SuperAnalyticsPage() {
             setStats(s); setLocations(l); setTenants(t); setUnits(u);
             setPayments(p); setArrearsData(arr); setAnalytics(an); setExpenses(exp);
 
-            // Build per-location summaries
-            const summaries = await Promise.all(l.map(async (loc: any) => {
-                const locSum = await getLocationSummary(loc.location_id);
-                const locArr = arr.filter((a: any) => a.location_id === loc.location_id);
+            // Build per-location summaries directly in-memory from loaded units, tenants & arrears (0 network roundtrips)
+            const summaries = (l || []).map((loc: any) => {
+                const locUnits = (u || []).filter((un: any) => un.location_id === loc.location_id && (un.active !== false));
+                const locTenants = (t || []).filter((te: any) => te.location_id === loc.location_id && te.status === 'Active');
+                const locArr = (arr || []).filter((a: any) => a.location_id === loc.location_id);
+                const totalUnits = locUnits.length;
+                const occupiedUnits = locUnits.filter((un: any) => un.status === 'Occupied').length;
+                const vacantUnits = Math.max(0, totalUnits - occupiedUnits);
+                const expectedRevenue = locTenants.reduce((sum: number, te: any) => sum + (te.monthly_rent || 0), 0);
+                const maxExpectedRevenue = locUnits.reduce((sum: number, un: any) => sum + (un.monthly_rent || 0), 0);
                 return {
-                    ...loc, ...locSum,
+                    ...loc,
+                    totalUnits,
+                    occupiedUnits,
+                    vacantUnits,
+                    activeTenants: locTenants.length,
+                    expectedRevenue,
+                    maxExpectedRevenue,
                     totalArrears: locArr.reduce((s: number, a: any) => s + (a.totalUnpaid || 0), 0),
                     totalOwed: locArr.reduce((s: number, a: any) => s + (a.totalOwed || 0), 0),
                     tenantsWithArrears: locArr.length,
                 };
-            }));
+            });
             setLocationSummaries(summaries);
             setLastRefresh(new Date());
         } catch (e) {

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { getLocations, addLocation, updateLocation, deleteLocation, getLocationSummary } from '@/lib/supabase';
+import { getLocations, addLocation, updateLocation, deleteLocation, getUnits, getTenants } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { topProgress } from '@/components/TopProgressBar';
@@ -17,10 +17,23 @@ export default function LocationsPage() {
         setLoading(true);
         topProgress.start();
         try {
-            const locs = await getLocations();
-            setLocations(locs);
+            const [locs, allUnits, allTenants] = await Promise.all([
+                getLocations(),
+                getUnits(),
+                getTenants()
+            ]);
+            setLocations(locs || []);
             const sums: Record<number, any> = {};
-            for (const loc of locs) { sums[loc.location_id] = await getLocationSummary(loc.location_id); }
+            for (const loc of (locs || [])) {
+                const locUnits = (allUnits || []).filter((u: any) => u.location_id === loc.location_id && u.active !== false);
+                const locTenants = (allTenants || []).filter((t: any) => t.location_id === loc.location_id && t.status === 'Active');
+                sums[loc.location_id] = {
+                    totalUnits: locUnits.length,
+                    occupiedUnits: locUnits.filter((u: any) => u.status === 'Occupied').length,
+                    activeTenants: locTenants.length,
+                    totalArrears: locTenants.reduce((sum: number, t: any) => sum + (t.balance || 0), 0)
+                };
+            }
             setSummaries(sums);
         } catch { toast.error('Failed to load'); } finally {
             topProgress.done();
