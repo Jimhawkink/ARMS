@@ -14,6 +14,7 @@ import {
     FiChevronRight, FiChevronDown, FiTrendingDown, FiCreditCard,
     FiPieChart, FiMessageSquare, FiDroplet, FiShield, FiClipboard,
     FiUserCheck, FiSend, FiZap, FiKey, FiLock, FiSmartphone,
+    FiClock, FiCheck,
 } from 'react-icons/fi';
 
 // ── Menu definition ───────────────────────────────────────────
@@ -84,13 +85,24 @@ const menuGroups = [
 
 function LiveClock() {
     const [time, setTime] = useState('');
+    const [date, setDate] = useState('');
     useEffect(() => {
-        const tick = () => setTime(new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        const tick = () => {
+            const now = new Date();
+            setTime(now.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            setDate(now.toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }));
+        };
         tick();
         const id = setInterval(tick, 1000);
         return () => clearInterval(id);
     }, []);
-    return <span className="font-mono text-xs tabular-nums text-blue-600 font-bold">{time}</span>;
+    return (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/90 text-slate-700 shadow-2xs hover:bg-slate-100 transition-all select-none">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+            <span className="text-[11px] font-semibold text-slate-500 hidden xl:inline">{date}</span>
+            <span className="font-mono text-xs font-black text-indigo-600 tracking-tight tabular-nums">{time}</span>
+        </div>
+    );
 }
 
 // ── Role badge ────────────────────────────────────────────────
@@ -139,14 +151,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [user, setUser] = useState<ARMSUser | null>(null);
     const [license, setLicense] = useState<LicensePayload | null>(null);
     const [showLocDropdown, setShowLocDropdown] = useState(false);
+    const locDropdownRef = useRef<HTMLDivElement>(null);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (locDropdownRef.current && !locDropdownRef.current.contains(event.target as Node)) {
+                setShowLocDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
     const [licenseChecked, setLicenseChecked] = useState(false);
     const licenseCheckDone = useRef(false);
     const [unreadChats, setUnreadChats] = useState(0);
 
     // ── Global notification overlay state ────────────────────
     const [notification, setNotification] = useState<ChatNotification | null>(null);
-    const notifDismissTimer = useRef<NodeJS.Timeout | null>(null);
+    const notifDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Poll unread chat count every 15s
     const fetchUnreadChats = useCallback(async () => {
@@ -702,72 +725,180 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             {/* ─── MAIN ─── */}
             <div className={`flex-1 min-w-0 max-w-full flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[252px]'}`}>
-                {/* Topbar */}
-                <header className="sticky top-0 z-40 px-6 py-3 flex items-center justify-between"
-                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #e8edf5', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                            <span className="text-lg">{greeting.emoji}</span>
-                        {/* Floating chat button in topbar */}
+                {/* ════════════════════════════════════════════════════
+                    SUPER ROBUST ULTRA-MODERN COMMAND TOPBAR
+                ════════════════════════════════════════════════════ */}
+                <header className="sticky top-0 z-40 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-3 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl shadow-[0_2px_14px_-4px_rgba(15,23,42,0.06)]">
+                    {/* Left: Greeting, User, Status Pill, Live Clock */}
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                        {/* Dynamic Ambient Greeting Pill */}
+                        <div className="flex items-center gap-2 bg-slate-50/90 border border-slate-200/90 px-3 py-1.5 rounded-2xl shadow-2xs">
+                            <span className="text-base select-none">{greeting.emoji}</span>
+                            <span className="text-xs sm:text-[13px] font-black text-slate-800 tracking-tight font-sans">
+                                {greeting.text}{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
+                            </span>
+                        </div>
+
+                        {/* Live Cloud Status */}
+                        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-emerald-800">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-[10px] font-black uppercase tracking-wider">LIVE CLOUD</span>
+                        </div>
+
+                        {/* Role Badge */}
+                        {user?.isSuperAdmin ? (
+                            <span className="hidden md:inline-flex items-center gap-1 px-3 py-1 rounded-2xl text-[10px] font-black uppercase tracking-wider text-white shadow-xs bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 shadow-amber-500/25">
+                                👑 SUPER ADMIN
+                            </span>
+                        ) : user ? (
+                            <span className="hidden md:inline-block">
+                                <RoleBadge user={user} />
+                            </span>
+                        ) : null}
+
+                        {/* Digital Live Clock */}
+                        <div className="hidden lg:block">
+                            <LiveClock />
+                        </div>
+                    </div>
+
+                    {/* Right: Quick Shortcuts, Location Selector, Tenant Messaging, User Pill */}
+                    <div className="flex items-center gap-2 sm:gap-2.5">
+                        {/* Quick Navigation: Log Payment */}
+                        <button
+                            onClick={() => router.push('/dashboard/payments')}
+                            className="hidden xl:flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-black text-slate-700 bg-slate-50 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-600 transition-all shadow-2xs"
+                        >
+                            <FiDollarSign size={13} className="text-emerald-600" />
+                            <span>Log Payment</span>
+                        </button>
+
+                        {/* Quick Navigation: Tenants */}
+                        <button
+                            onClick={() => router.push('/dashboard/tenants')}
+                            className="hidden xl:flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-black text-slate-700 bg-slate-50 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-600 transition-all shadow-2xs"
+                        >
+                            <FiUsers size={13} className="text-indigo-600" />
+                            <span>Tenants</span>
+                        </button>
+
+                        {/* Location Selector (Ultra Sleek Glass Pill) */}
+                        <div className="relative" ref={locDropdownRef}>
+                            <button
+                                onClick={() => setShowLocDropdown(!showLocDropdown)}
+                                className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs sm:text-sm font-bold transition-all border shadow-2xs ${
+                                    showLocDropdown || selectedLocation
+                                        ? 'bg-indigo-50/90 border-indigo-300 text-indigo-900 ring-2 ring-indigo-100'
+                                        : 'bg-slate-50 border-slate-200/90 text-slate-700 hover:border-slate-300 hover:bg-slate-100/70'
+                                }`}
+                            >
+                                <div className="w-5 h-5 rounded-lg bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 text-[10px]">
+                                    <FiMapPin size={11} />
+                                </div>
+                                <span className="max-w-[110px] sm:max-w-[140px] truncate text-xs sm:text-[13px] font-black">
+                                    {selectedLocName}
+                                </span>
+                                <span className="hidden sm:inline-block px-1.5 py-0.5 rounded-md text-[9px] font-black bg-slate-200/70 text-slate-600">
+                                    {selectedLocation ? 'Filtered' : `${locations.length} Estates`}
+                                </span>
+                                <FiChevronDown
+                                    size={13}
+                                    className={`text-slate-400 transition-transform duration-200 ${showLocDropdown ? 'rotate-180 text-indigo-600' : ''}`}
+                                />
+                            </button>
+
+                            {showLocDropdown && (
+                                <div
+                                    className="absolute right-0 top-full mt-2 w-64 rounded-3xl overflow-hidden z-50 bg-white/95 backdrop-blur-xl border border-slate-200/90 shadow-2xl animate-fadeIn font-sans"
+                                >
+                                    <div className="p-3 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                                            Active Property Scope
+                                        </p>
+                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                            {locations.length} configured
+                                        </span>
+                                    </div>
+
+                                    <div className="max-h-[280px] overflow-y-auto p-1.5 space-y-1">
+                                        <button
+                                            onClick={() => handleLocationChange(null)}
+                                            className={`w-full text-left px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-between ${
+                                                !selectedLocation
+                                                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                                    : 'text-slate-700 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <span>📍</span>
+                                                <span>All Locations (Global)</span>
+                                            </div>
+                                            {!selectedLocation && <FiCheck size={14} className="text-white" />}
+                                        </button>
+
+                                        {locations.map(l => {
+                                            const isSel = selectedLocation === l.location_id;
+                                            return (
+                                                <button
+                                                    key={l.location_id}
+                                                    onClick={() => handleLocationChange(l.location_id)}
+                                                    className={`w-full text-left px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-between ${
+                                                        isSel
+                                                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                                            : 'text-slate-700 hover:bg-slate-100'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <span>🏢</span>
+                                                        <span className="truncate">{l.location_name}</span>
+                                                    </div>
+                                                    {isSel && <FiCheck size={14} className="text-white flex-shrink-0" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Tenant Messages Hub Button with Floating Badge */}
                         <button
                             onClick={() => router.push('/dashboard/chats')}
-                            className="relative p-2 rounded-xl transition-all hover:bg-indigo-50"
-                            title="Tenant Messages"
-                            style={{ color: unreadChats > 0 ? '#6366f1' : '#94a3b8' }}
+                            className={`relative p-2.5 rounded-2xl border transition-all duration-200 shadow-2xs hover:scale-105 ${
+                                unreadChats > 0
+                                    ? 'bg-rose-50 border-rose-200 text-rose-600 shadow-rose-200/40'
+                                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50'
+                            }`}
+                            title="Tenant Messages & Chat Hub"
                         >
-                            <FiMessageSquare size={20} />
+                            <FiMessageSquare size={17} />
                             {unreadChats > 0 && (
-                                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-black text-white flex items-center justify-center" style={{ background: '#ef4444' }}>
+                                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black text-white flex items-center justify-center bg-rose-500 shadow-sm animate-bounce">
                                     {unreadChats > 9 ? '9+' : unreadChats}
                                 </span>
                             )}
                         </button>
-                            <span className="text-sm font-bold text-gray-800" style={{ fontFamily: 'Outfit, sans-serif' }}>{greeting.text}</span>
-                        </div>
-                        <div className="w-px h-4 bg-gray-200" />
-                        <span className="text-[11px] text-gray-400 font-medium">ARMS v1.1</span>
-                        {user?.isSuperAdmin && (
-                            <>
-                                <div className="w-px h-4 bg-gray-200" />
-                                <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">👑 SUPER ADMIN</span>
-                            </>
-                        )}
-                        <div className="w-px h-4 bg-gray-200" />
-                        <LiveClock />
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                        {/* Location Selector */}
-                        <div className="relative">
-                            <button onClick={() => setShowLocDropdown(!showLocDropdown)}
-                                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all"
-                                style={{ background: '#f1f5f9', border: '1.5px solid #e2e8f0', color: '#374151' }}
-                                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#3b82f6'}
-                                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'}>
-                                <FiMapPin size={13} className="text-blue-500" />
-                                <span className="max-w-[120px] truncate text-[13px]">{selectedLocName}</span>
-                                <FiChevronDown size={13} className={`text-gray-400 transition-transform ${showLocDropdown ? 'rotate-180' : ''}`} />
+                        {/* User Profile Avatar & Logout */}
+                        <div className="flex items-center gap-1.5 pl-1.5 border-l border-slate-200">
+                            <div
+                                className="w-8 h-8 rounded-2xl flex items-center justify-center text-white text-xs font-black shadow-sm flex-shrink-0 select-none"
+                                style={{
+                                    background: user?.isSuperAdmin
+                                        ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                                        : 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                                }}
+                                title={user?.name || 'Admin'}
+                            >
+                                {user?.isSuperAdmin ? '👑' : (user?.name?.charAt(0)?.toUpperCase() || 'A')}
+                            </div>
+                            <button
+                                onClick={handleLogout}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition border border-transparent hover:border-rose-200"
+                                title="Log Out"
+                            >
+                                <FiLogOut size={15} />
                             </button>
-                            {showLocDropdown && (
-                                <div className="absolute right-0 top-full mt-1.5 w-56 rounded-2xl overflow-hidden z-50"
-                                    style={{ background: '#fff', border: '1px solid #e2e8f0', boxShadow: '0 8px 30px rgba(0,0,0,0.1)' }}>
-                                    <div className="px-3 py-2 border-b border-gray-100">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Select Location</p>
-                                    </div>
-                                    <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
-                                        <button onClick={() => handleLocationChange(null)}
-                                            className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${!selectedLocation ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
-                                            📍 All Locations
-                                        </button>
-                                        {locations.map(l => (
-                                            <button key={l.location_id} onClick={() => handleLocationChange(l.location_id)}
-                                                className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${selectedLocation === l.location_id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
-                                                🏢 {l.location_name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </header>
