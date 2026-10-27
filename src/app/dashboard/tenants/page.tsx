@@ -14,11 +14,13 @@ import {
     FiX, FiSave, FiChevronLeft, FiChevronRight, FiChevronDown, FiChevronUp,
     FiMapPin, FiUsers, FiShield, FiTrash2, FiLayers, FiDownload,
     FiArrowUpRight, FiFileText, FiPrinter, FiCheck, FiSliders,
-    FiAward, FiActivity, FiTag, FiClock, FiHelpCircle, FiSend
+    FiAward, FiActivity, FiTag, FiClock, FiHelpCircle, FiSend,
+    FiCopy, FiMessageSquare, FiTrendingUp, FiTrendingDown, FiPieChart,
+    FiBarChart2, FiCheckSquare, FiSquare, FiShare2
 } from 'react-icons/fi';
 import { exportTenantsToExcel } from '@/lib/exportTenantsExcel';
 
-/* ─── Compact Sleek KPI Card (Exact Dashboard Proportion: ~88px-92px height, 7 in a row) ─── */
+/* ─── Compact Sleek KPI Card (Exact Dashboard Proportion: ~88px-92px height) ─── */
 interface CompactKpiCardProps {
     icon: string;
     label: string;
@@ -91,24 +93,6 @@ function CompactKpiCard({
     );
 }
 
-// ── Color tokens per column ────────────────────────────────────────────────────
-const C = {
-    num:      { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
-    name:     { bg: '#eef2ff', text: '#4338ca', head: '#c7d2fe' },
-    contact:  { bg: '#f0fdfa', text: '#0f766e', head: '#99f6e4' },
-    unit:     { bg: '#faf5ff', text: '#7c3aed', head: '#e9d5ff' },
-    location: { bg: '#f8fafc', text: '#475569', head: '#e2e8f0' },
-    movein:   { bg: '#fffbeb', text: '#b45309', head: '#fde68a' },
-    behind:   { bg: '#fff1f2', text: '#be123c', head: '#fecdd3' },
-    rent:     { bg: '#f0fdf4', text: '#15803d', head: '#bbf7d0' },
-    arrears:  { bg: '#fef9c3', text: '#92400e', head: '#fde68a' },
-    deposit:  { bg: '#eff6ff', text: '#1d4ed8', head: '#bfdbfe' },
-    paid:     { bg: '#ecfdf5', text: '#047857', head: '#a7f3d0' },
-    status:   { bg: '#ecfdf5', text: '#059669', head: '#a7f3d0' },
-    expand:   { bg: '#f8fafc', text: '#475569', head: '#e2e8f0' },
-    actions:  { bg: '#f5f3ff', text: '#6d28d9', head: '#ddd6fe' },
-};
-
 const PAGE_SIZES = [10, 25, 50, 100];
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
 const today = new Date().toISOString().split('T')[0];
@@ -145,63 +129,77 @@ function TenantAvatar({ name, status, size = 36 }: { name: string; status: strin
 // ── Months behind badge ────────────────────────────────────────────────────────
 function MonthsBehindBadge({ moveInDate, arrears }: { moveInDate: string; arrears: number }) {
     if (arrears <= 0) return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap">
             ✓ Up to Date
         </span>
     );
-    if (!moveInDate) return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-            ⚠️ Owed
+    const moveIn = moveInDate?.slice(0, 7) || '';
+    let months = 0;
+    if (moveIn && moveIn < currentMonth) {
+        const s = new Date(moveIn + '-01');
+        const e = new Date(currentMonth + '-01');
+        months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+    }
+    if (months <= 1) return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+            ⚠️ 1 mo overdue
         </span>
     );
-    const moveInMonth = moveInDate.slice(0, 7);
-    const s = new Date(moveInMonth + '-01');
-    const e = new Date(currentMonth + '-01');
-    const months = Math.max(1, (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1);
-    const isCritical = months >= 3;
-    const isWarning = months >= 2;
-
+    if (months === 2) return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 whitespace-nowrap">
+            🚨 2 mos overdue
+        </span>
+    );
     return (
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${
-            isCritical
-                ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
-                : isWarning
-                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : 'bg-yellow-50 text-yellow-800 border-yellow-200'
-        }`}>
-            {isCritical ? '🚨' : '⏰'} {months} mo behind
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 animate-pulse whitespace-nowrap">
+            ⚡ {months} mos critical
         </span>
     );
 }
 
+// ── Tenure helper ─────────────────────────────────────────────────────────────
+function formatTenure(moveInDate: string): string {
+    if (!moveInDate) return '—';
+    const now = new Date();
+    const moveIn = new Date(moveInDate);
+    const diffMonths = (now.getFullYear() - moveIn.getFullYear()) * 12 + (now.getMonth() - moveIn.getMonth());
+    if (diffMonths <= 0) return '🆕 This Month';
+    if (diffMonths < 12) return `${diffMonths} mo${diffMonths > 1 ? 's' : ''}`;
+    const years = (diffMonths / 12).toFixed(1);
+    return `${years} yrs`;
+}
+
 export default function TenantsPage() {
+    // ── Core Data State ──
     const [tenants, setTenants] = useState<any[]>([]);
-    const [tenantBalances, setTenantBalances] = useState<Record<number, number>>({});
-    const [locations, setLocations] = useState<any[]>([]);
     const [units, setUnits] = useState<any[]>([]);
+    const [locations, setLocations] = useState<any[]>([]);
+    const [tenantBalances, setTenantBalances] = useState<Record<number, number>>({});
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
     const [exporting, setExporting] = useState(false);
 
-    // Active sub-tab view
-    const [activeTab, setActiveTab] = useState<'directory' | 'arrears' | 'locations' | 'vacation'>('directory');
+    // ── Interactive Sub-Tabs ──
+    const [activeTab, setActiveTab] = useState<'directory' | 'arrears' | 'clusters' | 'vacation' | 'analytics'>('directory');
 
-    // Filters & sorting
+    // ── Filter & Search State ──
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('Active');
-    const [arrearsFilter, setArrearsFilter] = useState<'all' | 'arrears' | 'clear'>('all');
+    const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
     const [locationFilter, setLocationFilter] = useState<number | null>(null);
+    const [arrearsFilter, setArrearsFilter] = useState<'all' | 'arrears' | 'clear' | 'critical'>('all');
     const [vacationOnly, setVacationOnly] = useState(false);
     const [multiRoomOnly, setMultiRoomOnly] = useState(false);
-    const [sortBy, setSortBy] = useState<'name' | 'balance' | 'movein' | 'rent'>('name');
-
-    // Pagination
+    const [sortBy, setSortBy] = useState<'name' | 'balance' | 'rent' | 'movein'>('name');
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
 
-    // Modals
+    // ── Bulk Selection State ──
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+    // ── Modals State ──
     const [showModal, setShowModal] = useState(false);
     const [editItem, setEditItem] = useState<any>(null);
+    const [modalStep, setModalStep] = useState<'identity' | 'units' | 'billing' | 'agreement'>('identity');
     const [saving, setSaving] = useState(false);
     const [globalLocationId, setGlobalLocationId] = useState<number | null>(null);
     const [expandedTenants, setExpandedTenants] = useState<Set<number>>(new Set());
@@ -231,7 +229,7 @@ export default function TenantsPage() {
     });
     const [issuingAgreement, setIssuingAgreement] = useState(false);
 
-    // ── Auto-derive PIN from last 6 digits of phone ───────────────────────────
+    // ── Auto-derive PIN from last 6 digits of phone ──
     const derivePinFromPhone = (phone: string): string => {
         const digits = phone.replace(/\D/g, '');
         return digits.length >= 6 ? digits.slice(-6) : digits.slice(-digits.length) || '';
@@ -245,6 +243,15 @@ export default function TenantsPage() {
             return next;
         });
     }, []);
+
+    const toggleSelectTenant = (id: number) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     const loadData = useCallback(async (locId?: number | null) => {
         setLoading(true);
@@ -301,7 +308,7 @@ export default function TenantsPage() {
         return () => window.removeEventListener('arms-location-change', handler);
     }, [loadData]);
 
-    // ── Sync all tenant balances by generating missing bills ──────────────────
+    // ── Sync all tenant balances by generating missing bills ──
     const handleSyncBalances = async () => {
         setSyncing(true);
         topProgress.start();
@@ -315,14 +322,15 @@ export default function TenantsPage() {
         setSyncing(false);
     };
 
-    // ── Excel Export ──────────────────────────────────────────────────────────
-    const handleExportExcel = async () => {
-        if (filtered.length === 0) { toast.error('No tenants to export'); return; }
+    // ── Excel Export ──
+    const handleExportExcel = async (exportSubset?: any[]) => {
+        const itemsToExport = exportSubset || filtered;
+        if (itemsToExport.length === 0) { toast.error('No tenants to export'); return; }
         setExporting(true);
-        const t = toast.loading(`Preparing Excel for ${filtered.length} tenants…`);
+        const t = toast.loading(`Preparing Excel for ${itemsToExport.length} tenants…`);
         try {
             const currentMonth = new Date().toISOString().slice(0, 7);
-            const rows = filtered.map((tenant, idx) => {
+            const rows = itemsToExport.map((tenant, idx) => {
                 const bal  = tenantBalances[tenant.tenant_id] ?? tenant.balance ?? 0;
                 const det  = tenantDetails[tenant.tenant_id];
                 const moveIn = tenant.move_in_date?.slice(0, 7) || '';
@@ -363,14 +371,25 @@ export default function TenantsPage() {
         setExporting(false);
     };
 
-    // ── Derived KPI Metrics ───────────────────────────────────────────────────
+    // ── Derived KPI Metrics ──
     const activeTenants = tenants.filter(t => t.status === 'Active');
     const inactiveTenants = tenants.filter(t => t.status !== 'Active');
     const todayTenants = tenants.filter(t => (t.move_in_date || '').startsWith(today));
     const withArrearsTenants = activeTenants.filter(t => (tenantBalances[t.tenant_id] ?? t.balance ?? 0) > 0);
+    const criticalArrearsTenants = activeTenants.filter(t => {
+        const bal = tenantBalances[t.tenant_id] ?? t.balance ?? 0;
+        if (bal <= 0) return false;
+        const moveIn = t.move_in_date?.slice(0, 7) || '';
+        if (!moveIn) return false;
+        const s = new Date(moveIn + '-01');
+        const e = new Date(currentMonth + '-01');
+        const months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+        return months >= 3;
+    });
     const totalArrears = activeTenants.reduce((s, t) => s + (tenantBalances[t.tenant_id] ?? t.balance ?? 0), 0);
     const vacationTenants = activeTenants.filter(t => t.is_on_vacation);
     const totalDeposits = activeTenants.reduce((s, t) => s + (Number(t.deposit_paid) || 0), 0);
+    const totalMonthlyRoll = activeTenants.reduce((s, t) => s + (Number(t.monthly_rent) || 0), 0);
 
     // Location property breakdown stats
     const locationStats = useMemo(() => {
@@ -386,13 +405,24 @@ export default function TenantsPage() {
         return Object.values(map).filter(l => l.count > 0);
     }, [activeTenants, locations, tenantBalances]);
 
-    // ── Filtered, Sorted, Paginated Data ─────────────────────────────────────
+    // ── Filtered, Sorted, Paginated Data ──
     const filtered = useMemo(() => {
         let items = [...tenants];
         if (statusFilter !== 'All') items = items.filter(t => t.status === statusFilter);
         if (locationFilter) items = items.filter(t => t.location_id === locationFilter);
         if (arrearsFilter === 'arrears') items = items.filter(t => (tenantBalances[t.tenant_id] ?? t.balance ?? 0) > 0);
         if (arrearsFilter === 'clear') items = items.filter(t => (tenantBalances[t.tenant_id] ?? t.balance ?? 0) === 0);
+        if (arrearsFilter === 'critical') {
+            items = items.filter(t => {
+                const bal = tenantBalances[t.tenant_id] ?? t.balance ?? 0;
+                if (bal <= 0) return false;
+                const moveIn = t.move_in_date?.slice(0, 7) || '';
+                if (!moveIn) return false;
+                const s = new Date(moveIn + '-01');
+                const e = new Date(currentMonth + '-01');
+                return (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) >= 3;
+            });
+        }
         if (vacationOnly) items = items.filter(t => t.is_on_vacation);
         if (multiRoomOnly) items = items.filter(t => (tenantUnitsMap[t.tenant_id]?.length || 0) > 1);
 
@@ -419,7 +449,25 @@ export default function TenantsPage() {
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
     const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-    // ── Available Units for Modal ────────────────────────────────────────────
+    // ── Bulk Selection helpers ──
+    const allPaginatedSelected = paginated.length > 0 && paginated.every(t => selectedIds.has(t.tenant_id));
+    const toggleSelectAllPaginated = () => {
+        if (allPaginatedSelected) {
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                paginated.forEach(t => next.delete(t.tenant_id));
+                return next;
+            });
+        } else {
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                paginated.forEach(t => next.add(t.tenant_id));
+                return next;
+            });
+        }
+    };
+
+    // ── Available Units for Modal ──
     const activeTenantIdSet = new Set(
         tenants.filter(t => t.status === 'Active').map(t => t.tenant_id)
     );
@@ -456,6 +504,7 @@ export default function TenantsPage() {
 
     const openAdd = () => {
         setEditItem(null);
+        setModalStep('identity');
         setAdditionalUnits([]);
         setForm({
             tenant_name: '', phone: '', email: '', id_number: '',
@@ -472,6 +521,7 @@ export default function TenantsPage() {
 
     const openEdit = async (t: any) => {
         setEditItem(t);
+        setModalStep('identity');
         const moveInPmt = await getMoveInPayment(t.tenant_id);
         let loadedAdditional: Array<{ unit_id: number; rent: string }> = [];
         try {
@@ -500,83 +550,79 @@ export default function TenantsPage() {
         setShowModal(true);
     };
 
+    const totalAdditionalRent = additionalUnits.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
     const primaryRentNum = parseFloat(form.monthly_rent) || 0;
-    const additionalRentTotal = additionalUnits.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
-    const totalCombinedRent = primaryRentNum + additionalRentTotal;
-    const totalRoomCount = 1 + additionalUnits.length;
+    const totalCombinedRent = primaryRentNum + totalAdditionalRent;
+    const totalRoomCount = 1 + additionalUnits.filter(au => au.unit_id > 0).length;
 
+    // ── Save Tenant Logic ──
     const handleSave = async () => {
-        if (saving) return;
-        if (!form.tenant_name.trim() || !form.phone.trim() || !form.unit_id || !form.monthly_rent) {
-            toast.error('Name, Phone, Primary Unit & Rent are required'); return;
-        }
+        if (!form.tenant_name.trim()) { toast.error('Full legal name is required'); setModalStep('identity'); return; }
+        if (!form.phone.trim()) { toast.error('Phone number is required'); setModalStep('identity'); return; }
+        if (!form.location_id) { toast.error('Please select a property'); setModalStep('units'); return; }
+        if (!form.unit_id) { toast.error('Please assign a primary unit'); setModalStep('units'); return; }
+        if (!form.monthly_rent) { toast.error('Please enter primary room rent'); setModalStep('units'); return; }
 
-        for (const au of additionalUnits) {
-            if (!au.unit_id || !(parseFloat(au.rent) > 0)) {
-                toast.error('All additional rooms must have a unit selected and a rent amount'); return;
+        for (let i = 0; i < additionalUnits.length; i++) {
+            const au = additionalUnits[i];
+            if (!au.unit_id) { toast.error(`Please select room #${i + 2}`); setModalStep('units'); return; }
+            if (!au.rent || isNaN(parseFloat(au.rent)) || parseFloat(au.rent) < 0) {
+                toast.error(`Please enter valid rent for room #${i + 2}`); setModalStep('units'); return;
             }
         }
 
-        if (!editItem) {
-            if (allOccupiedUnitIds.has(form.unit_id)) {
-                const unitName = units.find(u => u.unit_id === form.unit_id)?.unit_name || 'selected unit';
-                toast.error(`🚫 Unit "${unitName}" is already occupied by an active tenant.`); return;
-            }
-        } else {
-            if (form.unit_id !== editItem.unit_id && allOccupiedUnitIds.has(form.unit_id)) {
-                const unitName = units.find(u => u.unit_id === form.unit_id)?.unit_name || 'selected unit';
-                toast.error(`🚫 Unit "${unitName}" is already occupied by an active tenant.`); return;
-            }
-        }
-
+        const isEdit = Boolean(editItem);
+        if (isEdit) setShowModal(false);
         setSaving(true);
-        const isEdit = !!editItem;
-        const editTenantId = editItem?.tenant_id;
-        const editLocationId = editItem?.location_id || form.location_id;
-        const capturedAdditionalUnits = [...additionalUnits];
-
-        const { initial_payment: _ip, ...formClean } = form;
-        const payload: any = {
-            ...formClean,
-            monthly_rent: totalCombinedRent,
-            deposit_paid: parseFloat(form.deposit_paid || '0'),
-            is_on_vacation: form.is_on_vacation,
-        };
-
-        const autoPin = derivePinFromPhone(form.phone);
-        const pinValue = payload.password_hash?.trim() || autoPin;
-
-        if (!pinValue) {
-            delete payload.password_hash;
-            delete payload.mobile_pin;
-        } else {
-            const hashedPin = await hashPassword(pinValue);
-            payload.password_hash = hashedPin;
-            payload.mobile_pin = pinValue.slice(0, 6);
-        }
-
-        if (!isEdit) {
-            setEditItem(null);
-            setAdditionalUnits([]);
-        } else {
-            setShowModal(false);
-        }
-
         topProgress.start();
+
         try {
+            const capturedAdditionalUnits = [...additionalUnits];
+            const payload: any = {
+                tenant_name: form.tenant_name.trim(),
+                phone: form.phone.trim(),
+                email: form.email.trim() || null,
+                id_number: form.id_number.trim() || null,
+                unit_id: form.unit_id,
+                location_id: form.location_id,
+                location_name: locations.find(l => l.location_id === form.location_id)?.location_name || '',
+                monthly_rent: totalCombinedRent,
+                deposit_paid: parseFloat(form.deposit_paid) || 0,
+                move_in_date: form.move_in_date,
+                emergency_contact: form.emergency_contact.trim() || null,
+                emergency_phone: form.emergency_phone.trim() || null,
+                notes: form.notes.trim() || null,
+                is_on_vacation: form.is_on_vacation,
+            };
+
+            const autoPin = derivePinFromPhone(form.phone);
+            const pinValue = form.password_hash?.trim() || autoPin;
+
+            if (!pinValue) {
+                delete payload.password_hash;
+                delete payload.mobile_pin;
+            } else {
+                const hashed = await hashPassword(pinValue);
+                payload.password_hash = hashed;
+                payload.mobile_pin = pinValue;
+            }
+
             if (isEdit) {
-                await updateTenant(editTenantId, payload);
-                try {
-                    const allUnitAssignments = [
-                        { unit_id: form.unit_id, is_primary: true, custom_rent: primaryRentNum },
-                        ...capturedAdditionalUnits.map(au => ({
-                            unit_id: au.unit_id, is_primary: false, custom_rent: parseFloat(au.rent) || 0,
-                        })),
-                    ];
-                    await saveTenantUnits(editTenantId, allUnitAssignments);
-                } catch { /* multi-room optional */ }
-                const newInitialPayment = parseFloat(form.initial_payment || '0');
-                await updateMoveInPayment(editTenantId, newInitialPayment, editLocationId);
+                await updateTenant(editItem.tenant_id, payload);
+                if (form.initial_payment !== '') {
+                    await updateMoveInPayment(
+                        editItem.tenant_id,
+                        parseFloat(form.initial_payment) || 0,
+                        form.move_in_date
+                    );
+                }
+                const junctionUnits = [
+                    { unit_id: form.unit_id, custom_rent: primaryRentNum, is_primary: true },
+                    ...capturedAdditionalUnits.map(au => ({
+                        unit_id: au.unit_id, custom_rent: parseFloat(au.rent) || 0, is_primary: false,
+                    })),
+                ];
+                await saveTenantUnits(editItem.tenant_id, junctionUnits);
                 toast.success(`✅ Tenant updated! (${totalRoomCount} room${totalRoomCount > 1 ? 's' : ''})`);
             } else {
                 const addPayload = {
@@ -673,7 +719,7 @@ export default function TenantsPage() {
     };
 
     if (loading) return (
-        <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+        <div className="flex flex-col items-center justify-center min-h-[420px] gap-3">
             <div className="relative">
                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg" style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
                     👥
@@ -686,33 +732,43 @@ export default function TenantsPage() {
     );
 
     return (
-        <div className="animate-fadeIn space-y-5 max-w-full overflow-x-hidden">
+        <div className="w-full max-w-full min-w-0 overflow-x-hidden space-y-5 pb-16 font-sans text-slate-800">
 
-            {/* ── Top Header Strip ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                1. TOP HEADER STRIP (CLEAN, WORLD-CLASS SaaS HEADER)
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="flex items-center justify-between flex-wrap gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-sm">
-                <div>
-                    <div className="flex items-center gap-2.5">
-                        <span className="text-2xl">👥</span>
-                        <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-sans">
-                            Tenants Management
-                        </h1>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
-                            Ultra Edition
-                        </span>
+                <div className="flex items-center gap-3.5">
+                    <div
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl text-white shadow-md shadow-indigo-500/20 flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                    >
+                        👥
                     </div>
-                    <p className="text-xs sm:text-sm text-slate-500 mt-1 font-medium">
-                        {activeTenants.length} active leases · {inactiveTenants.length} archived
-                        {withArrearsTenants.length > 0 && (
-                            <span className="ml-2 font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
-                                ⚠️ {withArrearsTenants.length} behind
+                    <div>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-sans">
+                                Tenant Portfolio & Identity Master
+                            </h1>
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                LIVE FIFO LEDGER
                             </span>
-                        )}
-                        {todayTenants.length > 0 && (
-                            <span className="ml-2 font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                                🆕 {todayTenants.length} moved in today
-                            </span>
-                        )}
-                    </p>
+                        </div>
+                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                            {activeTenants.length} active leases · {inactiveTenants.length} archived records
+                            {withArrearsTenants.length > 0 && (
+                                <span className="ml-2 font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                                    ⚠️ {withArrearsTenants.length} in debt ({fmt(totalArrears)})
+                                </span>
+                            )}
+                            {todayTenants.length > 0 && (
+                                <span className="ml-2 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                    🆕 {todayTenants.length} moved in today
+                                </span>
+                            )}
+                        </p>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-2.5 flex-wrap">
@@ -727,7 +783,7 @@ export default function TenantsPage() {
                     <button
                         onClick={handleSyncBalances}
                         disabled={syncing}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all border shadow-sm hover:scale-[1.02]"
+                        className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-black transition-all border shadow-sm hover:scale-[1.02]"
                         style={{ background: '#fff7ed', color: '#c2410c', borderColor: '#fed7aa' }}
                     >
                         <span>🔄</span>
@@ -735,9 +791,9 @@ export default function TenantsPage() {
                     </button>
 
                     <button
-                        onClick={handleExportExcel}
+                        onClick={() => handleExportExcel()}
                         disabled={exporting}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all border shadow-sm hover:scale-[1.02]"
+                        className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-black transition-all border shadow-sm hover:scale-[1.02]"
                         style={{
                             background: exporting ? '#f1f5f9' : '#f0fdf4',
                             color: exporting ? '#94a3b8' : '#15803d',
@@ -761,8 +817,10 @@ export default function TenantsPage() {
                 </div>
             </div>
 
-            {/* ── 7 Compact Sleek KPI Cards (Exact Dashboard Proportion: ~88px-92px height, 7 in a row) ── */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3">
+            {/* ══════════════════════════════════════════════════════════════════════
+                2. 7 COMPACT SLEEK KPI CARDS (DASHBOARD SYMMETRY)
+            ══════════════════════════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2.5">
                 <CompactKpiCard
                     icon="👥"
                     label="PORTFOLIO"
@@ -778,7 +836,7 @@ export default function TenantsPage() {
                     icon="🏠"
                     label="ACTIVE TENANTS"
                     value={activeTenants.length}
-                    sub="Currently renting"
+                    sub={`${Math.round((activeTenants.length / Math.max(1, units.length)) * 100)}% occupancy`}
                     gradient="linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)"
                     shadowColor="rgba(16, 185, 129, 0.35)"
                     active={statusFilter === 'Active' && arrearsFilter === 'all'}
@@ -841,14 +899,17 @@ export default function TenantsPage() {
                 />
             </div>
 
-            {/* ── Sub-Tabs Navigation Strip ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                3. SUB-TABS NAVIGATION STRIP (RICH MULTI-MODULE CONTROLS)
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="flex items-center justify-between border-b border-slate-200/90 pb-1 flex-wrap gap-2">
                 <div className="flex items-center gap-1.5 flex-wrap">
                     {[
-                        { id: 'directory', label: 'All Tenants Directory', icon: '👥', count: filtered.length },
-                        { id: 'arrears', label: 'Arrears & Risk Watchlist', icon: '⚠️', count: withArrearsTenants.length },
-                        { id: 'locations', label: 'Property & Room Clusters', icon: '📍', count: locationStats.length },
-                        { id: 'vacation', label: 'Vacation & Special Statuses', icon: '🏖️', count: vacationTenants.length },
+                        { id: 'directory', label: 'All Leases Directory', icon: '👥', count: filtered.length },
+                        { id: 'arrears', label: 'Arrears & Risk Recovery', icon: '⚠️', count: withArrearsTenants.length },
+                        { id: 'clusters', label: 'Property & Room Clusters', icon: '📍', count: locationStats.length },
+                        { id: 'vacation', label: 'Vacation & Seasonal Hub', icon: '🏖️', count: vacationTenants.length },
+                        { id: 'analytics', label: 'Tenancy Intelligence', icon: '📊', count: null },
                     ].map(tab => {
                         const isSel = activeTab === tab.id;
                         return (
@@ -863,11 +924,13 @@ export default function TenantsPage() {
                             >
                                 <span>{tab.icon}</span>
                                 <span>{tab.label}</span>
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                    isSel ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                                }`}>
-                                    {tab.count}
-                                </span>
+                                {tab.count !== null && (
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                        isSel ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                                    }`}>
+                                        {tab.count}
+                                    </span>
+                                )}
                             </button>
                         );
                     })}
@@ -878,7 +941,9 @@ export default function TenantsPage() {
                 </div>
             </div>
 
-            {/* ── Search & Filter Control Deck ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                4. OMNI-SEARCH & FILTER CONTROL DECK
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-sm space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
                     {/* Omni Search */}
@@ -887,8 +952,8 @@ export default function TenantsPage() {
                         <input
                             value={search}
                             onChange={e => { setSearch(e.target.value); setPage(1); }}
-                            placeholder="Search tenant name, phone, national ID, unit, location…"
-                            className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all font-sans"
+                            placeholder="Search tenant name, phone, national ID, unit, property…"
+                            className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all font-sans"
                         />
                         {search && (
                             <button
@@ -937,7 +1002,8 @@ export default function TenantsPage() {
                     <div className="flex gap-1 p-1 bg-slate-100 rounded-2xl">
                         {[
                             { k: 'all', l: 'All' },
-                            { k: 'arrears', l: '⚠️ In Arrears' },
+                            { k: 'arrears', l: '⚠️ Arrears' },
+                            { k: 'critical', l: '🚨 3+ Mo' },
                             { k: 'clear', l: '✅ Clear' }
                         ].map(f => (
                             <button
@@ -993,14 +1059,16 @@ export default function TenantsPage() {
                     <select
                         value={pageSize}
                         onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
-                        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-black text-slate-700 focus:outline-none"
+                        className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-black text-slate-700 focus:outline-none"
                     >
                         {PAGE_SIZES.map(n => <option key={n} value={n}>{n} / page</option>)}
                     </select>
                 </div>
             </div>
 
-            {/* ── Sub-Tab 2: Arrears & Risk Recovery Watchlist ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                5. SUB-TAB 2: ARREARS RECOVERY & RISK CONTROL
+            ══════════════════════════════════════════════════════════════════════ */}
             {activeTab === 'arrears' && (
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
@@ -1022,7 +1090,6 @@ export default function TenantsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         {withArrearsTenants.slice(0, 9).map(t => {
                             const realBal = tenantBalances[t.tenant_id] ?? t.balance ?? 0;
-                            const det = tenantDetails[t.tenant_id];
                             return (
                                 <div
                                     key={t.tenant_id}
@@ -1069,8 +1136,10 @@ export default function TenantsPage() {
                 </div>
             )}
 
-            {/* ── Sub-Tab 3: Property & Room Clusters View ── */}
-            {activeTab === 'locations' && (
+            {/* ══════════════════════════════════════════════════════════════════════
+                6. SUB-TAB 3: PROPERTY & ROOM CLUSTERS
+            ══════════════════════════════════════════════════════════════════════ */}
+            {activeTab === 'clusters' && (
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div>
                         <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
@@ -1121,7 +1190,9 @@ export default function TenantsPage() {
                 </div>
             )}
 
-            {/* ── Sub-Tab 4: Vacation & Student Statuses ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                7. SUB-TAB 4: VACATION & SEASONAL HUB
+            ══════════════════════════════════════════════════════════════════════ */}
             {activeTab === 'vacation' && (
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
@@ -1161,42 +1232,97 @@ export default function TenantsPage() {
                 </div>
             )}
 
-            {/* ── Main DataGrid (Directory View) ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                8. SUB-TAB 5: TENANCY PORTFOLIO INTELLIGENCE
+            ══════════════════════════════════════════════════════════════════════ */}
+            {activeTab === 'analytics' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Occupancy & Roll Capacity
+                        </span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-black text-indigo-600">
+                                {Math.round((activeTenants.length / Math.max(1, units.length)) * 100)}%
+                            </span>
+                            <span className="text-xs text-slate-500 font-bold">of capacity filled</span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                            <div
+                                className="bg-indigo-600 h-2.5 rounded-full"
+                                style={{ width: `${Math.min(100, Math.round((activeTenants.length / Math.max(1, units.length)) * 100))}%` }}
+                            />
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                            {activeTenants.length} occupied units out of {units.length} total units configured.
+                        </p>
+                    </div>
+
+                    <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Security Deposit Coverage
+                        </span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-black text-emerald-600">
+                                {fmt(totalDeposits)}
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                            Security deposits cover {totalArrears > 0 ? Math.round((totalDeposits / totalArrears) * 100) : 100}% of outstanding arrears exposure.
+                        </p>
+                    </div>
+
+                    <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Critical Debt Ratio
+                        </span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-black text-rose-600">
+                                {criticalArrearsTenants.length}
+                            </span>
+                            <span className="text-xs text-slate-500 font-bold">tenants behind &gt;3 months</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                            Requires immediate demand letter or recovery intervention.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                9. THE REDESIGNED WORLD-CLASS MODERN SaaS DATAGRID (ZERO OVERFLOW)
+            ══════════════════════════════════════════════════════════════════════ */}
             <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full border-collapse" style={{ fontSize: 12 }}>
-                        <thead>
+                <div className="w-full overflow-x-auto">
+                    <table className="w-full text-left text-xs divide-y divide-slate-100">
+                        {/* Unified Modern SaaS Header */}
+                        <thead className="bg-slate-50/90 text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-200">
                             <tr>
-                                {[
-                                    { label: '#', col: C.num },
-                                    { label: '👤 Tenant Name', col: C.name },
-                                    { label: '📞 Contact', col: C.contact },
-                                    { label: '🏠 Room / Unit', col: C.unit },
-                                    { label: '📍 Property', col: C.location },
-                                    { label: '📅 Move-In Date', col: C.movein },
-                                    { label: '⏰ Debt Health', col: C.behind },
-                                    { label: '💰 Monthly Rent', col: C.rent },
-                                    { label: '⚠️ Unpaid Arrears', col: C.arrears },
-                                    { label: '💵 Paid All-Time', col: C.paid },
-                                    { label: '🔐 Deposit', col: C.deposit },
-                                    { label: '✅ Lease Status', col: C.status },
-                                    { label: '🔍 Ledger', col: C.expand },
-                                    { label: '⚙️ Actions', col: C.actions },
-                                ].map((h, i) => (
-                                    <th
-                                        key={i}
-                                        className="text-left px-3.5 py-3 text-[10px] font-black uppercase tracking-wider whitespace-nowrap"
-                                        style={{ background: h.col.head, color: h.col.text, borderBottom: `2px solid ${h.col.text}30` }}
+                                <th className="py-3.5 px-3 text-center w-10">
+                                    <button
+                                        onClick={toggleSelectAllPaginated}
+                                        className="text-slate-400 hover:text-indigo-600 transition"
                                     >
-                                        {h.label}
-                                    </th>
-                                ))}
+                                        {allPaginatedSelected ? <FiCheckSquare size={16} className="text-indigo-600" /> : <FiSquare size={16} />}
+                                    </button>
+                                </th>
+                                <th className="py-3.5 px-2 text-center w-8">#</th>
+                                <th className="py-3.5 px-3.5 min-w-[220px]">👤 Tenant & Identity</th>
+                                <th className="py-3.5 px-3 min-w-[170px]">🏠 Unit & Property</th>
+                                <th className="py-3.5 px-3 min-w-[150px]">📞 Contact & Comms</th>
+                                <th className="py-3.5 px-3 min-w-[110px]">📅 Move-In</th>
+                                <th className="py-3.5 px-3 min-w-[130px]">💰 Monthly Rent</th>
+                                <th className="py-3.5 px-3 min-w-[140px]">⚠️ FIFO Balance</th>
+                                <th className="py-3.5 px-3 text-center min-w-[80px]">Status</th>
+                                <th className="py-3.5 px-3 text-center min-w-[140px]">Actions</th>
                             </tr>
                         </thead>
-                        <tbody>
+
+                        {/* Body */}
+                        <tbody className="divide-y divide-slate-100 bg-white">
                             {paginated.length === 0 ? (
                                 <tr>
-                                    <td colSpan={14} className="text-center py-20 text-slate-400">
+                                    <td colSpan={10} className="text-center py-20 text-slate-400">
                                         <div className="flex flex-col items-center gap-2">
                                             <span className="text-5xl">👥</span>
                                             <p className="text-sm font-black text-slate-700">No matching tenants found</p>
@@ -1208,217 +1334,211 @@ export default function TenantsPage() {
                                 const realBalance = tenantBalances[t.tenant_id] ?? t.balance ?? 0;
                                 const hasArrears = realBalance > 0;
                                 const isNewToday = (t.move_in_date || '').startsWith(today);
-                                const daysAgo = t.move_in_date
-                                    ? Math.floor((Date.now() - new Date(t.move_in_date).getTime()) / 86400000)
-                                    : null;
+                                const isSelected = selectedIds.has(t.tenant_id);
+                                const isExpanded = expandedTenants.has(t.tenant_id);
+                                const tuList = tenantUnitsMap[t.tenant_id] || [];
+                                const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(currentMonth.slice(5,7));
+                                const displayRent = isVacNow ? Math.round((t.monthly_rent || 0) * 0.5) : (t.monthly_rent || 0);
+
                                 return (
                                     <Fragment key={t.tenant_id}>
                                         <tr
-                                            className="transition-colors group hover:bg-slate-50/80"
-                                            style={{ borderBottom: '1px solid #f1f5f9' }}
+                                            className={`transition-colors group hover:bg-indigo-50/30 ${
+                                                isSelected ? 'bg-indigo-50/50' : ''
+                                            }`}
                                         >
-                                            {/* # */}
-                                            <td className="px-3.5 py-3 text-center font-black" style={{ background: C.num.bg + '50', color: C.num.text }}>
+                                            {/* Selection Checkbox */}
+                                            <td className="py-3 px-3 text-center">
+                                                <button
+                                                    onClick={() => toggleSelectTenant(t.tenant_id)}
+                                                    className="text-slate-400 hover:text-indigo-600 transition"
+                                                >
+                                                    {isSelected ? <FiCheckSquare size={15} className="text-indigo-600" /> : <FiSquare size={15} />}
+                                                </button>
+                                            </td>
+
+                                            {/* Row # */}
+                                            <td className="py-3 px-2 text-center font-bold text-slate-400 text-[11px]">
                                                 {(page - 1) * pageSize + idx + 1}
                                             </td>
 
-                                            {/* Tenant + Avatar */}
-                                            <td className="px-3.5 py-3" style={{ background: C.name.bg + '40' }}>
+                                            {/* Tenant & Identity */}
+                                            <td className="py-3 px-3.5">
                                                 <div className="flex items-center gap-2.5">
                                                     <div className="relative flex-shrink-0">
-                                                        <TenantAvatar name={t.tenant_name} status={t.status} size={38} />
+                                                        <TenantAvatar name={t.tenant_name} status={t.status} size={36} />
                                                         {isNewToday && (
-                                                            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
+                                                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
                                                         )}
                                                     </div>
-                                                    <div>
-                                                        <div className="font-black text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
                                                             <button
                                                                 onClick={() => setDossierTenant(t)}
-                                                                className="hover:text-indigo-600 transition hover:underline text-left"
+                                                                className="font-black text-slate-900 hover:text-indigo-600 transition hover:underline text-left truncate text-xs sm:text-[13px]"
                                                             >
                                                                 {t.tenant_name}
                                                             </button>
                                                             {t.is_on_vacation && (
-                                                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                                                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
                                                                     🏖️ Vacation
                                                                 </span>
                                                             )}
                                                             {isNewToday && (
-                                                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 animate-pulse">
-                                                                    🆕 NEW
+                                                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                                                    NEW
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div className="text-[10px] text-slate-400 mt-0.5 font-medium flex items-center gap-1">
+                                                        <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1 font-medium">
                                                             <span>🪪 ID: {t.id_number || '—'}</span>
                                                             <button
                                                                 onClick={() => setDossierTenant(t)}
-                                                                className="text-indigo-600 font-bold ml-1 hover:underline"
+                                                                className="text-indigo-600 hover:underline font-bold ml-1"
                                                             >
                                                                 [Dossier]
                                                             </button>
-                                                        </div>
+                                                        </p>
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* Contact */}
-                                            <td className="px-3.5 py-3" style={{ background: C.contact.bg + '40' }}>
-                                                <div className="flex items-center gap-1 font-bold whitespace-nowrap" style={{ color: C.contact.text }}>
-                                                    <FiPhone size={11} /> {t.phone || '—'}
+                                            {/* Unit & Property */}
+                                            <td className="py-3 px-3">
+                                                <div className="flex items-center gap-1 font-black text-slate-800">
+                                                    <span>🏠 {t.arms_units?.unit_name || '—'}</span>
+                                                    {tuList.length > 1 && (
+                                                        <span
+                                                            title={`Additional rooms: ${tuList.filter((tu: any) => !tu.is_primary).map((tu: any) => tu.arms_units?.unit_name).join(', ')}`}
+                                                            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black bg-purple-100 text-purple-700 border border-purple-200 cursor-help"
+                                                        >
+                                                            +{tuList.length - 1} rooms
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {t.email && (
-                                                    <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
-                                                        <FiMail size={10} /> {t.email}
-                                                    </div>
+                                                <p className="text-[10px] text-slate-400 mt-0.5 truncate font-medium">
+                                                    📍 {t.arms_locations?.location_name || '—'}
+                                                </p>
+                                            </td>
+
+                                            {/* Contact & Comms */}
+                                            <td className="py-3 px-3">
+                                                <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                                                    <span>{t.phone || '—'}</span>
+                                                    {t.phone && (
+                                                        <button
+                                                            onClick={() => {
+                                                                navigator.clipboard.writeText(t.phone);
+                                                                toast.success('Phone copied to clipboard');
+                                                            }}
+                                                            title="Copy Phone"
+                                                            className="text-slate-400 hover:text-slate-600 transition"
+                                                        >
+                                                            <FiCopy size={11} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {t.email ? (
+                                                    <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[130px]" title={t.email}>
+                                                        {t.email}
+                                                    </p>
+                                                ) : (
+                                                    <p className="text-[10px] text-slate-300 mt-0.5">No email</p>
                                                 )}
-                                            </td>
-
-                                            {/* Unit / Multi-Room */}
-                                            <td className="px-3.5 py-3" style={{ background: C.unit.bg + '40', color: C.unit.text }}>
-                                                {(() => {
-                                                    const tuList = tenantUnitsMap[t.tenant_id];
-                                                    if (tuList && tuList.length > 1) {
-                                                        return (
-                                                            <div>
-                                                                <div className="flex items-center gap-1 font-black whitespace-nowrap">
-                                                                    <FiLayers size={12} />
-                                                                    {t.arms_units?.unit_name || '—'}
-                                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black bg-purple-100 text-purple-700 border border-purple-200">
-                                                                        +{tuList.length - 1} rooms
-                                                                    </span>
-                                                                </div>
-                                                                <div className="flex flex-wrap gap-1 mt-1">
-                                                                    {tuList.filter((tu: any) => !tu.is_primary).map((tu: any) => (
-                                                                        <span key={tu.unit_id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200 whitespace-nowrap">
-                                                                            {tu.arms_units?.unit_name || `#${tu.unit_id}`}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return <span className="font-black whitespace-nowrap">🏠 {t.arms_units?.unit_name || '—'}</span>;
-                                                })()}
-                                            </td>
-
-                                            {/* Location */}
-                                            <td className="px-3.5 py-3 whitespace-nowrap font-bold" style={{ background: C.location.bg + '40', color: C.location.text }}>
-                                                📍 {t.arms_locations?.location_name || '—'}
                                             </td>
 
                                             {/* Move-In Date */}
-                                            <td className="px-3.5 py-3" style={{ background: C.movein.bg + '40' }}>
-                                                <div className="flex items-center gap-1 font-bold whitespace-nowrap" style={{ color: C.movein.text }}>
-                                                    <FiCalendar size={11} />
-                                                    {t.move_in_date
-                                                        ? new Date(t.move_in_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
-                                                        : '—'}
+                                            <td className="py-3 px-3 font-semibold text-slate-600">
+                                                <div>{t.move_in_date || '—'}</div>
+                                                <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                    {formatTenure(t.move_in_date)}
+                                                </p>
+                                            </td>
+
+                                            {/* Monthly Rent & Deposit */}
+                                            <td className="py-3 px-3">
+                                                <div className="font-black text-slate-900">
+                                                    {fmt(displayRent)}
+                                                    {isVacNow && (
+                                                        <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-violet-100 text-violet-700 border border-violet-200">
+                                                            50%
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {daysAgo !== null && (
-                                                    <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap font-medium">
-                                                        {daysAgo === 0 ? '🆕 Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo}d ago`}
-                                                    </div>
-                                                )}
+                                                <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                    Dep: {fmt(t.deposit_paid || 0)}
+                                                </p>
                                             </td>
 
-                                            {/* Debt Health Badge */}
-                                            <td className="px-3.5 py-3" style={{ background: C.behind.bg + '40' }}>
-                                                <MonthsBehindBadge moveInDate={t.move_in_date} arrears={realBalance} />
-                                            </td>
-
-                                            {/* Monthly Rent */}
-                                            <td className="px-3.5 py-3 whitespace-nowrap font-black" style={{ background: C.rent.bg + '40', color: C.rent.text }}>
-                                                {(() => {
-                                                    const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(currentMonth.slice(5,7));
-                                                    const displayRent = isVacNow ? Math.round((t.monthly_rent||0)*0.5) : (t.monthly_rent||0);
-                                                    return (
-                                                        <div>
-                                                            {fmt(displayRent)}
-                                                            {t.is_on_vacation && (
-                                                                <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200">
-                                                                    🏖️ {isVacNow ? '50%' : 'Vac'}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })()}
-                                            </td>
-
-                                            {/* Real Arrears */}
-                                            <td className="px-3.5 py-3" style={{ background: hasArrears ? '#fff1f260' : C.arrears.bg + '40' }}>
+                                            {/* FIFO Debt Balance */}
+                                            <td className="py-3 px-3">
                                                 {hasArrears ? (
-                                                    <div className="flex items-center gap-1">
-                                                        <FiAlertTriangle size={12} className="text-rose-500 flex-shrink-0" />
-                                                        <span className="font-black text-rose-600 whitespace-nowrap">{fmt(realBalance)}</span>
+                                                    <div>
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                                            ⚠️ {fmt(realBalance)}
+                                                        </span>
+                                                        <div className="mt-1">
+                                                            <MonthsBehindBadge moveInDate={t.move_in_date} arrears={realBalance} />
+                                                        </div>
                                                     </div>
                                                 ) : (
-                                                    <div className="flex items-center gap-1">
-                                                        <FiCheckCircle size={12} className="text-emerald-500 flex-shrink-0" />
-                                                        <span className="font-black text-emerald-600">✓ Clear</span>
+                                                    <div>
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                            ✓ Clear
+                                                        </span>
+                                                        <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                            Paid: {fmt(tenantDetails[t.tenant_id]?.totalPaidAllTime || 0)}
+                                                        </p>
                                                     </div>
                                                 )}
-                                            </td>
-
-                                            {/* Total Paid All Time */}
-                                            <td className="px-3.5 py-3 whitespace-nowrap font-black" style={{ background: C.paid.bg + '40', color: C.paid.text }}>
-                                                {fmt(tenantDetails[t.tenant_id]?.totalPaidAllTime || 0)}
-                                            </td>
-
-                                            {/* Security Deposit */}
-                                            <td className="px-3.5 py-3 whitespace-nowrap font-bold" style={{ background: C.deposit.bg + '40', color: C.deposit.text }}>
-                                                {fmt(t.deposit_paid || 0)}
                                             </td>
 
                                             {/* Status */}
-                                            <td className="px-3.5 py-3" style={{ background: C.status.bg + '40' }}>
-                                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border whitespace-nowrap ${
+                                            <td className="py-3 px-3 text-center">
+                                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
                                                     t.status === 'Active'
                                                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                                         : 'bg-slate-100 text-slate-500 border-slate-200'
                                                 }`}>
-                                                    {t.status === 'Active' ? '✅' : '🚪'} {t.status}
+                                                    {t.status === 'Active' ? 'Active' : 'Archived'}
                                                 </span>
                                             </td>
 
-                                            {/* Expand Ledger */}
-                                            <td className="px-3.5 py-3 text-center" style={{ background: C.expand.bg + '40' }}>
-                                                <button
-                                                    onClick={() => toggleExpand(t.tenant_id)}
-                                                    title="View month-by-month FIFO ledger"
-                                                    className="p-1.5 rounded-xl transition hover:scale-105 border shadow-sm"
-                                                    style={{
-                                                        background: expandedTenants.has(t.tenant_id) ? '#4f46e5' : '#f8fafc',
-                                                        color: expandedTenants.has(t.tenant_id) ? '#fff' : '#64748b',
-                                                        borderColor: expandedTenants.has(t.tenant_id) ? '#4f46e5' : '#e2e8f0'
-                                                    }}
-                                                >
-                                                    {expandedTenants.has(t.tenant_id) ? <FiChevronUp size={13} /> : <FiChevronDown size={13} />}
-                                                </button>
-                                            </td>
-
                                             {/* Actions */}
-                                            <td className="px-3.5 py-3" style={{ background: C.actions.bg + '40' }}>
-                                                <div className="flex items-center gap-1.5">
+                                            <td className="py-3 px-3 text-center">
+                                                <div className="flex items-center justify-center gap-1">
+                                                    {/* Toggle Expand FIFO Ledger */}
                                                     <button
-                                                        onClick={() => openEdit(t)}
-                                                        title="Edit Tenant"
-                                                        className="p-2 rounded-xl transition hover:scale-110 shadow-sm"
-                                                        style={{ background: C.name.head, color: C.name.text }}
+                                                        onClick={() => toggleExpand(t.tenant_id)}
+                                                        title="Expand month-by-month FIFO ledger"
+                                                        className={`p-1.5 rounded-xl border transition ${
+                                                            isExpanded
+                                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-600'
+                                                        }`}
                                                     >
-                                                        <FiEdit2 size={12} />
+                                                        {isExpanded ? <FiChevronUp size={13} /> : <FiChevronDown size={13} />}
                                                     </button>
 
+                                                    {/* Dossier Modal Trigger */}
                                                     <button
                                                         onClick={() => setDossierTenant(t)}
                                                         title="Tenant Dossier & Statement"
-                                                        className="p-2 rounded-xl transition hover:scale-110 shadow-sm"
-                                                        style={{ background: '#e0e7ff', color: '#4338ca' }}
+                                                        className="p-1.5 rounded-xl bg-slate-50 text-slate-600 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 transition"
                                                     >
-                                                        <FiFileText size={12} />
+                                                        <FiFileText size={13} />
                                                     </button>
 
+                                                    {/* Edit */}
+                                                    <button
+                                                        onClick={() => openEdit(t)}
+                                                        title="Edit Tenant"
+                                                        className="p-1.5 rounded-xl bg-slate-50 text-slate-600 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 transition"
+                                                    >
+                                                        <FiEdit2 size={13} />
+                                                    </button>
+
+                                                    {/* WhatsApp */}
                                                     {t.phone && (
                                                         <a
                                                             href={`https://wa.me/${t.phone.replace(/^0/, '254').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
@@ -1429,21 +1549,21 @@ export default function TenantsPage() {
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             title="WhatsApp Tenant"
-                                                            className="p-2 rounded-xl transition hover:scale-110 text-white shadow-sm"
+                                                            className="p-1.5 rounded-xl text-white shadow-sm transition hover:scale-105"
                                                             style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
                                                         >
-                                                            <span style={{ fontSize: 11 }}>📱</span>
+                                                            <FiSend size={12} />
                                                         </a>
                                                     )}
 
+                                                    {/* Move Out */}
                                                     {t.status === 'Active' && (
                                                         <button
                                                             onClick={() => handleDeactivate(t.tenant_id, t.tenant_name)}
                                                             title="Move Out (Archive Tenant)"
-                                                            className="p-2 rounded-xl transition hover:scale-110 shadow-sm"
-                                                            style={{ background: '#fee2e2', color: '#b91c1c' }}
+                                                            className="p-1.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition"
                                                         >
-                                                            <FiUserX size={12} />
+                                                            <FiUserX size={13} />
                                                         </button>
                                                     )}
                                                 </div>
@@ -1451,7 +1571,7 @@ export default function TenantsPage() {
                                         </tr>
 
                                         {/* ── Expandable Month-by-Month FIFO Ledger Row ── */}
-                                        {expandedTenants.has(t.tenant_id) && (() => {
+                                        {isExpanded && (() => {
                                             const details = tenantDetails[t.tenant_id];
                                             const months = details?.allMonths || [];
                                             const totalPaid = details?.totalPaidAllTime || 0;
@@ -1461,27 +1581,27 @@ export default function TenantsPage() {
 
                                             return (
                                                 <tr key={`exp-${t.tenant_id}`}>
-                                                    <td colSpan={14} style={{ padding: 0, background: '#f8fafc' }}>
-                                                        <div className="px-6 py-5 border-t-2 border-indigo-200" style={{ background: 'linear-gradient(180deg, #f0f4ff 0%, #f8fafc 100%)' }}>
+                                                    <td colSpan={10} className="p-0 bg-slate-50">
+                                                        <div className="p-5 border-t border-b border-indigo-200 bg-gradient-to-b from-indigo-50/50 to-slate-50 space-y-4">
                                                             {/* Summary Cards */}
-                                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                                                                <div className="rounded-2xl p-3 border bg-emerald-50 border-emerald-200 shadow-sm">
+                                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                                                <div className="rounded-2xl p-3 border bg-white border-emerald-200 shadow-sm">
                                                                     <p className="text-[10px] font-black text-emerald-700 uppercase">💵 Total Paid All-Time</p>
-                                                                    <p className="text-base font-black text-emerald-900 mt-0.5">{fmt(totalPaid)}</p>
+                                                                    <p className="text-sm font-black text-emerald-900 mt-0.5">{fmt(totalPaid)}</p>
                                                                 </div>
-                                                                <div className="rounded-2xl p-3 border bg-amber-50 border-amber-200 shadow-sm">
+                                                                <div className="rounded-2xl p-3 border bg-white border-amber-200 shadow-sm">
                                                                     <p className="text-[10px] font-black text-amber-700 uppercase">⏰ Prior Months Arrears</p>
-                                                                    <p className="text-base font-black text-amber-900 mt-0.5">{fmt(pastArrears)}</p>
+                                                                    <p className="text-sm font-black text-amber-900 mt-0.5">{fmt(pastArrears)}</p>
                                                                 </div>
-                                                                <div className="rounded-2xl p-3 border bg-blue-50 border-blue-200 shadow-sm">
+                                                                <div className="rounded-2xl p-3 border bg-white border-blue-200 shadow-sm">
                                                                     <p className="text-[10px] font-black text-blue-700 uppercase">📅 Current Month Due</p>
-                                                                    <p className="text-base font-black text-blue-900 mt-0.5">{fmt(currentDue)}</p>
+                                                                    <p className="text-sm font-black text-blue-900 mt-0.5">{fmt(currentDue)}</p>
                                                                 </div>
-                                                                <div className={`rounded-2xl p-3 border shadow-sm ${totalUnpaid > 0 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                                                <div className={`rounded-2xl p-3 border shadow-sm ${totalUnpaid > 0 ? 'bg-white border-rose-200' : 'bg-white border-emerald-200'}`}>
                                                                     <p className={`text-[10px] font-black uppercase ${totalUnpaid > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
                                                                         🏦 Final Owed Balance
                                                                     </p>
-                                                                    <p className={`text-base font-black mt-0.5 ${totalUnpaid > 0 ? 'text-rose-900' : 'text-emerald-900'}`}>
+                                                                    <p className={`text-sm font-black mt-0.5 ${totalUnpaid > 0 ? 'text-rose-900' : 'text-emerald-900'}`}>
                                                                         {fmt(totalUnpaid)}
                                                                     </p>
                                                                 </div>
@@ -1489,36 +1609,39 @@ export default function TenantsPage() {
 
                                                             {/* Monthly Breakdown Table */}
                                                             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-                                                                <table className="w-full" style={{ fontSize: 11 }}>
+                                                                <table className="w-full text-xs">
                                                                     <thead>
-                                                                        <tr style={{ background: '#eef2ff' }}>
-                                                                            <th className="px-3 py-2.5 text-left text-[10px] font-black text-indigo-700 uppercase">Billing Period</th>
-                                                                            <th className="px-3 py-2.5 text-right text-[10px] font-black text-indigo-700 uppercase">Rent Due</th>
-                                                                            <th className="px-3 py-2.5 text-right text-[10px] font-black text-emerald-700 uppercase">FIFO Paid</th>
-                                                                            <th className="px-3 py-2.5 text-right text-[10px] font-black text-rose-700 uppercase">Month Balance</th>
-                                                                            <th className="px-3 py-2.5 text-center text-[10px] font-black text-slate-600 uppercase">Status</th>
+                                                                        <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                                                            <th className="px-3.5 py-2.5 text-left">Billing Period</th>
+                                                                            <th className="px-3.5 py-2.5 text-right">Rent Due</th>
+                                                                            <th className="px-3.5 py-2.5 text-right">FIFO Paid</th>
+                                                                            <th className="px-3.5 py-2.5 text-right">Month Balance</th>
+                                                                            <th className="px-3.5 py-2.5 text-center">Status</th>
                                                                         </tr>
                                                                     </thead>
-                                                                    <tbody>
-                                                                        {months.map((m: any, mi: number) => {
+                                                                    <tbody className="divide-y divide-slate-100">
+                                                                        {months.length === 0 ? (
+                                                                            <tr>
+                                                                                <td colSpan={5} className="text-center py-4 text-slate-400">
+                                                                                    No historical bills found
+                                                                                </td>
+                                                                            </tr>
+                                                                        ) : months.map((m: any, mi: number) => {
                                                                             const isPaid = m.status === 'Paid';
                                                                             const isCurrent = m.month === currentMonth;
-                                                                            const rowBg = isPaid ? '#f0fdf4' : isCurrent ? '#eff6ff' : m.balance > 0 ? '#fff8f8' : '#fff';
                                                                             return (
-                                                                                <tr key={mi} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9' }}>
-                                                                                    <td className="px-3 py-2.5 font-bold whitespace-nowrap">
+                                                                                <tr key={mi} className={`hover:bg-slate-50/60 ${isPaid ? 'bg-emerald-50/30' : isCurrent ? 'bg-blue-50/30' : ''}`}>
+                                                                                    <td className="px-3.5 py-2.5 font-bold text-slate-800">
                                                                                         {new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                                                                                        {m.isVacation && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 font-bold">🏖️ 50%</span>}
-                                                                                        {isCurrent && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 font-bold">CURRENT</span>}
+                                                                                        {m.isVacation && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-bold">🏖️ 50%</span>}
+                                                                                        {isCurrent && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">CURRENT</span>}
                                                                                     </td>
-                                                                                    <td className="px-3 py-2.5 text-right font-semibold">{fmt(m.rent)}</td>
-                                                                                    <td className="px-3 py-2.5 text-right font-black" style={{ color: m.paid > 0 ? '#059669' : '#94a3b8' }}>
-                                                                                        {fmt(m.paid)}
-                                                                                    </td>
-                                                                                    <td className="px-3 py-2.5 text-right font-black" style={{ color: m.balance > 0 ? '#dc2626' : '#059669' }}>
+                                                                                    <td className="px-3.5 py-2.5 text-right font-semibold text-slate-700">{fmt(m.rent)}</td>
+                                                                                    <td className="px-3.5 py-2.5 text-right font-black text-emerald-600">{fmt(m.paid)}</td>
+                                                                                    <td className={`px-3.5 py-2.5 text-right font-black ${m.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                                                                                         {m.balance > 0 ? fmt(m.balance) : '✓ Clear'}
                                                                                     </td>
-                                                                                    <td className="px-3 py-2.5 text-center">
+                                                                                    <td className="px-3.5 py-2.5 text-center">
                                                                                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black border ${
                                                                                             isPaid ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
                                                                                             m.status === 'Partial' ? 'bg-amber-50 text-amber-700 border-amber-200' :
@@ -1546,20 +1669,13 @@ export default function TenantsPage() {
                     </table>
                 </div>
 
-                {/* ── Ultra Pagination Deck ── */}
+                {/* ── Pagination Deck ── */}
                 {filtered.length > 0 && (
-                    <div className="px-5 py-4 bg-slate-50 border-t border-slate-200/90 flex items-center justify-between flex-wrap gap-4">
-                        <div className="flex items-center gap-4">
-                            <p className="text-xs text-slate-500 font-medium">
-                                Showing <span className="font-bold text-slate-800">{Math.min((page - 1) * pageSize + 1, filtered.length)}</span>–
-                                <span className="font-bold text-slate-800">{Math.min(page * pageSize, filtered.length)}</span> of{' '}
-                                <span className="font-black text-indigo-600">{filtered.length}</span> tenants
-                            </p>
-                            <div className="hidden sm:flex gap-4 text-xs font-bold">
-                                <span className="text-emerald-700">Active: {activeTenants.length}</span>
-                                <span className="text-rose-600">Arrears: {withArrearsTenants.length}</span>
-                                <span className="text-amber-800">Owed: {fmt(totalArrears)}</span>
-                            </div>
+                    <div className="p-4 bg-slate-50/80 border-t border-slate-200/90 flex items-center justify-between flex-wrap gap-3">
+                        <div className="text-xs text-slate-500 font-medium">
+                            Showing <span className="font-black text-slate-800">{(page - 1) * pageSize + 1}</span> to{' '}
+                            <span className="font-black text-slate-800">{Math.min(page * pageSize, filtered.length)}</span> of{' '}
+                            <span className="font-black text-slate-800">{filtered.length}</span> tenants
                         </div>
 
                         <div className="flex items-center gap-1.5">
@@ -1571,29 +1687,9 @@ export default function TenantsPage() {
                                 <FiChevronLeft size={14} />
                             </button>
 
-                            {Array.from({ length: totalPages }, (_, i) => i + 1)
-                                .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-                                .reduce<(number | '...')[]>((acc, p, i, arr) => {
-                                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push('...');
-                                    acc.push(p);
-                                    return acc;
-                                }, [])
-                                .map((p, i) => p === '...'
-                                    ? <span key={`dot-${i}`} className="px-2 text-slate-400 text-xs">…</span>
-                                    : (
-                                        <button
-                                            key={p}
-                                            onClick={() => setPage(p as number)}
-                                            className={`min-w-[32px] h-8 rounded-xl text-xs font-black transition-all ${
-                                                page === p
-                                                    ? 'bg-indigo-600 text-white shadow-md'
-                                                    : 'border border-slate-200 text-slate-600 hover:bg-slate-100'
-                                            }`}
-                                        >
-                                            {p}
-                                        </button>
-                                    )
-                                )}
+                            <span className="px-3 py-1 text-xs font-black text-slate-700">
+                                Page {page} of {totalPages}
+                            </span>
 
                             <button
                                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
@@ -1607,15 +1703,603 @@ export default function TenantsPage() {
                 )}
             </div>
 
-            {/* ── Tenant Dossier & Statement Modal (NEW FEATURE) ── */}
+            {/* ══════════════════════════════════════════════════════════════════════
+                10. FLOATING BULK SELECTION DOCK (WHEN ROWS ARE SELECTED)
+            ══════════════════════════════════════════════════════════════════════ */}
+            {selectedIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center gap-4 animate-fadeIn">
+                    <span className="text-xs font-black text-indigo-300">
+                        {selectedIds.size} tenant{selectedIds.size > 1 ? 's' : ''} selected
+                    </span>
+
+                    <div className="h-4 w-px bg-slate-700" />
+
+                    <button
+                        onClick={() => {
+                            const subset = tenants.filter(t => selectedIds.has(t.tenant_id));
+                            handleExportExcel(subset);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold transition border border-slate-700"
+                    >
+                        <FiDownload size={13} /> Export Selected
+                    </button>
+
+                    <button
+                        onClick={() => setSelectedIds(new Set())}
+                        className="text-xs text-slate-400 hover:text-white transition font-medium"
+                    >
+                        Clear Selection
+                    </button>
+                </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                11. SUPER ULTRA ADD / EDIT TENANT MODAL (WORLD-CLASS GLASSMORPHIC DIALOG)
+            ══════════════════════════════════════════════════════════════════════ */}
+            {showModal && (
+                <div
+                    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-md p-4 animate-fadeIn"
+                    onClick={() => setShowModal(false)}
+                >
+                    <div
+                        className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col font-sans"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Modal Header */}
+                        <div
+                            className="px-6 py-5 flex items-center justify-between text-white relative overflow-hidden"
+                            style={{
+                                background: editItem
+                                    ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
+                                    : 'linear-gradient(135deg, #059669 0%, #0d9488 100%)'
+                            }}
+                        >
+                            <div className="absolute right-0 top-0 w-36 h-36 rounded-full -translate-y-12 translate-x-12 opacity-15 bg-white pointer-events-none" />
+                            <div className="relative z-10">
+                                <h2 className="text-lg sm:text-xl font-black flex items-center gap-2">
+                                    {editItem ? '✏️ Update Tenant Record' : '🆕 Register New Tenant'}
+                                </h2>
+                                <p className="text-white/80 text-xs mt-0.5 font-medium">
+                                    {editItem ? 'Edit tenant properties, room assignments, and move-in ledger' : 'Complete details to register lease and initialize auto-billing'}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowModal(false)}
+                                className="p-2 rounded-xl bg-white/20 hover:bg-white/30 text-white transition relative z-10"
+                            >
+                                <FiX size={18} />
+                            </button>
+                        </div>
+
+                        {/* Modal Step Navigation Bar */}
+                        <div className="flex border-b border-slate-200 bg-slate-50/80 px-6 py-2.5 gap-2 overflow-x-auto text-xs font-black">
+                            {[
+                                { id: 'identity', label: '1. Identity & Contact', icon: '👤' },
+                                { id: 'units', label: '2. Units & Rent', icon: '🏠' },
+                                { id: 'billing', label: '3. Billing & Arrears', icon: '📅' },
+                                { id: 'agreement', label: '4. Agreement & Notes', icon: '📋' },
+                            ].map(step => (
+                                <button
+                                    key={step.id}
+                                    type="button"
+                                    onClick={() => setModalStep(step.id as any)}
+                                    className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${
+                                        modalStep === step.id
+                                            ? 'bg-white shadow text-indigo-700 border border-slate-200 font-extrabold'
+                                            : 'text-slate-500 hover:text-slate-800'
+                                    }`}
+                                >
+                                    <span>{step.icon}</span>
+                                    <span>{step.label}</span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 space-y-4 overflow-y-auto max-h-[65vh]">
+
+                            {/* Step 1: Personal Identity */}
+                            {modalStep === 'identity' && (
+                                <div className="space-y-3.5">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Full Legal Name *</label>
+                                        <input
+                                            value={form.tenant_name}
+                                            onChange={e => setForm({ ...form, tenant_name: e.target.value })}
+                                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                            placeholder="e.g. John Kamau Mwangi"
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Mobile Phone *</label>
+                                            <input
+                                                value={form.phone}
+                                                onChange={e => {
+                                                    const phone = e.target.value;
+                                                    const autoPin = derivePinFromPhone(phone);
+                                                    setForm(prev => ({
+                                                        ...prev,
+                                                        phone,
+                                                        password_hash: !editItem && (prev.password_hash === '' || prev.password_hash === derivePinFromPhone(prev.phone))
+                                                            ? autoPin
+                                                            : prev.password_hash,
+                                                    }));
+                                                }}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="07XXXXXXXX"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">National ID / Passport</label>
+                                            <input
+                                                value={form.id_number}
+                                                onChange={e => setForm({ ...form, id_number: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="National ID Number"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">
+                                                🔐 Mobile App PIN {editItem ? '(blank = keep current)' : '*'}
+                                            </label>
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    value={form.password_hash}
+                                                    onChange={e => setForm({ ...form, password_hash: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                                                    className="w-full px-3.5 py-2.5 pr-20 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-mono font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                    placeholder={editItem ? 'Keep current PIN' : 'Auto 6 digits'}
+                                                    maxLength={6}
+                                                    inputMode="numeric"
+                                                />
+                                                {!editItem && form.phone && (
+                                                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                                                        ⚡ AUTO PIN
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 mt-1">
+                                                Auto-derived from last 6 digits of phone for tenant mobile app sign-in.
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Email Address (Optional)</label>
+                                            <input
+                                                value={form.email}
+                                                onChange={e => setForm({ ...form, email: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="tenant@domain.com"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 2: Property & Units Allocation */}
+                            {modalStep === 'units' && (
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Property / Location *</label>
+                                            <select
+                                                value={form.location_id}
+                                                onChange={e => setForm({ ...form, location_id: parseInt(e.target.value), unit_id: 0 })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition cursor-pointer"
+                                            >
+                                                <option value={0}>Select property…</option>
+                                                {locations.map(l => (
+                                                    <option key={l.location_id} value={l.location_id}>{l.location_name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Unit / Room *</label>
+                                            <select
+                                                value={form.unit_id}
+                                                onChange={e => {
+                                                    const uid = parseInt(e.target.value);
+                                                    const unit = units.find(u => u.unit_id === uid);
+                                                    setForm({ ...form, unit_id: uid, monthly_rent: unit ? String(unit.monthly_rent) : form.monthly_rent });
+                                                }}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition cursor-pointer"
+                                            >
+                                                <option value={0}>Select primary unit…</option>
+                                                {availableUnits.map(u => (
+                                                    <option key={u.unit_id} value={u.unit_id}>
+                                                        {u.unit_name} — {fmt(u.monthly_rent || 0)}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Room Rent (KES) *</label>
+                                            <input
+                                                type="number"
+                                                value={form.monthly_rent}
+                                                onChange={e => setForm({ ...form, monthly_rent: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-black text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="0"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Security Deposit (KES)</label>
+                                            <input
+                                                type="number"
+                                                value={form.deposit_paid}
+                                                onChange={e => setForm({ ...form, deposit_paid: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-black text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Multi-Room Management Deck */}
+                                    <div className="rounded-2xl border-2 border-violet-200 overflow-hidden bg-white shadow-sm">
+                                        <div className="px-4 py-2.5 bg-violet-50/80 border-b border-violet-200/80 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <FiLayers size={14} className="text-violet-600" />
+                                                <span className="text-xs font-black text-violet-900 uppercase tracking-wider">
+                                                    🏢 Additional Rooms & Units
+                                                </span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAdditionalUnits(prev => [...prev, { unit_id: 0, rent: '' }])}
+                                                className="px-3 py-1 rounded-xl text-xs font-black text-white bg-violet-600 hover:bg-violet-700 transition flex items-center gap-1 shadow-sm"
+                                            >
+                                                <FiPlus size={12} /> Add Room
+                                            </button>
+                                        </div>
+
+                                        {additionalUnits.length > 0 ? (
+                                            <div className="p-4 space-y-2.5">
+                                                {additionalUnits.map((au, idx) => (
+                                                    <div key={idx} className="flex items-center gap-3 p-3 rounded-2xl bg-violet-50/50 border border-violet-200/80">
+                                                        <span className="w-7 h-7 rounded-xl bg-violet-600 text-white font-black text-xs flex items-center justify-center flex-shrink-0">
+                                                            {idx + 2}
+                                                        </span>
+                                                        <div className="flex-1 grid grid-cols-2 gap-3">
+                                                            <div>
+                                                                <label className="text-[10px] font-bold text-violet-700 uppercase block mb-1">Room / Store</label>
+                                                                <select
+                                                                    value={au.unit_id}
+                                                                    onChange={e => {
+                                                                        const uid = parseInt(e.target.value);
+                                                                        const unit = units.find(u => u.unit_id === uid);
+                                                                        setAdditionalUnits(prev => prev.map((item, i) => i === idx
+                                                                            ? { ...item, unit_id: uid, rent: unit ? String(unit.monthly_rent) : item.rent }
+                                                                            : item
+                                                                        ));
+                                                                    }}
+                                                                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                >
+                                                                    <option value={0}>Select unit…</option>
+                                                                    {availableForAdditional(idx).map(u => (
+                                                                        <option key={u.unit_id} value={u.unit_id}>
+                                                                            {u.unit_name} — {fmt(u.monthly_rent || 0)}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                            <div>
+                                                                <label className="text-[10px] font-bold text-violet-700 uppercase block mb-1">Room Rent</label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={au.rent}
+                                                                    onChange={e => {
+                                                                        setAdditionalUnits(prev => prev.map((item, i) => i === idx
+                                                                            ? { ...item, rent: e.target.value }
+                                                                            : item
+                                                                        ));
+                                                                    }}
+                                                                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                    placeholder="Rent amount"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setAdditionalUnits(prev => prev.filter((_, i) => i !== idx))}
+                                                            className="p-2 rounded-xl text-rose-500 hover:bg-rose-50 border border-rose-200 transition"
+                                                        >
+                                                            <FiTrash2 size={13} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+
+                                                {/* Total Combined Rent Banner */}
+                                                <div className="p-3.5 rounded-2xl bg-violet-100/60 border border-violet-200 flex items-center justify-between">
+                                                    <div>
+                                                        <p className="text-xs font-black text-violet-900">Total Monthly Portfolio Rent</p>
+                                                        <p className="text-[10px] text-violet-600 font-bold">{totalRoomCount} rooms combined</p>
+                                                    </div>
+                                                    <p className="text-xl font-black text-violet-900 font-sans">{fmt(totalCombinedRent)}</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="p-3 text-center text-xs text-slate-400 font-medium">
+                                                Single room tenancy. Click "Add Room" if tenant occupies multiple rooms or stores.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 3: Billing & Arrears Anchor */}
+                            {modalStep === 'billing' && (
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Move-In Date *</label>
+                                            <input
+                                                type="date"
+                                                value={form.move_in_date}
+                                                onChange={e => setForm({ ...form, move_in_date: e.target.value, billing_start_month: e.target.value.slice(0, 7) })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">⚡ Billing Start Month *</label>
+                                            <input
+                                                type="month"
+                                                value={form.billing_start_month}
+                                                onChange={e => setForm({ ...form, billing_start_month: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {form.move_in_date && form.move_in_date < today && (
+                                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-[11px] text-amber-900 font-bold">
+                                            ⚡ Backdated Move-In: ARMS will auto-generate all monthly bills from {form.billing_start_month} to now!
+                                        </div>
+                                    )}
+
+                                    {/* Vacation Toggle */}
+                                    <div className="p-4 rounded-2xl border border-violet-200 bg-violet-50/40 flex items-center justify-between">
+                                        <div>
+                                            <p className="text-xs font-black text-violet-900">🏖️ Student Vacation Mode</p>
+                                            <p className="text-[10px] text-violet-700">50% discount during university vacation months (May–August)</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setForm({ ...form, is_on_vacation: !form.is_on_vacation })}
+                                            className={`w-12 h-6 rounded-full transition-all flex items-center px-0.5 ${
+                                                form.is_on_vacation ? 'bg-violet-600 justify-end' : 'bg-slate-300 justify-start'
+                                            }`}
+                                        >
+                                            <div className="w-5 h-5 rounded-full bg-white shadow-sm flex items-center justify-center text-[10px]">
+                                                {form.is_on_vacation ? '🏖️' : '🏠'}
+                                            </div>
+                                        </button>
+                                    </div>
+
+                                    {/* Initial Move-In Payment & Real-Time Simulation */}
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-700 mb-1 block">
+                                            💰 {editItem ? 'Move-In Payment' : 'Initial Move-In Payment (KES)'}
+                                        </label>
+                                        <input
+                                            type="number"
+                                            value={form.initial_payment}
+                                            onChange={e => setForm({ ...form, initial_payment: e.target.value })}
+                                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-black text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                            placeholder="Amount paid at registration (optional)"
+                                        />
+                                    </div>
+
+                                    {/* Interactive Live Simulation Preview */}
+                                    {!editItem && form.monthly_rent && form.move_in_date && (() => {
+                                        const baseRent = totalCombinedRent;
+                                        const moveInMonth = form.move_in_date.slice(0, 7);
+                                        const curMonth = new Date().toISOString().slice(0, 7);
+                                        if (!baseRent || moveInMonth > curMonth) return null;
+
+                                        const months: { month: string; rent: number; isVac: boolean; isCurrent: boolean }[] = [];
+                                        let c = new Date(moveInMonth + '-01');
+                                        const end = new Date(curMonth + '-01');
+                                        while (c <= end) {
+                                            const m = c.toISOString().slice(0, 7);
+                                            const mm = m.slice(5, 7);
+                                            const isVac = form.is_on_vacation && ['05','06','07','08'].includes(mm);
+                                            months.push({ month: m, rent: isVac ? Math.round(baseRent * 0.5) : baseRent, isVac, isCurrent: m === curMonth });
+                                            c.setMonth(c.getMonth() + 1);
+                                        }
+
+                                        const initPay = parseFloat(form.initial_payment || '0') || 0;
+                                        let remaining = initPay;
+                                        const allocated = months.map(m => {
+                                            const pay = Math.min(remaining, m.rent);
+                                            remaining = Math.max(0, remaining - pay);
+                                            return { ...m, paid: pay, balance: m.rent - pay };
+                                        });
+
+                                        const pastArrears = allocated.filter(m => !m.isCurrent).reduce((s, m) => s + m.balance, 0);
+                                        const currentDue = allocated.filter(m => m.isCurrent).reduce((s, m) => s + m.balance, 0);
+                                        const finalArrears = pastArrears + currentDue;
+                                        const credit = Math.max(0, remaining);
+
+                                        return (
+                                            <div className="p-3.5 rounded-2xl bg-white border border-indigo-200 shadow-sm space-y-2">
+                                                <div className="flex items-center justify-between text-xs font-black text-slate-800">
+                                                    <span>📊 Live Allocation Simulation</span>
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${finalArrears > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                        Expected Balance: {fmt(finalArrears)}
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                                                    <div className="p-2 bg-slate-50 rounded-xl">
+                                                        <p className="text-[9px] font-bold text-slate-400">Total Billed</p>
+                                                        <p className="font-black text-slate-800">{fmt(months.reduce((s, m) => s + m.rent, 0))}</p>
+                                                    </div>
+                                                    <div className="p-2 bg-slate-50 rounded-xl">
+                                                        <p className="text-[9px] font-bold text-slate-400">Paid Now</p>
+                                                        <p className="font-black text-emerald-600">{fmt(initPay)}</p>
+                                                    </div>
+                                                    <div className="p-2 bg-slate-50 rounded-xl">
+                                                        <p className="text-[9px] font-bold text-slate-400">Advance Credit</p>
+                                                        <p className="font-black text-indigo-600">{fmt(credit)}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            )}
+
+                            {/* Step 4: Digital Agreement & Emergency */}
+                            {modalStep === 'agreement' && (
+                                <div className="space-y-4">
+                                    {!editItem && (
+                                        <div className="p-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-xs font-black text-indigo-900">📋 Issue Digital Tenancy Agreement</p>
+                                                    <p className="text-[10px] text-indigo-700">Tenant signs digitally inside the ARMS Mobile App</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAgreementForm(f => ({ ...f, issue: !f.issue }))}
+                                                    className={`w-12 h-6 rounded-full transition-all flex items-center px-0.5 ${
+                                                        agreementForm.issue ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                                                    }`}
+                                                >
+                                                    <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                                                </button>
+                                            </div>
+
+                                            {agreementForm.issue && (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-indigo-800 mb-1 block">Lease Start</label>
+                                                        <input
+                                                            type="date"
+                                                            value={agreementForm.lease_start_date}
+                                                            onChange={e => setAgreementForm({ ...agreementForm, lease_start_date: e.target.value })}
+                                                            className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-bold"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-indigo-800 mb-1 block">Lease End (Optional)</label>
+                                                        <input
+                                                            type="date"
+                                                            value={agreementForm.lease_end_date}
+                                                            onChange={e => setAgreementForm({ ...agreementForm, lease_end_date: e.target.value })}
+                                                            className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-bold"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Emergency Contact Name</label>
+                                            <input
+                                                value={form.emergency_contact}
+                                                onChange={e => setForm({ ...form, emergency_contact: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="Next of kin or guardian"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Emergency Phone</label>
+                                            <input
+                                                value={form.emergency_phone}
+                                                onChange={e => setForm({ ...form, emergency_phone: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                placeholder="07XXXXXXXX"
+                                            />
+                                        </div>
+
+                                        <div className="sm:col-span-2">
+                                            <label className="text-xs font-bold text-slate-700 mb-1 block">Landlord Memo / Notes</label>
+                                            <textarea
+                                                value={form.notes}
+                                                onChange={e => setForm({ ...form, notes: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500 transition"
+                                                rows={2}
+                                                placeholder="Special remarks, vehicle registration, pet permissions…"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+                            <button
+                                onClick={() => setShowModal(false)}
+                                className="px-4 py-2.5 rounded-2xl border border-slate-200 text-xs font-black text-slate-600 hover:bg-slate-100 transition"
+                            >
+                                Cancel
+                            </button>
+
+                            <div className="flex items-center gap-2">
+                                {modalStep !== 'agreement' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const steps: Array<'identity' | 'units' | 'billing' | 'agreement'> = ['identity', 'units', 'billing', 'agreement'];
+                                            const idx = steps.indexOf(modalStep);
+                                            setModalStep(steps[idx + 1]);
+                                        }}
+                                        className="px-4 py-2.5 rounded-2xl bg-slate-200 hover:bg-slate-300 text-xs font-black text-slate-700 transition"
+                                    >
+                                        Next Step →
+                                    </button>
+                                )}
+
+                                <button
+                                    onClick={handleSave}
+                                    disabled={saving || issuingAgreement}
+                                    className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-xs sm:text-sm font-black text-white transition shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+                                    style={{
+                                        background: editItem
+                                            ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
+                                            : 'linear-gradient(135deg, #059669 0%, #0d9488 100%)',
+                                    }}
+                                >
+                                    <FiSave size={15} />
+                                    {saving ? 'Saving Record…' : editItem ? '💾 Update Tenant' : '✅ Register Tenant'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                12. TENANT DOSSIER & STATEMENT MODAL
+            ══════════════════════════════════════════════════════════════════════ */}
             {dossierTenant && (
-                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fadeIn" onClick={() => setDossierTenant(null)}>
-                    <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div
+                    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-md p-4 animate-fadeIn"
+                    onClick={() => setDossierTenant(null)}
+                >
+                    <div
+                        className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col font-sans"
+                        onClick={e => e.stopPropagation()}
+                    >
                         {/* Header */}
-                        <div className="px-6 py-5 flex items-center justify-between text-white relative overflow-hidden"
-                            style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}>
+                        <div
+                            className="px-6 py-5 flex items-center justify-between text-white relative overflow-hidden"
+                            style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
+                        >
                             <div className="flex items-center gap-3 relative z-10">
-                                <TenantAvatar name={dossierTenant.tenant_name} status={dossierTenant.status} size={48} />
+                                <TenantAvatar name={dossierTenant.tenant_name} status={dossierTenant.status} size={46} />
                                 <div>
                                     <h2 className="text-lg font-black tracking-tight">{dossierTenant.tenant_name}</h2>
                                     <p className="text-xs text-white/80">🏠 {dossierTenant.arms_units?.unit_name} · 📍 {dossierTenant.arms_locations?.location_name}</p>
@@ -1721,490 +2405,6 @@ export default function TenantsPage() {
                                     <FiPrinter size={14} /> Print
                                 </button>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Ultra Add / Edit Tenant Modal (Massive Upgrade) ── */}
-            {showModal && (
-                <div className="modal-overlay" onClick={() => setShowModal(false)}>
-                    <div
-                        className="modal-content overflow-hidden rounded-3xl shadow-2xl border border-slate-100 animate-fadeIn"
-                        style={{ maxWidth: 700 }}
-                        onClick={e => e.stopPropagation()}
-                    >
-                        {/* Modal Header */}
-                        <div
-                            className="px-6 py-5 flex items-center justify-between relative overflow-hidden text-white"
-                            style={{
-                                background: editItem
-                                    ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
-                                    : 'linear-gradient(135deg, #059669 0%, #0d9488 100%)'
-                            }}
-                        >
-                            <div className="absolute right-0 top-0 w-36 h-36 rounded-full -translate-y-12 translate-x-12 opacity-15 bg-white pointer-events-none" />
-                            <div className="relative z-10">
-                                <h2 className="text-lg sm:text-xl font-black flex items-center gap-2">
-                                    {editItem ? '✏️ Update Tenant Record' : '🆕 Register New Tenant'}
-                                </h2>
-                                <p className="text-white/80 text-xs mt-0.5 font-medium">
-                                    {editItem ? 'Edit tenant properties, room assignments, and move-in ledger' : 'Complete details to register lease and initialize auto-billing'}
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => setShowModal(false)}
-                                className="p-2 rounded-xl bg-white/20 hover:bg-white/30 text-white transition relative z-10"
-                            >
-                                <FiX size={18} />
-                            </button>
-                        </div>
-
-                        {/* Modal Body */}
-                        <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto font-sans">
-
-                            {/* Section 1: Tenant Identity */}
-                            <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-200/80 space-y-3">
-                                <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                                    <span>👤</span> Personal Identity
-                                </p>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <div className="sm:col-span-2">
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Full Legal Name *</label>
-                                        <input
-                                            id="t-name"
-                                            value={form.tenant_name}
-                                            onChange={e => setForm({ ...form, tenant_name: e.target.value })}
-                                            className="input-field font-semibold"
-                                            placeholder="e.g. John Kamau Mwangi"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Mobile Phone *</label>
-                                        <input
-                                            id="t-phone"
-                                            value={form.phone}
-                                            onChange={e => {
-                                                const phone = e.target.value;
-                                                const autoPin = derivePinFromPhone(phone);
-                                                setForm(prev => ({
-                                                    ...prev,
-                                                    phone,
-                                                    password_hash: !editItem && (prev.password_hash === '' || prev.password_hash === derivePinFromPhone(prev.phone))
-                                                        ? autoPin
-                                                        : prev.password_hash,
-                                                }));
-                                            }}
-                                            className="input-field font-semibold"
-                                            placeholder="07XXXXXXXX"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">National ID / Passport</label>
-                                        <input
-                                            id="t-id"
-                                            value={form.id_number}
-                                            onChange={e => setForm({ ...form, id_number: e.target.value })}
-                                            className="input-field font-semibold"
-                                            placeholder="National ID Number"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">
-                                            🔐 Mobile App PIN {editItem ? '(blank = keep current)' : '*'}
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                id="t-pin"
-                                                type="text"
-                                                value={form.password_hash}
-                                                onChange={e => setForm({ ...form, password_hash: e.target.value.replace(/\D/g, '').slice(0, 6) })}
-                                                className="input-field pr-20 font-mono font-bold"
-                                                placeholder={editItem ? 'Keep current PIN' : 'Auto 6 digits'}
-                                                maxLength={6}
-                                                inputMode="numeric"
-                                            />
-                                            {!editItem && form.phone && (
-                                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
-                                                    ⚡ AUTO PIN
-                                                </span>
-                                            )}
-                                        </div>
-                                        <p className="text-[10px] text-slate-500 mt-1">
-                                            Auto-derived from last 6 digits of phone for seamless mobile app sign-in.
-                                        </p>
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Email Address (Optional)</label>
-                                        <input
-                                            id="t-email"
-                                            value={form.email}
-                                            onChange={e => setForm({ ...form, email: e.target.value })}
-                                            className="input-field"
-                                            placeholder="tenant@domain.com"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 2: Property & Unit Allocation */}
-                            <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-200/80 space-y-3">
-                                <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                                    <span>🏠</span> Property & Primary Room
-                                </p>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Property / Location *</label>
-                                        <select
-                                            id="t-location"
-                                            value={form.location_id}
-                                            onChange={e => setForm({ ...form, location_id: parseInt(e.target.value), unit_id: 0 })}
-                                            className="select-field font-semibold"
-                                        >
-                                            <option value={0}>Select property…</option>
-                                            {locations.map(l => (
-                                                <option key={l.location_id} value={l.location_id}>{l.location_name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Unit / Room *</label>
-                                        <select
-                                            id="t-unit"
-                                            value={form.unit_id}
-                                            onChange={e => {
-                                                const uid = parseInt(e.target.value);
-                                                const unit = units.find(u => u.unit_id === uid);
-                                                setForm({ ...form, unit_id: uid, monthly_rent: unit ? String(unit.monthly_rent) : form.monthly_rent });
-                                            }}
-                                            className="select-field font-semibold"
-                                        >
-                                            <option value={0}>Select primary unit…</option>
-                                            {availableUnits.map(u => (
-                                                <option key={u.unit_id} value={u.unit_id}>
-                                                    {u.unit_name} — {fmt(u.monthly_rent || 0)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Primary Room Rent (KES) *</label>
-                                        <input
-                                            id="t-rent"
-                                            type="number"
-                                            value={form.monthly_rent}
-                                            onChange={e => setForm({ ...form, monthly_rent: e.target.value })}
-                                            className="input-field font-black"
-                                            placeholder="0"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Security Deposit (KES)</label>
-                                        <input
-                                            id="t-deposit"
-                                            type="number"
-                                            value={form.deposit_paid}
-                                            onChange={e => setForm({ ...form, deposit_paid: e.target.value })}
-                                            className="input-field font-black"
-                                            placeholder="0"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 3: Multi-Room Management */}
-                            <div className="rounded-2xl border-2 border-violet-200 overflow-hidden bg-white shadow-sm">
-                                <div className="px-4 py-2.5 bg-violet-50/80 border-b border-violet-200/80 flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <FiLayers size={14} className="text-violet-600" />
-                                        <span className="text-xs font-black text-violet-900 uppercase tracking-wider">
-                                            🏢 Additional Rooms & Units
-                                        </span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setAdditionalUnits(prev => [...prev, { unit_id: 0, rent: '' }])}
-                                        className="px-3 py-1 rounded-xl text-xs font-black text-white bg-violet-600 hover:bg-violet-700 transition flex items-center gap-1 shadow-sm"
-                                    >
-                                        <FiPlus size={12} /> Add Room
-                                    </button>
-                                </div>
-
-                                {additionalUnits.length > 0 ? (
-                                    <div className="p-4 space-y-2.5">
-                                        {additionalUnits.map((au, idx) => (
-                                            <div key={idx} className="flex items-center gap-3 p-3 rounded-2xl bg-violet-50/50 border border-violet-200/80">
-                                                <span className="w-7 h-7 rounded-xl bg-violet-600 text-white font-black text-xs flex items-center justify-center flex-shrink-0">
-                                                    {idx + 2}
-                                                </span>
-                                                <div className="flex-1 grid grid-cols-2 gap-3">
-                                                    <div>
-                                                        <label className="text-[10px] font-bold text-violet-700 uppercase block mb-1">Room / Store</label>
-                                                        <select
-                                                            value={au.unit_id}
-                                                            onChange={e => {
-                                                                const uid = parseInt(e.target.value);
-                                                                const unit = units.find(u => u.unit_id === uid);
-                                                                setAdditionalUnits(prev => prev.map((item, i) => i === idx
-                                                                    ? { ...item, unit_id: uid, rent: unit ? String(unit.monthly_rent) : item.rent }
-                                                                    : item
-                                                                ));
-                                                            }}
-                                                            className="select-field text-xs font-bold"
-                                                        >
-                                                            <option value={0}>Select unit…</option>
-                                                            {availableForAdditional(idx).map(u => (
-                                                                <option key={u.unit_id} value={u.unit_id}>
-                                                                    {u.unit_name} — {fmt(u.monthly_rent || 0)}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="text-[10px] font-bold text-violet-700 uppercase block mb-1">Room Rent</label>
-                                                        <input
-                                                            type="number"
-                                                            value={au.rent}
-                                                            onChange={e => {
-                                                                setAdditionalUnits(prev => prev.map((item, i) => i === idx
-                                                                    ? { ...item, rent: e.target.value }
-                                                                    : item
-                                                                ));
-                                                            }}
-                                                            className="input-field text-xs font-bold"
-                                                            placeholder="Rent amount"
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setAdditionalUnits(prev => prev.filter((_, i) => i !== idx))}
-                                                    className="p-2 rounded-xl text-rose-500 hover:bg-rose-50 border border-rose-200 transition"
-                                                >
-                                                    <FiTrash2 size={13} />
-                                                </button>
-                                            </div>
-                                        ))}
-
-                                        {/* Total Combined Rent Banner */}
-                                        <div className="p-3.5 rounded-2xl bg-violet-100/60 border border-violet-200 flex items-center justify-between">
-                                            <div>
-                                                <p className="text-xs font-black text-violet-900">Total Monthly Portfolio Rent</p>
-                                                <p className="text-[10px] text-violet-600 font-bold">{totalRoomCount} rooms combined</p>
-                                            </div>
-                                            <p className="text-xl font-black text-violet-900 font-sans">{fmt(totalCombinedRent)}</p>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="p-3 text-center text-xs text-slate-400 font-medium">
-                                        Single room tenancy. Click "Add Room" if tenant occupies multiple rooms or stores.
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Section 4: Move-In Dates & Billing */}
-                            <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-200 space-y-3">
-                                <p className="text-[11px] font-black text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
-                                    <span>📅</span> Move-In & Billing Start (Arrears Anchor)
-                                </p>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <div>
-                                        <label className="text-xs font-bold text-amber-900 mb-1 block">Move-In Date *</label>
-                                        <input
-                                            id="t-movein"
-                                            type="date"
-                                            value={form.move_in_date}
-                                            onChange={e => setForm({ ...form, move_in_date: e.target.value, billing_start_month: e.target.value.slice(0, 7) })}
-                                            className="input-field font-semibold"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-amber-900 mb-1 block">⚡ Billing Start Month *</label>
-                                        <input
-                                            id="t-billing"
-                                            type="month"
-                                            value={form.billing_start_month}
-                                            onChange={e => setForm({ ...form, billing_start_month: e.target.value })}
-                                            className="input-field font-semibold"
-                                        />
-                                    </div>
-                                </div>
-                                {form.move_in_date && form.move_in_date < today && (
-                                    <div className="p-2.5 rounded-xl bg-amber-100/70 border border-amber-300 text-[11px] text-amber-900 font-bold">
-                                        ⚡ Backdated Move-In: ARMS will auto-generate all monthly bills from {form.billing_start_month} to now!
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Section 5: Vacation & Initial Move-In Payment */}
-                            <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-200 space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-xs font-black text-orange-900">🏖️ Student Vacation Mode</p>
-                                        <p className="text-[10px] text-orange-700">50% discount during university vacation months (May–August)</p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setForm({ ...form, is_on_vacation: !form.is_on_vacation })}
-                                        className={`w-12 h-6 rounded-full transition-all flex items-center px-0.5 ${
-                                            form.is_on_vacation ? 'bg-orange-500 justify-end' : 'bg-slate-300 justify-start'
-                                        }`}
-                                    >
-                                        <div className="w-5 h-5 rounded-full bg-white shadow-sm flex items-center justify-center text-[10px]">
-                                            {form.is_on_vacation ? '🏖️' : '🏠'}
-                                        </div>
-                                    </button>
-                                </div>
-
-                                <div>
-                                    <label className="text-xs font-bold text-orange-900 mb-1 block">
-                                        💰 {editItem ? 'Move-In Payment' : 'Initial Move-In Payment (KES)'}
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={form.initial_payment}
-                                        onChange={e => setForm({ ...form, initial_payment: e.target.value })}
-                                        className="input-field font-black"
-                                        placeholder="Amount paid at registration (optional)"
-                                    />
-                                </div>
-
-                                {/* Live Interactive Simulation Preview */}
-                                {!editItem && form.monthly_rent && form.move_in_date && (() => {
-                                    const baseRent = totalCombinedRent;
-                                    const moveInMonth = form.move_in_date.slice(0, 7);
-                                    const curMonth = new Date().toISOString().slice(0, 7);
-                                    if (!baseRent || moveInMonth > curMonth) return null;
-
-                                    const months: { month: string; rent: number; isVac: boolean; isCurrent: boolean }[] = [];
-                                    let c = new Date(moveInMonth + '-01');
-                                    const end = new Date(curMonth + '-01');
-                                    while (c <= end) {
-                                        const m = c.toISOString().slice(0, 7);
-                                        const mm = m.slice(5, 7);
-                                        const isVac = form.is_on_vacation && ['05','06','07','08'].includes(mm);
-                                        months.push({ month: m, rent: isVac ? Math.round(baseRent * 0.5) : baseRent, isVac, isCurrent: m === curMonth });
-                                        c.setMonth(c.getMonth() + 1);
-                                    }
-
-                                    const initPay = parseFloat(form.initial_payment || '0') || 0;
-                                    let remaining = initPay;
-                                    const allocated = months.map(m => {
-                                        const pay = Math.min(remaining, m.rent);
-                                        remaining = Math.max(0, remaining - pay);
-                                        return { ...m, paid: pay, balance: m.rent - pay };
-                                    });
-
-                                    const pastArrears = allocated.filter(m => !m.isCurrent).reduce((s, m) => s + m.balance, 0);
-                                    const currentDue = allocated.filter(m => m.isCurrent).reduce((s, m) => s + m.balance, 0);
-                                    const finalArrears = pastArrears + currentDue;
-                                    const credit = Math.max(0, remaining);
-
-                                    return (
-                                        <div className="p-3 rounded-2xl bg-white border border-orange-200 space-y-2">
-                                            <div className="flex items-center justify-between text-xs font-black text-slate-800">
-                                                <span>📊 Live Allocation Simulation</span>
-                                                <span className={`px-2 py-0.5 rounded-full text-[10px] ${finalArrears > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                                    Balance: {fmt(finalArrears)}
-                                                </span>
-                                            </div>
-                                            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                                <div className="p-2 bg-slate-50 rounded-xl">
-                                                    <p className="text-[9px] font-bold text-slate-400">Total Billed</p>
-                                                    <p className="font-black text-slate-800">{fmt(months.reduce((s, m) => s + m.rent, 0))}</p>
-                                                </div>
-                                                <div className="p-2 bg-slate-50 rounded-xl">
-                                                    <p className="text-[9px] font-bold text-slate-400">Paid Now</p>
-                                                    <p className="font-black text-emerald-600">{fmt(initPay)}</p>
-                                                </div>
-                                                <div className="p-2 bg-slate-50 rounded-xl">
-                                                    <p className="text-[9px] font-bold text-slate-400">Advance Credit</p>
-                                                    <p className="font-black text-indigo-600">{fmt(credit)}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-                            </div>
-
-                            {/* Section 6: Emergency Contact & Notes */}
-                            <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-200/80 space-y-3">
-                                <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                                    <span>🆘</span> Emergency Contacts & Memo
-                                </p>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Emergency Contact Name</label>
-                                        <input
-                                            id="t-emg-contact"
-                                            value={form.emergency_contact}
-                                            onChange={e => setForm({ ...form, emergency_contact: e.target.value })}
-                                            className="input-field"
-                                            placeholder="Next of kin or guardian"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Emergency Phone</label>
-                                        <input
-                                            id="t-emg-phone"
-                                            value={form.emergency_phone}
-                                            onChange={e => setForm({ ...form, emergency_phone: e.target.value })}
-                                            className="input-field"
-                                            placeholder="07XXXXXXXX"
-                                        />
-                                    </div>
-
-                                    <div className="sm:col-span-2">
-                                        <label className="text-xs font-bold text-slate-700 mb-1 block">Landlord Notes</label>
-                                        <textarea
-                                            id="t-notes"
-                                            value={form.notes}
-                                            onChange={e => setForm({ ...form, notes: e.target.value })}
-                                            className="input-field"
-                                            rows={2}
-                                            placeholder="Special remarks, vehicle registration, pet permissions…"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Modal Footer */}
-                        <div className="p-5 border-t border-slate-200/80 bg-slate-50 flex items-center justify-between gap-3">
-                            <button
-                                onClick={() => setShowModal(false)}
-                                className="px-5 py-2.5 rounded-2xl border border-slate-200 text-xs font-black text-slate-600 hover:bg-slate-100 transition"
-                            >
-                                Cancel
-                            </button>
-
-                            <button
-                                onClick={handleSave}
-                                id="tenants-save-btn"
-                                disabled={saving || issuingAgreement}
-                                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-xs sm:text-sm font-black text-white transition shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-60"
-                                style={{
-                                    background: editItem
-                                        ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
-                                        : 'linear-gradient(135deg, #059669 0%, #0d9488 100%)',
-                                }}
-                            >
-                                <FiSave size={15} />
-                                {saving ? 'Saving Record…' : editItem ? '💾 Update Tenant Record' : '✅ Register Tenant & Catch-Up Bills'}
-                            </button>
                         </div>
                     </div>
                 </div>

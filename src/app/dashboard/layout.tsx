@@ -409,7 +409,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })();
 
     return (
-        <div className="flex min-h-screen relative" style={{ background: '#f0f2f5' }}>
+        <div className="flex min-h-screen relative w-full max-w-full overflow-x-hidden" style={{ background: '#f0f2f5' }}>
             <style>{`
                 .sidebar-scroll::-webkit-scrollbar { width: 4px; }
                 .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -701,7 +701,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </aside>
 
             {/* ─── MAIN ─── */}
-            <div className={`flex-1 flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[252px]'}`}>
+            <div className={`flex-1 min-w-0 max-w-full flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[252px]'}`}>
                 {/* Topbar */}
                 <header className="sticky top-0 z-40 px-6 py-3 flex items-center justify-between"
                     style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #e8edf5', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
@@ -773,7 +773,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </header>
 
                 {/* Page content */}
-                <main className="flex-1 p-6 overflow-y-auto">
+                <main className="flex-1 min-w-0 max-w-full p-4 sm:p-6 overflow-y-auto overflow-x-hidden">
                     {children}
                 </main>
             </div>
