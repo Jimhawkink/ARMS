@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import {
-    getTenants, addTenant, updateTenant, deactivateTenant, getUnits,
+    getTenants, addTenant, updateTenant, deactivateTenant, deleteTenantPermanently, getUnits,
     getLocations, calculateUnpaidRent, generateMonthlyBills, getMoveInPayment,
     updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits
 } from '@/lib/supabase';
@@ -715,6 +715,17 @@ export default function TenantsPage() {
             loadData(globalLocationId);
         } catch (err: any) {
             toast.error(err?.message || err?.error_description || 'Move-out failed');
+        }
+    };
+
+    const handleDeletePermanently = async (id: number, name: string) => {
+        if (!confirm(`⚠️ PERMANENTLY DELETE ${name}?\n\nThis will:\n• Remove them from the system entirely\n• Vacate all assigned rooms\n\nThis CANNOT be undone. Are you sure?`)) return;
+        try {
+            await deleteTenantPermanently(id);
+            toast.success(`${name} permanently deleted.`);
+            loadData(globalLocationId);
+        } catch (err: any) {
+            toast.error(err?.message || err?.error_description || 'Delete failed');
         }
     };
 
@@ -1564,6 +1575,17 @@ export default function TenantsPage() {
                                                             className="p-1.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition"
                                                         >
                                                             <FiUserX size={13} />
+                                                        </button>
+                                                    )}
+
+                                                    {/* Permanently Delete (only for Archived/Inactive) */}
+                                                    {t.status !== 'Active' && (
+                                                        <button
+                                                            onClick={() => handleDeletePermanently(t.tenant_id, t.tenant_name)}
+                                                            title="Permanently Delete Tenant"
+                                                            className="p-1.5 rounded-xl bg-rose-50 text-rose-500 border border-rose-200 hover:bg-rose-600 hover:text-white hover:border-rose-600 transition"
+                                                        >
+                                                            <FiTrash2 size={13} />
                                                         </button>
                                                     )}
                                                 </div>
