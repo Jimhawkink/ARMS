@@ -8,6 +8,8 @@ interface FireworksOverlayProps {
     durationMs?: number;
 }
 
+// Store onComplete in a ref so that changing callback reference never restarts the animation
+
 interface Particle {
     x: number;
     y: number;
@@ -44,6 +46,9 @@ const PALETTES = [
 export default function FireworksOverlay({ onComplete, durationMs = 9000 }: FireworksOverlayProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [mounted, setMounted] = useState(false);
+    // Keep onComplete in a ref so animation never restarts just because parent re-renders
+    const onCompleteRef = useRef(onComplete);
+    useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
 
     useEffect(() => {
         setMounted(true);
@@ -150,7 +155,7 @@ export default function FireworksOverlay({ onComplete, durationMs = 9000 }: Fire
         const finishTimer = setTimeout(() => {
             cancelAnimationFrame(animationFrameId);
             clearInterval(waveInterval);
-            onComplete?.();
+            onCompleteRef.current?.();
         }, durationMs);
 
         const render = () => {
@@ -244,7 +249,7 @@ export default function FireworksOverlay({ onComplete, durationMs = 9000 }: Fire
             clearTimeout(finishTimer);
             cancelAnimationFrame(animationFrameId);
         };
-    }, [mounted, durationMs, onComplete]);
+    }, [mounted, durationMs]);
 
     if (!mounted) return null;
 

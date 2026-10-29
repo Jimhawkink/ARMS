@@ -74,6 +74,9 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [loadingCallbacks, setLoadingCallbacks] = useState(false);
 
+    // Stable callback reference — prevents FireworksOverlay from restarting on re-renders
+    const handleFireworksComplete = useCallback(() => setShowFireworks(false), []);
+
     const selectedTenant = useMemo(() => {
         return tenants.find((t: any) => t.tenant_id === selectedTenantId) ?? null;
     }, [tenants, selectedTenantId]);
@@ -260,7 +263,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     if (showReceipt) {
         return (
             <>
-                {showFireworks && <FireworksOverlay onComplete={() => setShowFireworks(false)} />}
+                {showFireworks && <FireworksOverlay onComplete={handleFireworksComplete} />}
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
                     <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); setShowFireworks(false); onClose(); }} />
                 </div>
@@ -272,7 +275,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     return (
         <>
-            {showFireworks && <FireworksOverlay onComplete={() => setShowFireworks(false)} />}
+            {showFireworks && <FireworksOverlay onComplete={handleFireworksComplete} />}
             <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
             <div
                 className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
