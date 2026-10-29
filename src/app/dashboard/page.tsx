@@ -224,13 +224,13 @@ export default function DashboardPage() {
         try {
             const lid = locId ?? undefined;
             const [s, rp, ur, an, mg, apd, nr] = await Promise.all([
-                getDashboardStats(lid),
+                getDashboardStats(lid, true),
                 getRecentPayments(200, lid),
                 calculateUnpaidRent(lid),
                 get12MonthAnalytics(lid),
                 getCurrentMonthGrid(lid),
                 getArrearsPaymentsDetail(lid),
-                getNetRevenueSummary(lid)
+                getNetRevenueSummary(lid, true)
             ]);
             setStats(s);
             setRecentPayments(rp || []);
