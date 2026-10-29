@@ -569,14 +569,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <aside className={`${collapsed ? 'w-[68px]' : 'w-[252px]'} flex flex-col transition-all duration-300 ease-in-out fixed top-0 left-0 h-full z-50`}
                 style={{ background: '#ffffff', borderRight: '1px solid #e2e8f0' }}>
 
+                <style>{`
+                    .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+                    .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+                    .sidebar-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+                    .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+                `}</style>
+
                 {/* Logo + Licensed To */}
                 <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-4 py-4`}
                     style={{ borderBottom: '1px solid #f1f5f9' }}>
                     {!collapsed && (
                         <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0 relative"
                                 style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
-                                <FiHome size={16} className="text-white" />
+                                {/* Premium Rental Building SVG */}
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="3" y="8" width="18" height="14" rx="1.5" fill="rgba(255,255,255,0.25)" stroke="rgba(255,255,255,0.9)" strokeWidth="1.2"/>
+                                    <path d="M1.5 9L12 2L22.5 9" stroke="rgba(255,255,255,0.95)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                                    <rect x="9.5" y="16" width="5" height="6" rx="0.8" fill="rgba(255,255,255,0.9)"/>
+                                    <rect x="4.5" y="11" width="4" height="3.5" rx="0.6" fill="rgba(255,255,255,0.7)"/>
+                                    <rect x="15.5" y="11" width="4" height="3.5" rx="0.6" fill="rgba(255,255,255,0.7)"/>
+                                    <rect x="16" y="4" width="2.5" height="4" rx="0.5" fill="rgba(255,255,255,0.6)" stroke="rgba(255,255,255,0.8)" strokeWidth="0.8"/>
+                                    <circle cx="13.5" cy="19.5" r="0.5" fill="rgba(37,99,235,0.8)"/>
+                                </svg>
                             </div>
                             <div className="min-w-0">
                                 <h2 className="text-[16px] font-bold text-gray-900 tracking-tight leading-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
@@ -593,14 +609,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         </div>
                     )}
                     {collapsed && (
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shadow-sm"
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shadow-sm relative"
                             style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}>
-                            <FiHome size={16} />
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="3" y="8" width="18" height="14" rx="1.5" fill="rgba(255,255,255,0.2)" stroke="rgba(255,255,255,0.9)" strokeWidth="1.3"/>
+                                <path d="M1.5 9L12 2L22.5 9" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                <rect x="9.5" y="16" width="5" height="6" rx="0.8" fill="white"/>
+                                <rect x="4.5" y="11" width="4" height="3.5" rx="0.6" fill="rgba(255,255,255,0.7)"/>
+                                <rect x="15.5" y="11" width="4" height="3.5" rx="0.6" fill="rgba(255,255,255,0.7)"/>
+                            </svg>
                         </div>
                     )}
                 </div>
 
-                {/* Expiry warning banner */}
+                {/* Expiry warning */}
                 {showExpiryWarning && !collapsed && (
                     <div className="mx-3 mt-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
                         <p className="text-[10px] font-bold text-amber-700">
@@ -621,9 +643,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
 
                 {/* Nav */}
-                <nav className="flex-1 py-3 px-3 space-y-0.5 overflow-y-auto overflow-x-hidden sidebar-scroll" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <nav className="flex-1 py-4 px-2.5 space-y-0.5 overflow-y-auto overflow-x-hidden sidebar-scroll" style={{ WebkitOverflowScrolling: 'touch' }}>
                     {menuGroups.map((group) => {
-                        // Filter items by permission
                         const visibleItems = group.items.filter(item => isItemVisible(item.requiredPerm));
                         if (visibleItems.length === 0) return null;
 
@@ -638,56 +659,93 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 return (
                                     <button key={item.href} onClick={() => router.push(item.href)}
                                         title={collapsed ? item.label : undefined}
-                                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all mb-2
-                                            ${active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
-                                            ${collapsed ? 'justify-center' : ''}`}>
-                                        <ItemIcon size={18} className={active ? 'text-blue-600' : 'text-gray-400'} />
-                                        {!collapsed && <span>{item.label}</span>}
-                                        {active && !collapsed && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-600" />}
+                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all duration-200 mb-1 ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+                                        <div className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+                                            style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
+                                            <ItemIcon size={15} className={active ? 'text-white' : 'text-blue-500'} />
+                                        </div>
+                                        {!collapsed && <span className={active ? 'text-blue-700 font-bold' : 'text-gray-600'}>{item.label}</span>}
+                                        {active && !collapsed && <div className="ml-auto w-2 h-2 rounded-full bg-blue-500" />}
                                     </button>
                                 );
                             });
                         }
 
                         return (
-                            <div key={group.name} className="mb-0.5">
-                                <button onClick={() => toggleGroup(group.name)}
-                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all
-                                        ${isGroupActive ? 'text-blue-700 bg-blue-50/50' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
-                                        ${collapsed ? 'justify-center' : ''}`}
-                                    title={collapsed ? group.label : undefined}>
-                                    {GroupIcon && <GroupIcon size={17} className={isGroupActive ? 'text-blue-600' : 'text-gray-400'} />}
-                                    {!collapsed && (
-                                        <>
-                                            <span className="flex-1 text-left">{group.label}</span>
-                                            <FiChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
-                                        </>
-                                    )}
-                                </button>
-                                <div className={`overflow-hidden transition-all duration-200 ease-in-out ${isExpanded && !collapsed ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                                    <div className="ml-[22px] pl-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100">
+                            <div key={group.name} className="mb-1">
+                                {/* Section label (collapsed: just icon) */}
+                                {!collapsed && (
+                                    <button onClick={() => toggleGroup(group.name)}
+                                        className="w-full flex items-center justify-between px-3 pt-3 pb-1 group"
+                                        style={{ background: 'none', border: 'none' }}>
+                                        <span className="text-[9px] font-black uppercase tracking-widest transition-colors"
+                                            style={{ color: isGroupActive ? '#3b82f6' : '#94a3b8' }}>
+                                            {group.label}
+                                        </span>
+                                        <FiChevronDown size={10}
+                                            className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                            style={{ color: '#94a3b8' }} />
+                                    </button>
+                                )}
+                                {collapsed && (
+                                    <div className="flex justify-center py-1">
+                                        <div className="w-6 h-px" style={{ background: '#e2e8f0' }} />
+                                    </div>
+                                )}
+
+                                {/* Group header button (collapsed: toggle on click, expanded: collapsible) */}
+                                {!collapsed ? (
+                                    <div className={`overflow-hidden transition-all duration-250 ease-in-out ${isExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                        <div className="space-y-0.5 pb-1">
                                             {visibleItems.map(item => {
+                                                const ItemIcon = item.icon;
+                                                const active = isActive(item.href);
+                                                const isSuperAdminItem = item.requiredPerm === 'super_admin_only';
+                                                const isChatItem = item.href === '/dashboard/chats';
+                                                return (
+                                                    <button key={item.href} onClick={() => router.push(item.href)}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[12.5px] transition-all duration-150 ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+                                                        <div className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center"
+                                                            style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
+                                                            <ItemIcon size={13} className={active ? 'text-white' : 'text-blue-500'} />
+                                                        </div>
+                                                        <span className={active ? 'text-blue-700 font-semibold' : 'text-gray-600 font-medium'}>{item.label}</span>
+                                                        {isChatItem && unreadChats > 0 && (
+                                                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black text-white bg-rose-500">
+                                                                {unreadChats > 99 ? '99+' : unreadChats}
+                                                            </span>
+                                                        )}
+                                                        {active && !isChatItem && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500" />}
+                                                        {isSuperAdminItem && <FiLock size={10} className="ml-auto text-amber-400" title="Super Admin only" />}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    // Collapsed: show icon buttons for each item
+                                    <div className="flex flex-col items-center gap-1 pb-1">
+                                        {visibleItems.map(item => {
                                             const ItemIcon = item.icon;
                                             const active = isActive(item.href);
-                                            const isSuperAdminItem = item.requiredPerm === 'super_admin_only';
                                             const isChatItem = item.href === '/dashboard/chats';
                                             return (
                                                 <button key={item.href} onClick={() => router.push(item.href)}
-                                                    className={`w-full flex items-center gap-2 px-2.5 py-[7px] rounded-md text-[12.5px] transition-all
-                                                        ${active ? 'text-blue-700 bg-blue-50 font-semibold border-l-2 border-blue-500 -ml-[3px] pl-[11px]' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
-                                                    <ItemIcon size={14} className={active ? 'text-blue-600' : 'text-gray-400'} />
-                                                    <span>{item.label}</span>
+                                                    title={item.label}
+                                                    className="relative w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-150"
+                                                    style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
+                                                    <ItemIcon size={15} className={active ? 'text-white' : 'text-blue-500'} />
                                                     {isChatItem && unreadChats > 0 && (
-                                                        <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white" style={{ background: '#ef4444' }}>
-                                                            {unreadChats > 99 ? '99+' : unreadChats}
+                                                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white"
+                                                            style={{ background: '#ef4444', boxShadow: '0 0 6px rgba(239,68,68,0.6)' }}>
+                                                            {unreadChats > 9 ? '9+' : unreadChats}
                                                         </span>
                                                     )}
-                                                    {isSuperAdminItem && <FiLock size={10} className="ml-auto text-amber-400" title="Super Admin only" />}
                                                 </button>
                                             );
                                         })}
                                     </div>
-                                </div>
+                                )}
                             </div>
                         );
                     })}
@@ -696,27 +754,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {/* User footer */}
                 <div className={`border-t border-gray-100 ${collapsed ? 'p-2' : 'p-3'}`}>
                     {!collapsed ? (
-                        <div className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors cursor-default">
-                            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-sm flex-shrink-0"
-                                style={{ background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+                        <div className="rounded-2xl p-3 flex items-center gap-3 cursor-default transition-all"
+                            style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                            {/* Avatar */}
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-black flex-shrink-0 relative"
+                                style={{
+                                    background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)',
+                                    boxShadow: user?.isSuperAdmin ? '0 0 12px rgba(245,158,11,0.35)' : '0 0 12px rgba(59,130,246,0.3)',
+                                }}>
                                 {user?.isSuperAdmin ? '👑' : (user?.name?.charAt(0)?.toUpperCase() || 'A')}
+                                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 bg-emerald-400"
+                                    style={{ borderColor: '#f8fafc' }} />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-[12.5px] font-semibold text-gray-800 truncate">{user?.name || 'Admin'}</p>
+                                <p className="text-[12.5px] font-bold text-gray-800 truncate leading-tight">{user?.name || 'Admin'}</p>
                                 {user && <RoleBadge user={user} />}
                             </div>
-                            <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Logout">
-                                <FiLogOut size={15} />
+                            <button onClick={handleLogout}
+                                className="p-2 rounded-xl transition-all flex-shrink-0"
+                                style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444' }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.15)'; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.08)'; }}
+                                title="Logout">
+                                <FiLogOut size={14} />
                             </button>
                         </div>
                     ) : (
                         <div className="flex flex-col items-center gap-2">
-                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                                style={{ background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-black relative"
+                                style={{ background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)', boxShadow: '0 0 10px rgba(59,130,246,0.25)' }}>
                                 {user?.isSuperAdmin ? '👑' : (user?.name?.charAt(0)?.toUpperCase() || 'A')}
+                                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 bg-emerald-400"
+                                    style={{ borderColor: '#ffffff' }} />
                             </div>
-                            <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Logout">
-                                <FiLogOut size={15} />
+                            <button onClick={handleLogout}
+                                className="w-9 h-9 rounded-xl flex items-center justify-center transition-all"
+                                style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444' }}
+                                title="Logout">
+                                <FiLogOut size={14} />
                             </button>
                         </div>
                     )}
