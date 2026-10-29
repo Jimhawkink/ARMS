@@ -15,7 +15,7 @@ import SearchableTenantSelector from '@/components/SearchableTenantSelector';
 import ArrearsBreakdownTable from '@/components/ArrearsBreakdownTable';
 import AllocationPreviewPanel from '@/components/AllocationPreviewPanel';
 import StkPushSection from '@/components/StkPushSection';
-import FireworksOverlay from '@/components/FireworksOverlay';
+import { triggerFireworks } from '@/lib/fireworksEffect';
 import { playPaymentSuccessSound } from '@/lib/soundEffects';
 import { useStkPush } from '@/hooks/useStkPush';
 
@@ -69,13 +69,9 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     });
     const [showReceipt, setShowReceipt] = useState<any>(null);
     const [submitting, setSubmitting] = useState(false);
-    const [showFireworks, setShowFireworks] = useState(false);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
     const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [loadingCallbacks, setLoadingCallbacks] = useState(false);
-
-    // Stable callback reference — prevents FireworksOverlay from restarting on re-renders
-    const handleFireworksComplete = useCallback(() => setShowFireworks(false), []);
 
     const selectedTenant = useMemo(() => {
         return tenants.find((t: any) => t.tenant_id === selectedTenantId) ?? null;
@@ -226,7 +222,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
             // 🎆 Play beautiful celebratory audio & show fireworks for ANY payment method
             playPaymentSuccessSound();
-            setShowFireworks(true);
+            triggerFireworks();
 
             toast.success('Payment recorded successfully!');
             const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
@@ -262,36 +258,33 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     const numAmount = parseFloat(amount) || 0;
 
-    // FireworksOverlay is rendered ONCE here — outside both branches — so it
-    // never unmounts when the view switches from modal → receipt. Unmounting
-    // would reset the canvas animation to zero, making fireworks vanish instantly.
-    return (
-        <>
-            {showFireworks && <FireworksOverlay onComplete={handleFireworksComplete} />}
+    if (showReceipt) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+                <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); onClose(); }} />
+            </div>
+        );
+    }
 
-            {showReceipt ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
-                    <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); setShowFireworks(false); onClose(); }} />
-                </div>
-            ) : (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
+        <div
+            className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
+        >
+            {/* ── 1. Header (Compact rounded gradient banner) ── */}
             <div
-                className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
+                className="px-5 py-3.5 border-b border-indigo-500/20 flex items-center justify-between flex-shrink-0 text-white"
+                style={{
+                    background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #7c3aed 100%)',
+                }}
             >
-                {/* ── 1. Header (Compact rounded gradient banner) ── */}
-                <div
-                    className="px-5 py-3.5 border-b border-indigo-500/20 flex items-center justify-between flex-shrink-0 text-white"
-                    style={{
-                        background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #7c3aed 100%)',
-                    }}
-                >
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg shadow-inner">
-                            💰
-                        </div>
-                        <div>
-                            <h2 className="text-base font-black text-white leading-tight">
-                                Record Rent Payment
+                <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg shadow-inner">
+                        💰
+                    </div>
+                    <div>
+                        <h2 className="text-base font-black text-white leading-tight">
+                            Record Rent Payment
                             </h2>
                             <p className="text-[11px] text-indigo-100 font-medium">
                                 FIFO arrears-first automated allocation
@@ -643,7 +636,5 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 </div>
             </div>
         </div>
-            )}
-        </>
     );
 }
