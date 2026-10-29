@@ -260,22 +260,20 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     if (!isOpen) return null;
 
-    if (showReceipt) {
-        return (
-            <>
-                {showFireworks && <FireworksOverlay onComplete={handleFireworksComplete} />}
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
-                    <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); setShowFireworks(false); onClose(); }} />
-                </div>
-            </>
-        );
-    }
-
     const numAmount = parseFloat(amount) || 0;
 
+    // FireworksOverlay is rendered ONCE here — outside both branches — so it
+    // never unmounts when the view switches from modal → receipt. Unmounting
+    // would reset the canvas animation to zero, making fireworks vanish instantly.
     return (
         <>
             {showFireworks && <FireworksOverlay onComplete={handleFireworksComplete} />}
+
+            {showReceipt ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+                    <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); setShowFireworks(false); onClose(); }} />
+                </div>
+            ) : (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
             <div
                 className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
@@ -645,6 +643,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 </div>
             </div>
         </div>
+            )}
         </>
     );
 }
