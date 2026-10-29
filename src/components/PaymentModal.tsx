@@ -15,6 +15,8 @@ import SearchableTenantSelector from '@/components/SearchableTenantSelector';
 import ArrearsBreakdownTable from '@/components/ArrearsBreakdownTable';
 import AllocationPreviewPanel from '@/components/AllocationPreviewPanel';
 import StkPushSection from '@/components/StkPushSection';
+import FireworksOverlay from '@/components/FireworksOverlay';
+import { playPaymentSuccessSound } from '@/lib/soundEffects';
 import { useStkPush } from '@/hooks/useStkPush';
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
@@ -67,6 +69,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     });
     const [showReceipt, setShowReceipt] = useState<any>(null);
     const [submitting, setSubmitting] = useState(false);
+    const [showFireworks, setShowFireworks] = useState(false);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
     const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [loadingCallbacks, setLoadingCallbacks] = useState(false);
@@ -218,6 +221,10 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 location_id: tenant.location_id,
             });
 
+            // 🎆 Play beautiful celebratory audio & show fireworks for ANY payment method
+            playPaymentSuccessSound();
+            setShowFireworks(true);
+
             toast.success('Payment recorded successfully!');
             const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
             setShowReceipt({
@@ -238,7 +245,10 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 arrears_paid: (result as any).arrearsPaid ?? 0,
                 current_rent_paid: (result as any).currentRentPaid ?? 0,
             });
-            onPaymentRecorded();
+            // Update table non-blockingly so celebration animations remain silky smooth
+            setTimeout(() => {
+                onPaymentRecorded();
+            }, 60);
         } catch (err: any) {
             toast.error(err.message || 'Failed to record payment');
         }
@@ -249,16 +259,21 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     if (showReceipt) {
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
-                <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); onClose(); }} />
-            </div>
+            <>
+                {showFireworks && <FireworksOverlay onComplete={() => setShowFireworks(false)} />}
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+                    <RentReceipt payment={showReceipt} onClose={() => { setShowReceipt(null); setShowFireworks(false); onClose(); }} />
+                </div>
+            </>
         );
     }
 
     const numAmount = parseFloat(amount) || 0;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
+        <>
+            {showFireworks && <FireworksOverlay onComplete={() => setShowFireworks(false)} />}
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
             <div
                 className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full overflow-hidden flex flex-col font-sans max-h-[92vh] max-w-[580px] animate-scaleUp"
             >
@@ -627,5 +642,6 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 </div>
             </div>
         </div>
+        </>
     );
 }
