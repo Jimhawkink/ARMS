@@ -225,7 +225,7 @@ export default function DashboardPage() {
             const lid = locId ?? undefined;
             const [s, rp, ur, an, mg, apd, nr] = await Promise.all([
                 getDashboardStats(lid),
-                getRecentPayments(20, lid),
+                getRecentPayments(200, lid),
                 calculateUnpaidRent(lid),
                 get12MonthAnalytics(lid),
                 getCurrentMonthGrid(lid),
@@ -256,7 +256,17 @@ export default function DashboardPage() {
 
         const handler = (e: any) => loadData(e.detail);
         window.addEventListener('arms-location-change', handler);
-        return () => window.removeEventListener('arms-location-change', handler);
+
+        // Auto-refresh dashboard every 60 seconds so new payments appear without manual reload
+        const refreshInterval = setInterval(() => {
+            const currentLid = (() => { try { const s = localStorage.getItem('arms_location'); return s ? parseInt(s) : undefined; } catch { return undefined; } })();
+            loadData(currentLid);
+        }, 60000);
+
+        return () => {
+            window.removeEventListener('arms-location-change', handler);
+            clearInterval(refreshInterval);
+        };
     }, [loadData]);
 
     const fmt = (n: number) => `Ksh ${(n || 0).toLocaleString('en-KE')}`;
