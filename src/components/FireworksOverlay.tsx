@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface FireworksOverlayProps {
     onComplete?: () => void;
@@ -19,31 +20,37 @@ interface Particle {
     friction: number;
     gravity: number;
     sparkle: boolean;
+    isStar?: boolean;
 }
 
-interface Firework {
+interface Rocket {
     x: number;
     y: number;
     targetY: number;
     speed: number;
     color: string;
-    exploded: boolean;
     trail: { x: number; y: number }[];
 }
 
 const PALETTES = [
-    ['#ffd700', '#f59e0b', '#fbbf24', '#ffffff'], // Golden Sparkle
-    ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0'], // Emerald Jade
-    ['#3b82f6', '#60a5fa', '#93c5fd', '#ffffff'], // Diamond Sapphire
-    ['#ec4899', '#f472b6', '#fbcfe8', '#ffffff'], // Neon Ruby
-    ['#8b5cf6', '#a78bfa', '#c4b5fd', '#f3e8ff'], // Royal Violet
-    ['#06b6d4', '#22d3ee', '#67e8f9', '#ffffff'], // Electric Cyan
+    ['#ffd700', '#f59e0b', '#fbbf24', '#ffffff', '#fef08a'], // Golden Glow
+    ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0', '#ffffff'], // Emerald Jade
+    ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#ffffff'], // Electric Cyan & Sapphire
+    ['#ec4899', '#f472b6', '#fb7185', '#ffffff', '#fda4af'], // Neon Pink & Ruby
+    ['#8b5cf6', '#a855f7', '#c084fc', '#e9d5ff', '#ffffff'], // Royal Purple
+    ['#f97316', '#fb923c', '#fdba74', '#ffffff', '#fed7aa'], // Warm Solar Flame
 ];
 
-export default function FireworksOverlay({ onComplete, durationMs = 4000 }: FireworksOverlayProps) {
+export default function FireworksOverlay({ onComplete, durationMs = 4500 }: FireworksOverlayProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    useEffect(() => {
+        if (!mounted) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -61,17 +68,20 @@ export default function FireworksOverlay({ onComplete, durationMs = 4000 }: Fire
         window.addEventListener('resize', handleResize);
 
         const particles: Particle[] = [];
-        const fireworks: Firework[] = [];
+        const rockets: Rocket[] = [];
         let animationFrameId: number;
-        const startTime = Date.now();
         let isSpawning = true;
 
-        const createExplosion = (x: number, y: number, baseColorPalette: string[]) => {
-            const count = 90;
-            for (let i = 0; i < count; i++) {
-                const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
-                const speed = Math.random() * 8 + 2;
-                const color = baseColorPalette[Math.floor(Math.random() * baseColorPalette.length)];
+        // Mega explosion helper - spawns 110 sparkling particles
+        const explode = (x: number, y: number, paletteOverride?: string[]) => {
+            const palette = paletteOverride || PALETTES[Math.floor(Math.random() * PALETTES.length)];
+            const particleCount = 110;
+
+            for (let i = 0; i < particleCount; i++) {
+                const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.4;
+                const speed = Math.random() * 9 + 3;
+                const color = palette[Math.floor(Math.random() * palette.length)];
+
                 particles.push({
                     x,
                     y,
@@ -79,50 +89,58 @@ export default function FireworksOverlay({ onComplete, durationMs = 4000 }: Fire
                     vy: Math.sin(angle) * speed,
                     alpha: 1,
                     color,
-                    radius: Math.random() * 2.8 + 1.2,
-                    decay: Math.random() * 0.015 + 0.012,
+                    radius: Math.random() * 3.2 + 1.6,
+                    decay: Math.random() * 0.016 + 0.011,
                     friction: 0.965,
-                    gravity: 0.16,
-                    sparkle: Math.random() > 0.4,
+                    gravity: 0.18,
+                    sparkle: Math.random() > 0.35,
+                    isStar: Math.random() > 0.6,
                 });
             }
         };
 
-        const launchFirework = (x?: number, targetY?: number) => {
-            const startX = x ?? Math.random() * (width * 0.7) + width * 0.15;
-            const destY = targetY ?? Math.random() * (height * 0.4) + height * 0.12;
+        const launchRocket = (targetX?: number, targetY?: number) => {
+            const startX = targetX ?? Math.random() * (width * 0.75) + width * 0.12;
+            const destY = targetY ?? Math.random() * (height * 0.45) + height * 0.12;
             const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
-            fireworks.push({
+            rockets.push({
                 x: startX,
                 y: height,
                 targetY: destY,
-                speed: Math.random() * 4 + 11,
+                speed: Math.random() * 5 + 16,
                 color: palette[0],
-                exploded: false,
                 trail: [],
             });
         };
 
-        // Initial burst staggered across screen
-        launchFirework(width * 0.25, height * 0.28);
-        launchFirework(width * 0.50, height * 0.18);
-        launchFirework(width * 0.75, height * 0.26);
+        // ═════════════════════════════════════════════════════════
+        // INSTANT MEGA BURSTS RIGHT AWAY (Frame 0 — ZERO DELAY!)
+        // ═════════════════════════════════════════════════════════
+        explode(width * 0.50, height * 0.22, PALETTES[0]); // Center Gold
+        explode(width * 0.25, height * 0.28, PALETTES[1]); // Left Emerald
+        explode(width * 0.75, height * 0.26, PALETTES[2]); // Right Sapphire
+        explode(width * 0.38, height * 0.16, PALETTES[3]); // Top-Left Ruby
+        explode(width * 0.62, height * 0.18, PALETTES[4]); // Top-Right Violet
 
-        // Schedule additional bursts
+        // Wave 2: Rising rockets and cascading secondary explosions
         const intervals = [
-            setTimeout(() => isSpawning && launchFirework(width * 0.35, height * 0.22), 350),
-            setTimeout(() => isSpawning && launchFirework(width * 0.65, height * 0.20), 650),
-            setTimeout(() => isSpawning && launchFirework(width * 0.48, height * 0.14), 1050),
-            setTimeout(() => isSpawning && launchFirework(width * 0.20, height * 0.25), 1450),
-            setTimeout(() => isSpawning && launchFirework(width * 0.80, height * 0.22), 1750),
-            setTimeout(() => isSpawning && launchFirework(width * 0.52, height * 0.16), 2100),
+            setTimeout(() => isSpawning && explode(width * 0.30, height * 0.20), 300),
+            setTimeout(() => isSpawning && explode(width * 0.70, height * 0.24), 500),
+            setTimeout(() => isSpawning && launchRocket(width * 0.20, height * 0.18), 650),
+            setTimeout(() => isSpawning && launchRocket(width * 0.50, height * 0.14), 850),
+            setTimeout(() => isSpawning && launchRocket(width * 0.80, height * 0.20), 1050),
+            setTimeout(() => isSpawning && explode(width * 0.45, height * 0.16), 1300),
+            setTimeout(() => isSpawning && explode(width * 0.55, height * 0.22), 1600),
+            setTimeout(() => isSpawning && launchRocket(width * 0.35, height * 0.15), 1900),
+            setTimeout(() => isSpawning && launchRocket(width * 0.65, height * 0.19), 2200),
+            setTimeout(() => isSpawning && explode(width * 0.50, height * 0.20, PALETTES[0]), 2600),
         ];
 
-        const stopTimeout = setTimeout(() => {
+        const stopSpawnTimer = setTimeout(() => {
             isSpawning = false;
         }, durationMs - 1200);
 
-        const endTimeout = setTimeout(() => {
+        const finishTimer = setTimeout(() => {
             cancelAnimationFrame(animationFrameId);
             onComplete?.();
         }, durationMs);
@@ -130,39 +148,42 @@ export default function FireworksOverlay({ onComplete, durationMs = 4000 }: Fire
         const render = () => {
             ctx.clearRect(0, 0, width, height);
 
-            // Update & draw rising fireworks
-            for (let i = fireworks.length - 1; i >= 0; i--) {
-                const fw = fireworks[i];
-                fw.trail.push({ x: fw.x, y: fw.y });
-                if (fw.trail.length > 6) fw.trail.shift();
+            // ── Draw rising rockets ──
+            for (let i = rockets.length - 1; i >= 0; i--) {
+                const r = rockets[i];
+                r.trail.push({ x: r.x, y: r.y });
+                if (r.trail.length > 7) r.trail.shift();
 
-                fw.y -= fw.speed;
+                r.y -= r.speed;
 
-                // Draw rocket trail
+                // Draw fiery rocket trail
+                ctx.save();
                 ctx.beginPath();
-                ctx.strokeStyle = fw.color;
-                ctx.lineWidth = 2.5;
-                for (let j = 0; j < fw.trail.length; j++) {
-                    const pt = fw.trail[j];
+                ctx.strokeStyle = r.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = r.color;
+                ctx.shadowBlur = 8;
+                for (let j = 0; j < r.trail.length; j++) {
+                    const pt = r.trail[j];
                     if (j === 0) ctx.moveTo(pt.x, pt.y);
                     else ctx.lineTo(pt.x, pt.y);
                 }
                 ctx.stroke();
 
-                // Rocket head
+                // Rocket head (bright white core)
                 ctx.beginPath();
-                ctx.arc(fw.x, fw.y, 3, 0, Math.PI * 2);
+                ctx.arc(r.x, r.y, 3.5, 0, Math.PI * 2);
                 ctx.fillStyle = '#ffffff';
                 ctx.fill();
+                ctx.restore();
 
-                if (fw.y <= fw.targetY) {
-                    const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
-                    createExplosion(fw.x, fw.y, palette);
-                    fireworks.splice(i, 1);
+                if (r.y <= r.targetY) {
+                    explode(r.x, r.y);
+                    rockets.splice(i, 1);
                 }
             }
 
-            // Update & draw explosion particles
+            // ── Draw dazzling explosion particles ──
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.vx *= p.friction;
@@ -181,11 +202,25 @@ export default function FireworksOverlay({ onComplete, durationMs = 4000 }: Fire
                 ctx.globalAlpha = Math.max(0, p.alpha);
                 ctx.fillStyle = p.color;
                 ctx.shadowColor = p.color;
-                ctx.shadowBlur = p.sparkle ? 10 : 4;
+                ctx.shadowBlur = p.sparkle ? 12 : 5;
 
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, p.sparkle ? p.radius * (Math.random() > 0.5 ? 1.4 : 0.8) : p.radius, 0, Math.PI * 2);
+                const r = p.sparkle ? p.radius * (Math.random() > 0.5 ? 1.4 : 0.85) : p.radius;
+                ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
                 ctx.fill();
+
+                // Draw sparkling star shimmer cross on select particles
+                if (p.isStar && p.alpha > 0.4) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x - r * 1.5, p.y);
+                    ctx.lineTo(p.x + r * 1.5, p.y);
+                    ctx.moveTo(p.x, p.y - r * 1.5);
+                    ctx.lineTo(p.x, p.y + r * 1.5);
+                    ctx.stroke();
+                }
+
                 ctx.restore();
             }
 
@@ -197,17 +232,28 @@ export default function FireworksOverlay({ onComplete, durationMs = 4000 }: Fire
         return () => {
             window.removeEventListener('resize', handleResize);
             intervals.forEach(clearTimeout);
-            clearTimeout(stopTimeout);
-            clearTimeout(endTimeout);
+            clearTimeout(stopSpawnTimer);
+            clearTimeout(finishTimer);
             cancelAnimationFrame(animationFrameId);
         };
-    }, [durationMs, onComplete]);
+    }, [mounted, durationMs, onComplete]);
 
-    return (
+    if (!mounted) return null;
+
+    // Render directly to document.body via Portal so NO modal, backdrop, or blur can ever hide it!
+    return createPortal(
         <canvas
             ref={canvasRef}
-            className="fixed inset-0 pointer-events-none z-[99999]"
-            style={{ width: '100vw', height: '100vh' }}
-        />
+            style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                width: '100vw',
+                height: '100vh',
+                zIndex: 2147483647, // Maximum 32-bit z-index: GUARANTEED ON TOP OF EVERYTHING
+                pointerEvents: 'none', // Never blocks clicking or receipt interaction
+            }}
+        />,
+        document.body
     );
 }
