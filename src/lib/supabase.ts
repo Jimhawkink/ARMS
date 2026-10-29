@@ -388,7 +388,7 @@ export async function addTenant(tenant: {
     const isOnVacation = tenant.is_on_vacation || false;
     const additionalUnits = tenant.additional_units || [];
     // Remove non-DB fields before insert
-    const { initial_payment: _ip, additional_units: _au, ...tenantData } = tenant;
+    const { initial_payment: _ip, additional_units: _au, location_name: _ln, ...tenantData } = tenant as any;
 
     // IMPORTANT: Always store the FULL/BASE monthly rent in arms_tenants.
     // monthly_rent = total across ALL rooms (primary + additional)
@@ -500,7 +500,7 @@ export async function addTenant(tenant: {
 
 export async function updateTenant(id: number, updates: any) {
     // Strip fields that don't exist in arms_tenants to avoid schema cache errors
-    const { initial_payment: _ip, ...safeUpdates } = updates;
+    const { initial_payment: _ip, location_name: _ln, ...safeUpdates } = updates;
 
     // ── Handle room/unit change: update occupancy status ──
     // Fetch old tenant data to detect unit change
@@ -750,6 +750,40 @@ export async function deactivateTenant(id: number) {
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', id);
     if (error) throw new Error(`Move-out failed: ${error.message} (code: ${error.code})`);
+    invalidateCache('tenants');
+    invalidateCache('units');
+    invalidateCache('unpaid');
+    invalidateCache('stats');
+}
+
+export async function deleteTenantPermanently(id: number) {
+    // 1. Vacate primary unit
+    try {
+        const { data: tenant } = await supabase.from('arms_tenants').select('tenant_id, unit_id').eq('tenant_id', id).single();
+        if (tenant?.unit_id) {
+            await supabase.from('arms_units').update({ status: 'Vacant', updated_at: new Date().toISOString() }).eq('unit_id', tenant.unit_id);
+        }
+    } catch (e) {
+        console.warn('Error vacating primary unit:', e);
+    }
+
+    // 2. Vacate multi-room units & clean junction
+    try {
+        const tenantUnits = await getTenantUnits(id);
+        for (const tu of tenantUnits) {
+            await supabase.from('arms_units').update({ status: 'Vacant', updated_at: new Date().toISOString() }).eq('unit_id', tu.unit_id);
+        }
+        await supabase.from('arms_tenant_units').delete().eq('tenant_id', id);
+    } catch (e) {
+        console.warn('Error cleaning tenant units:', e);
+    }
+
+    // 3. Delete tenant record (if foreign keys block, deactivate safely)
+    const { error } = await supabase.from('arms_tenants').delete().eq('tenant_id', id);
+    if (error) {
+        console.warn('Delete blocked by foreign key relations, deactivating instead:', error);
+        return await deactivateTenant(id);
+    }
     invalidateCache('tenants');
     invalidateCache('units');
     invalidateCache('unpaid');
