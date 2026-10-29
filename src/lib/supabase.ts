@@ -502,29 +502,92 @@ export async function updateTenant(id: number, updates: any) {
     // Strip fields that don't exist in arms_tenants to avoid schema cache errors
     const { initial_payment: _ip, location_name: _ln, ...safeUpdates } = updates;
 
-    // ── Handle room/unit change: update occupancy status ──
-    // Fetch old tenant data to detect unit change
-    if (safeUpdates.unit_id) {
-        const { data: oldTenant } = await supabase
-            .from('arms_tenants')
-            .select('unit_id')
-            .eq('tenant_id', id)
-            .single();
+    // ── Fetch old tenant data before update ──
+    const { data: oldTenant } = await supabase
+        .from('arms_tenants')
+        .select('unit_id, monthly_rent, location_id, is_on_vacation')
+        .eq('tenant_id', id)
+        .single();
 
-        if (oldTenant && oldTenant.unit_id !== safeUpdates.unit_id) {
-            // Old unit → Vacant
-            await supabase.from('arms_units')
-                .update({ status: 'Vacant', updated_at: new Date().toISOString() })
-                .eq('unit_id', oldTenant.unit_id);
-            // New unit → Occupied
-            await supabase.from('arms_units')
-                .update({ status: 'Occupied', updated_at: new Date().toISOString() })
-                .eq('unit_id', safeUpdates.unit_id);
-        }
+    // ── Handle room/unit change: update occupancy status ──
+    if (safeUpdates.unit_id && oldTenant && oldTenant.unit_id !== safeUpdates.unit_id) {
+        // Old unit → Vacant
+        await supabase.from('arms_units')
+            .update({ status: 'Vacant', updated_at: new Date().toISOString() })
+            .eq('unit_id', oldTenant.unit_id);
+        // New unit → Occupied
+        await supabase.from('arms_units')
+            .update({ status: 'Occupied', updated_at: new Date().toISOString() })
+            .eq('unit_id', safeUpdates.unit_id);
     }
 
     const { data, error } = await supabase.from('arms_tenants').update({ ...safeUpdates, updated_at: new Date().toISOString() }).eq('tenant_id', id).select().single();
     if (error) throw error;
+
+    // ── If monthly_rent changed, rebuild ALL billing records from current month forward
+    //    using new rent, then re-run FIFO payment allocation ──
+    const newRent = safeUpdates.monthly_rent;
+    if (newRent && oldTenant && newRent !== oldTenant.monthly_rent) {
+        try {
+            const nowLocal = new Date();
+            const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+            const isOnVacation = safeUpdates.is_on_vacation ?? oldTenant.is_on_vacation ?? false;
+            const locationId = safeUpdates.location_id || oldTenant.location_id;
+            const unitId = safeUpdates.unit_id || oldTenant.unit_id;
+
+            // Update current & future unpaid bills with new rent amount
+            const { data: futureBills } = await supabase
+                .from('arms_billing')
+                .select('billing_id, billing_month, rent_amount, amount_paid')
+                .eq('tenant_id', id)
+                .gte('billing_month', currentMonth)
+                .order('billing_month', { ascending: true });
+
+            if (futureBills && futureBills.length > 0) {
+                await Promise.all(futureBills.map((bill: any) => {
+                    const effectiveRent = getEffectiveRent(newRent, bill.billing_month, isOnVacation);
+                    const newBalance = Math.max(0, Math.round((effectiveRent - (bill.amount_paid || 0)) * 100) / 100);
+                    const newStatus = newBalance <= 0 ? 'Paid' : (bill.amount_paid || 0) > 0 ? 'Partial' : 'Unpaid';
+                    return supabase.from('arms_billing').update({
+                        rent_amount: effectiveRent,
+                        balance: newBalance,
+                        status: newStatus,
+                        updated_at: new Date().toISOString(),
+                    }).eq('billing_id', bill.billing_id);
+                }));
+            } else {
+                // No bill for current month yet — create it
+                const effectiveRent = getEffectiveRent(newRent, currentMonth, isOnVacation);
+                await supabase.from('arms_billing').insert([{
+                    tenant_id: id,
+                    location_id: locationId,
+                    unit_id: unitId,
+                    billing_month: currentMonth,
+                    billing_date: `${currentMonth}-01`,
+                    due_date: `${currentMonth}-05`,
+                    rent_amount: effectiveRent,
+                    amount_paid: 0,
+                    balance: effectiveRent,
+                    status: 'Unpaid',
+                }]);
+            }
+
+            // Recalculate total balance from all unpaid bills
+            const { data: allBills } = await supabase
+                .from('arms_billing')
+                .select('balance')
+                .eq('tenant_id', id)
+                .gt('balance', 0);
+            const totalBalance = (allBills || []).reduce((s: number, b: any) => s + (b.balance || 0), 0);
+            await supabase.from('arms_tenants').update({
+                balance: Math.round(totalBalance * 100) / 100,
+                updated_at: new Date().toISOString(),
+            }).eq('tenant_id', id);
+        } catch (e) {
+            console.error('updateTenant: failed to rebuild billing after rent change:', e);
+        }
+    }
+
     invalidateCache('tenants');
     invalidateCache('units');
     invalidateCache('unpaid');
