@@ -1895,10 +1895,10 @@ export async function getNetRevenueSummary(locationId?: number, forceRefresh = f
     const key = `netRevenue:${locationId ?? 'all'}`;
     return fetchWithCache(key, 20000, async () => {
         const now = new Date();
-        const todayStr = now.toISOString().split('T')[0];
+        const todayStr = now.toISOString().split('T')[0]; // e.g. "2026-10-29"
 
         // Week start (Monday)
-        const dayOfWeek = now.getDay(); // 0=Sun
+        const dayOfWeek = now.getDay();
         const diffToMon = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() + diffToMon);
@@ -1908,48 +1908,43 @@ export async function getNetRevenueSummary(locationId?: number, forceRefresh = f
         const yearStr = now.getFullYear().toString();
         const yearStartStr = `${yearStr}-01-01`;
 
-        // Fetch payments and expenses bounded by year start in parallel
-        let payQ = supabase.from('arms_payments').select('amount, payment_date').gte('payment_date', yearStartStr);
-        if (locationId) payQ = payQ.eq('location_id', locationId);
+        // Use server-side date range filtering per period — avoids JS date string parsing bugs
+        const buildPayQ = (from: string, to?: string) => {
+            let q = supabase.from('arms_payments').select('amount')
+                .gte('payment_date', `${from}T00:00:00.000Z`);
+            if (to) q = q.lte('payment_date', `${to}T23:59:59.999Z`);
+            if (locationId) q = q.eq('location_id', locationId);
+            return q;
+        };
+        const buildExpQ = (from: string, to?: string) => {
+            let q = supabase.from('arms_expenses').select('amount')
+                .gte('expense_date', from);
+            if (to) q = q.lte('expense_date', to);
+            if (locationId) q = q.eq('location_id', locationId);
+            return q;
+        };
 
-        let expQ = supabase.from('arms_expenses').select('amount, expense_date').gte('expense_date', yearStartStr);
-        if (locationId) expQ = expQ.eq('location_id', locationId);
+        const [
+            { data: todayPay  }, { data: weekPay  }, { data: monthPay  }, { data: yearPay  },
+            { data: todayExp  }, { data: weekExp  }, { data: monthExp  }, { data: yearExp  },
+        ] = await Promise.all([
+            buildPayQ(todayStr, todayStr),
+            buildPayQ(weekStartStr, todayStr),
+            buildPayQ(`${monthStr}-01`),
+            buildPayQ(yearStartStr),
+            buildExpQ(todayStr, todayStr),
+            buildExpQ(weekStartStr, todayStr),
+            buildExpQ(`${monthStr}-01`),
+            buildExpQ(yearStartStr),
+        ]);
 
-        const [{ data: payments }, { data: expenses }] = await Promise.all([payQ, expQ]);
-
-        const sumPayments = (from: string, to?: string) =>
-            (payments || []).filter(p => {
-                const d = (p.payment_date || '').slice(0, 10);
-                return d >= from && (to ? d <= to : true);
-            }).reduce((s, p) => s + (p.amount || 0), 0);
-
-        const sumExpenses = (from: string, to?: string) =>
-            (expenses || []).filter(e => {
-                const d = (e.expense_date || '').slice(0, 10);
-                return d >= from && (to ? d <= to : true);
-            }).reduce((s, e) => s + (e.amount || 0), 0);
-
-        const collectedToday    = sumPayments(todayStr, todayStr);
-        const expensesToday     = sumExpenses(todayStr, todayStr);
-        const netToday          = collectedToday - expensesToday;
-
-        const collectedWeek     = sumPayments(weekStartStr, todayStr);
-        const expensesWeek      = sumExpenses(weekStartStr, todayStr);
-        const netWeek           = collectedWeek - expensesWeek;
-
-        const collectedMonth    = sumPayments(monthStr + '-01');
-        const expensesMonth     = sumExpenses(monthStr + '-01');
-        const netMonth          = collectedMonth - expensesMonth;
-
-        const collectedYear     = sumPayments(yearStartStr);
-        const expensesYear      = sumExpenses(yearStartStr);
-        const netYear           = collectedYear - expensesYear;
+        const sum = (rows: any[] | null) => (rows || []).reduce((s, r) => s + (r.amount || 0), 0);
 
         return {
-            today:   { collected: collectedToday,  expenses: expensesToday,  net: netToday  },
-            week:    { collected: collectedWeek,   expenses: expensesWeek,   net: netWeek   },
-            month:   { collected: collectedMonth,  expenses: expensesMonth,  net: netMonth  },
-            year:    { collected: collectedYear,   expenses: expensesYear,   net: netYear   },
+            today: { collected: sum(todayPay), expenses: sum(todayExp), net: sum(todayPay) - sum(todayExp) },
+            week:  { collected: sum(weekPay),  expenses: sum(weekExp),  net: sum(weekPay)  - sum(weekExp)  },
+            month: { collected: sum(monthPay), expenses: sum(monthExp), net: sum(monthPay) - sum(monthExp) },
+            year:  { collected: sum(yearPay),  expenses: sum(yearExp),  net: sum(yearPay)  - sum(yearExp)  },
         };
     }, forceRefresh);
 }
