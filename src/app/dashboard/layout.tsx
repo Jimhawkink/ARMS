@@ -624,8 +624,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 {/* Expiry warning */}
                 {showExpiryWarning && !collapsed && (
-                    <div className="mx-3 mt-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                        <p className="text-[10px] font-bold text-amber-700">
+                    <div className="mx-3 mt-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+                        <p className="text-[10px] font-bold text-amber-300">
                             ⚠️ License expires in {license?.daysUntilExpiry} day{license?.daysUntilExpiry !== 1 ? 's' : ''}
                         </p>
                     </div>
@@ -634,12 +634,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {/* Collapse toggle */}
                 <button
                     onClick={() => setCollapsed(!collapsed)}
-                    className="absolute -right-3 top-[68px] w-6 h-6 rounded-full flex items-center justify-center shadow-md transition-all z-50"
-                    style={{ background: '#fff', border: '1.5px solid #e2e8f0', color: '#64748b' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#3b82f6'; (e.currentTarget as HTMLButtonElement).style.color = '#3b82f6'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'; (e.currentTarget as HTMLButtonElement).style.color = '#64748b'; }}
+                    className="absolute -right-3.5 top-[72px] w-7 h-7 rounded-full flex items-center justify-center shadow-lg transition-all z-50"
+                    style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', border: '2px solid rgba(255,255,255,0.15)', color: 'white', boxShadow: '0 0 14px rgba(99,102,241,0.5)' }}
                 >
-                    {collapsed ? <FiChevronRight size={12} /> : <FiChevronLeft size={12} />}
+                    {collapsed ? <FiChevronRight size={13} /> : <FiChevronLeft size={13} />}
                 </button>
 
                 {/* Nav */}
@@ -659,13 +657,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 return (
                                     <button key={item.href} onClick={() => router.push(item.href)}
                                         title={collapsed ? item.label : undefined}
-                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all duration-200 mb-1 ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
-                                        <div className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-                                            style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
-                                            <ItemIcon size={15} className={active ? 'text-white' : 'text-blue-500'} />
+                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all duration-200 mb-1 ${collapsed ? 'justify-center' : ''} ${active ? 'nav-item-active' : 'nav-item-hover'}`}>
+                                        <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all ${active ? '' : ''}`}
+                                            style={{ background: active ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'rgba(255,255,255,0.07)' }}>
+                                            <ItemIcon size={15} className="text-white" />
                                         </div>
-                                        {!collapsed && <span className={active ? 'text-blue-700 font-bold' : 'text-gray-600'}>{item.label}</span>}
-                                        {active && !collapsed && <div className="ml-auto w-2 h-2 rounded-full bg-blue-500" />}
+                                        {!collapsed && <span className={active ? 'text-white font-bold' : 'text-slate-300'}>{item.label}</span>}
+                                        {active && !collapsed && <div className="ml-auto w-2 h-2 rounded-full" style={{ background: 'linear-gradient(135deg,#818cf8,#c084fc)', boxShadow: '0 0 8px rgba(129,140,248,0.8)', animation: 'glow-pulse 2s infinite' }} />}
                                     </button>
                                 );
                             });
@@ -679,17 +677,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         className="w-full flex items-center justify-between px-3 pt-3 pb-1 group"
                                         style={{ background: 'none', border: 'none' }}>
                                         <span className="text-[9px] font-black uppercase tracking-widest transition-colors"
-                                            style={{ color: isGroupActive ? '#3b82f6' : '#94a3b8' }}>
+                                            style={{ color: isGroupActive ? 'rgba(165,180,252,0.8)' : 'rgba(148,163,184,0.5)' }}>
                                             {group.label}
                                         </span>
                                         <FiChevronDown size={10}
                                             className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                                            style={{ color: '#94a3b8' }} />
+                                            style={{ color: 'rgba(148,163,184,0.4)' }} />
                                     </button>
                                 )}
                                 {collapsed && (
                                     <div className="flex justify-center py-1">
-                                        <div className="w-6 h-px" style={{ background: '#e2e8f0' }} />
+                                        <div className="w-6 h-px" style={{ background: 'rgba(255,255,255,0.08)' }} />
                                     </div>
                                 )}
 
@@ -704,19 +702,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                 const isChatItem = item.href === '/dashboard/chats';
                                                 return (
                                                     <button key={item.href} onClick={() => router.push(item.href)}
-                                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[12.5px] transition-all duration-150 ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+                                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[12.5px] transition-all duration-150 ${active ? 'nav-item-active' : 'nav-item-hover'}`}>
                                                         <div className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center"
-                                                            style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
-                                                            <ItemIcon size={13} className={active ? 'text-white' : 'text-blue-500'} />
+                                                            style={{ background: active ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'rgba(255,255,255,0.06)' }}>
+                                                            <ItemIcon size={13} className="text-white" />
                                                         </div>
-                                                        <span className={active ? 'text-blue-700 font-semibold' : 'text-gray-600 font-medium'}>{item.label}</span>
+                                                        <span className={active ? 'text-white font-bold' : 'text-slate-400 font-medium'}>{item.label}</span>
                                                         {isChatItem && unreadChats > 0 && (
-                                                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black text-white bg-rose-500">
+                                                            <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black text-white"
+                                                                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)', boxShadow: '0 0 8px rgba(239,68,68,0.5)' }}>
                                                                 {unreadChats > 99 ? '99+' : unreadChats}
                                                             </span>
                                                         )}
-                                                        {active && !isChatItem && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500" />}
-                                                        {isSuperAdminItem && <FiLock size={10} className="ml-auto text-amber-400" title="Super Admin only" />}
+                                                        {active && !isChatItem && <div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ background: '#818cf8', boxShadow: '0 0 6px rgba(129,140,248,0.8)' }} />}
+                                                        {isSuperAdminItem && <FiLock size={10} className="ml-auto" style={{ color: 'rgba(251,191,36,0.6)' }} title="Super Admin only" />}
                                                     </button>
                                                 );
                                             })}
@@ -733,8 +732,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                 <button key={item.href} onClick={() => router.push(item.href)}
                                                     title={item.label}
                                                     className="relative w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-150"
-                                                    style={{ background: active ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : 'rgba(59,130,246,0.08)' }}>
-                                                    <ItemIcon size={15} className={active ? 'text-white' : 'text-blue-500'} />
+                                                    style={{ background: active ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'rgba(255,255,255,0.06)' }}>
+                                                    <ItemIcon size={15} className="text-white" />
                                                     {isChatItem && unreadChats > 0 && (
                                                         <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white"
                                                             style={{ background: '#ef4444', boxShadow: '0 0 6px rgba(239,68,68,0.6)' }}>
@@ -752,29 +751,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </nav>
 
                 {/* User footer */}
-                <div className={`border-t border-gray-100 ${collapsed ? 'p-2' : 'p-3'}`}>
+                <div className={`${collapsed ? 'p-2' : 'p-3'}`}
+                    style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
                     {!collapsed ? (
                         <div className="rounded-2xl p-3 flex items-center gap-3 cursor-default transition-all"
-                            style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
                             {/* Avatar */}
                             <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-black flex-shrink-0 relative"
                                 style={{
-                                    background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)',
-                                    boxShadow: user?.isSuperAdmin ? '0 0 12px rgba(245,158,11,0.35)' : '0 0 12px rgba(59,130,246,0.3)',
+                                    background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)',
+                                    boxShadow: user?.isSuperAdmin ? '0 0 14px rgba(245,158,11,0.5)' : '0 0 14px rgba(99,102,241,0.5)',
                                 }}>
                                 {user?.isSuperAdmin ? '👑' : (user?.name?.charAt(0)?.toUpperCase() || 'A')}
                                 <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 bg-emerald-400"
-                                    style={{ borderColor: '#f8fafc' }} />
+                                    style={{ borderColor: '#1a1040' }} />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-[12.5px] font-bold text-gray-800 truncate leading-tight">{user?.name || 'Admin'}</p>
+                                <p className="text-[12.5px] font-bold text-white truncate leading-tight">{user?.name || 'Admin'}</p>
                                 {user && <RoleBadge user={user} />}
                             </div>
                             <button onClick={handleLogout}
                                 className="p-2 rounded-xl transition-all flex-shrink-0"
-                                style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444' }}
-                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.15)'; }}
-                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.08)'; }}
+                                style={{ background: 'rgba(239,68,68,0.1)', color: 'rgba(252,165,165,0.8)' }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.25)'; (e.currentTarget as HTMLButtonElement).style.color = '#fca5a5'; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.1)'; (e.currentTarget as HTMLButtonElement).style.color = 'rgba(252,165,165,0.8)'; }}
                                 title="Logout">
                                 <FiLogOut size={14} />
                             </button>
@@ -782,14 +782,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     ) : (
                         <div className="flex flex-col items-center gap-2">
                             <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-black relative"
-                                style={{ background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)', boxShadow: '0 0 10px rgba(59,130,246,0.25)' }}>
+                                style={{ background: user?.isSuperAdmin ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 0 12px rgba(99,102,241,0.4)' }}>
                                 {user?.isSuperAdmin ? '👑' : (user?.name?.charAt(0)?.toUpperCase() || 'A')}
                                 <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 bg-emerald-400"
-                                    style={{ borderColor: '#ffffff' }} />
+                                    style={{ borderColor: '#1a1040' }} />
                             </div>
                             <button onClick={handleLogout}
                                 className="w-9 h-9 rounded-xl flex items-center justify-center transition-all"
-                                style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444' }}
+                                style={{ background: 'rgba(239,68,68,0.1)', color: 'rgba(252,165,165,0.8)' }}
                                 title="Logout">
                                 <FiLogOut size={14} />
                             </button>
@@ -799,7 +799,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </aside>
 
             {/* ─── MAIN ─── */}
-            <div className={`flex-1 min-w-0 max-w-full flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[252px]'}`}>
+            <div className={`flex-1 min-w-0 max-w-full flex flex-col transition-all duration-300 ${collapsed ? 'ml-[72px]' : 'ml-[260px]'}`}>
                 {/* ════════════════════════════════════════════════════
                     SUPER ROBUST ULTRA-MODERN COMMAND TOPBAR
                 ════════════════════════════════════════════════════ */}
