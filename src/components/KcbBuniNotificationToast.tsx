@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getKcbBuniPayments, markPaymentVerified } from '@/lib/supabase';
 import { playPaymentSuccessSound } from '@/lib/soundEffects';
-import { FiCheck, FiCopy } from 'react-icons/fi';
+import { FiCheck, FiArrowRight, FiCopy, FiClock, FiMapPin } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
 interface KcbToastItem {
@@ -48,8 +48,11 @@ function formatShortTime(iso: string): string {
     if (!iso) return '';
     try {
         const d = new Date(iso);
-        const dateStr = d.toLocaleDateString('en-KE', { day: '2-digit', month: 'short' });
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const isToday = iso.slice(0, 10) === todayStr;
         const timeStr = d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
+        if (isToday) return `Today, ${timeStr}`;
+        const dateStr = d.toLocaleDateString('en-KE', { day: '2-digit', month: 'short' });
         return `${dateStr}, ${timeStr}`;
     } catch {
         return '';
@@ -59,6 +62,7 @@ function formatShortTime(iso: string): string {
 export default function KcbBuniNotificationToast() {
     const router = useRouter();
     const [unverifiedToasts, setUnverifiedToasts] = useState<KcbToastItem[]>([]);
+    const [totalUnverifiedCount, setTotalUnverifiedCount] = useState(0);
     const [verifyingId, setVerifyingId] = useState<number | null>(null);
     const [bulkVerifying, setBulkVerifying] = useState(false);
     const knownIdsRef = useRef<Set<number>>(new Set());
@@ -68,8 +72,12 @@ export default function KcbBuniNotificationToast() {
         try {
             const rawPayments = await getKcbBuniPayments(50);
             const localVerified = getLocalVerified();
+            const now = Date.now();
+            // Recent cutoff: payments within the last 48 hours
+            const fortyEightHoursAgo = now - 48 * 60 * 60 * 1000;
 
-            const pendingList: KcbToastItem[] = [];
+            const pendingRecent: KcbToastItem[] = [];
+            let totalUnverified = 0;
 
             for (const p of rawPayments) {
                 const idStr = String(p.payment_id);
@@ -81,42 +89,50 @@ export default function KcbBuniNotificationToast() {
                     (p.notes && (p.notes.includes('[VerifiedBy:') || p.notes.includes('[Verified:true]')));
 
                 if (!isVerified) {
-                    const tenant = p.arms_tenants;
-                    // Clean unit name - avoids "Room undefined" bug
-                    let unitName = '';
-                    if (tenant?.arms_units?.unit_name) {
-                        unitName = tenant.arms_units.unit_name;
-                    } else if (tenant?.unit_id) {
-                        unitName = `Room ${tenant.unit_id}`;
+                    totalUnverified++;
+
+                    const pTime = new Date(p.payment_date || p.created_at || now).getTime();
+                    // Only show pop-up toasts for recent payments (last 48h) to avoid bombarding with months-old records
+                    if (pTime >= fortyEightHoursAgo) {
+                        const tenant = p.arms_tenants;
+                        let unitName = '';
+                        if (tenant?.arms_units?.unit_name) {
+                            unitName = tenant.arms_units.unit_name;
+                        } else if (tenant?.unit_id) {
+                            unitName = `Room ${tenant.unit_id}`;
+                        }
+
+                        const locationName = p.arms_locations?.location_name || tenant?.arms_locations?.location_name || '';
+
+                        pendingRecent.push({
+                            payment_id: p.payment_id,
+                            amount: p.amount || 0,
+                            tenant_name: tenant?.tenant_name || 'Tenant',
+                            unit_name: unitName,
+                            location_name: locationName,
+                            phone: p.mpesa_phone || tenant?.phone || '',
+                            receipt: p.mpesa_receipt || p.reference_no || `KCB-${p.payment_id}`,
+                            payment_date: p.payment_date || p.created_at || new Date().toISOString(),
+                            notes: p.notes || '',
+                            is_verified: false,
+                        });
                     }
-
-                    const locationName = p.arms_locations?.location_name || tenant?.arms_locations?.location_name || '';
-
-                    pendingList.push({
-                        payment_id: p.payment_id,
-                        amount: p.amount || 0,
-                        tenant_name: tenant?.tenant_name || 'Tenant',
-                        unit_name: unitName,
-                        location_name: locationName,
-                        phone: p.mpesa_phone || tenant?.phone || '',
-                        receipt: p.mpesa_receipt || p.reference_no || `KCB-${p.payment_id}`,
-                        payment_date: p.payment_date || p.created_at || new Date().toISOString(),
-                        notes: p.notes || '',
-                        is_verified: false,
-                    });
                 }
             }
 
-            if (!isFirstRunRef.current && pendingList.length > 0) {
-                const newArrival = pendingList.some(item => !knownIdsRef.current.has(item.payment_id));
+            // Sound alert for new arrivals
+            if (!isFirstRunRef.current && pendingRecent.length > 0) {
+                const newArrival = pendingRecent.some(item => !knownIdsRef.current.has(item.payment_id));
                 if (newArrival) {
                     playPaymentSuccessSound();
                 }
             }
             isFirstRunRef.current = false;
-            knownIdsRef.current = new Set(pendingList.map(item => item.payment_id));
+            knownIdsRef.current = new Set(pendingRecent.map(item => item.payment_id));
 
-            setUnverifiedToasts(pendingList);
+            setTotalUnverifiedCount(totalUnverified);
+            // Cap to at most 3 toasts so they never crowd the screen
+            setUnverifiedToasts(pendingRecent.slice(0, 3));
         } catch (err: any) {
             console.error('KcbBuniNotificationToast error:', err.message);
         }
@@ -148,6 +164,7 @@ export default function KcbBuniNotificationToast() {
             });
 
             setUnverifiedToasts(prev => prev.filter(t => t.payment_id !== item.payment_id));
+            setTotalUnverifiedCount(prev => Math.max(0, prev - 1));
         } catch (err: any) {
             toast.error(`Verification error: ${err.message}`);
         } finally {
@@ -170,8 +187,9 @@ export default function KcbBuniNotificationToast() {
             }
 
             playPaymentSuccessSound();
-            toast.success(`All ${unverifiedToasts.length} payments verified!`, { icon: '🎉' });
+            toast.success(`Verified payments!`, { icon: '🎉' });
             setUnverifiedToasts([]);
+            setTotalUnverifiedCount(0);
         } catch (err: any) {
             toast.error(`Error: ${err.message}`);
         } finally {
@@ -199,124 +217,137 @@ export default function KcbBuniNotificationToast() {
     if (unverifiedToasts.length === 0) return null;
 
     return (
-        /* ── Scrollable Toast Stack: Fixed on Right, max-height 80vh, smooth scrolling, compact width ── */
+        /* ── Bright Theme Toast Stack: Clean white cards with crisp emerald accents, fixed height items, never squished ── */
         <div
-            className="fixed top-3 right-3 z-[999999] flex flex-col gap-2 max-w-[325px] w-full max-h-[80vh] overflow-y-auto p-1 pointer-events-auto"
+            className="fixed top-4 right-4 z-[999999] flex flex-col gap-2.5 max-w-[340px] w-full max-h-[82vh] overflow-y-auto p-1 pointer-events-auto"
             style={{
                 scrollbarWidth: 'thin',
-                scrollbarColor: '#00e676 rgba(0, 0, 0, 0.3)',
+                scrollbarColor: '#10b981 #f1f5f9',
             }}
         >
             {/* Top Compact Summary Pill if more than 1 toast */}
-            {unverifiedToasts.length > 1 && (
-                <div className="flex items-center justify-between px-2.5 py-1 rounded-xl bg-slate-950/90 backdrop-blur-md border border-emerald-400/50 text-[10px] text-emerald-300 shadow-xl">
-                    <span className="font-black flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-                        <span>{unverifiedToasts.length} Unverified Payments</span>
+            {totalUnverifiedCount > 1 && (
+                <div className="flex-shrink-0 flex items-center justify-between px-3 py-1.5 rounded-xl bg-white border border-emerald-200 text-xs shadow-md">
+                    <span className="font-extrabold text-slate-800 flex items-center gap-1.5 text-[11px]">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                        <span>{totalUnverifiedCount} Unverified KCB Payments</span>
                     </span>
-                    <button
-                        type="button"
-                        onClick={handleVerifyAll}
-                        disabled={bulkVerifying}
-                        className="px-2 py-0.5 rounded-md bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black text-[9px] transition active:scale-95 cursor-pointer disabled:opacity-50 shadow-sm"
-                    >
-                        {bulkVerifying ? '…' : 'Verify All'}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            type="button"
+                            onClick={() => handleViewTransactions()}
+                            className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline"
+                        >
+                            Ledger →
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleVerifyAll}
+                            disabled={bulkVerifying}
+                            className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] transition active:scale-95 disabled:opacity-50"
+                        >
+                            {bulkVerifying ? '…' : 'Verify All'}
+                        </button>
+                    </div>
                 </div>
             )}
 
-            {/* Individual Bright Luminous Cyber Emerald Toast Cards */}
+            {/* Individual Bright Clean White Cards with Crisp Emerald Accents */}
             {unverifiedToasts.map((toastItem) => {
                 const timeLabel = formatShortTime(toastItem.payment_date);
                 const isVerifying = verifyingId === toastItem.payment_id;
-
-                const metaParts = [
-                    toastItem.unit_name || null,
-                    toastItem.location_name || null,
-                    timeLabel || null,
-                ].filter(Boolean).join(' • ');
 
                 return (
                     <div
                         key={toastItem.payment_id}
                         onClick={() => handleViewTransactions(toastItem.receipt)}
-                        className="rounded-2xl px-3 py-2.5 shadow-xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] border relative overflow-hidden cursor-pointer group"
+                        className="flex-shrink-0 bg-white/95 backdrop-blur-md rounded-2xl p-3.5 shadow-xl border border-emerald-400/50 hover:border-emerald-500 hover:shadow-2xl transition-all duration-200 cursor-pointer relative overflow-hidden"
                         style={{
-                            /* Bright Luminous Cyber Emerald Theme (Vibrant AlphaPlus Cyber Emerald) */
-                            background: 'linear-gradient(135deg, #059669 0%, #10b981 40%, #00e676 100%)',
-                            borderColor: '#a7f3d0',
-                            boxShadow: '0 8px 20px -3px rgba(16, 185, 129, 0.5), 0 0 12px rgba(0, 230, 118, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.5)',
+                            boxShadow: '0 12px 28px -6px rgba(16, 185, 129, 0.2), 0 4px 12px -2px rgba(0, 0, 0, 0.06)',
                         }}
                     >
-                        {/* Top luminous gloss reflection */}
-                        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-white/60 pointer-events-none" />
+                        {/* Left Emerald Accent Border Strip */}
+                        <div className="absolute top-0 bottom-0 left-0 w-1.5 bg-gradient-to-b from-emerald-500 to-teal-600" />
 
-                        {/* Top Line: Badge + Receipt Code */}
-                        <div className="flex items-center justify-between gap-1 mb-1">
+                        {/* Top Line: Badge + Receipt Code + Date */}
+                        <div className="flex items-center justify-between gap-1.5 pl-1.5 mb-2">
                             <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="w-4 h-4 rounded-md bg-slate-950/30 flex items-center justify-center text-[10px] text-white flex-shrink-0">
-                                    💳
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span>💳</span>
+                                    <span>C2B KCB BUNI</span>
                                 </span>
-                                <span className="text-[9px] font-black uppercase tracking-wider text-slate-950/90 truncate">
-                                    C2B KCB BUNI RECEIVED
-                                </span>
+                                {timeLabel && (
+                                    <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-0.5 truncate">
+                                        <FiClock size={9} />
+                                        <span>{timeLabel}</span>
+                                    </span>
+                                )}
                             </div>
 
                             <button
                                 type="button"
                                 onClick={(e) => handleCopy(toastItem.receipt, e)}
                                 title="Click to copy receipt"
-                                className="flex items-center gap-0.5 text-[9px] font-mono font-black text-slate-950 bg-white/40 hover:bg-white/70 px-1.5 py-0.5 rounded transition cursor-pointer flex-shrink-0 shadow-2xs"
+                                className="flex items-center gap-1 text-[9px] font-mono font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded border border-slate-200 transition cursor-pointer flex-shrink-0"
                             >
                                 <span>{toastItem.receipt}</span>
-                                <FiCopy size={9} className="opacity-70" />
+                                <FiCopy size={9} className="opacity-70 text-slate-500" />
                             </button>
                         </div>
 
-                        {/* Middle & Action Row */}
-                        <div className="flex items-center justify-between gap-2">
-                            {/* Left Details */}
-                            <div className="flex-1 min-w-0">
-                                {/* Large Bright Bold Amount */}
-                                <div className="text-xl font-black text-slate-950 tracking-tight leading-none font-sans drop-shadow-2xs">
-                                    {fmt(toastItem.amount)}
-                                </div>
+                        {/* Middle: Amount & Tenant Info */}
+                        <div className="pl-1.5">
+                            {/* Prominent Amount */}
+                            <div className="text-2xl font-black text-slate-900 tracking-tight leading-tight font-sans">
+                                {fmt(toastItem.amount)}
+                            </div>
 
-                                {/* Tenant Name */}
-                                <p className="text-xs font-black text-white truncate leading-tight mt-1 drop-shadow-sm">
-                                    From: <span className="underline decoration-white/60 decoration-1 underline-offset-1">{toastItem.tenant_name}</span>
-                                </p>
+                            {/* Tenant Name */}
+                            <p className="text-xs font-black text-slate-800 truncate mt-1">
+                                From: <span className="text-emerald-700">{toastItem.tenant_name}</span>
+                            </p>
 
-                                {/* Room • Location • Time */}
-                                {metaParts && (
-                                    <p className="text-[9px] font-extrabold text-slate-950/80 truncate mt-0.5">
-                                        {metaParts}
-                                    </p>
+                            {/* Unit & Property Location */}
+                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-500 font-semibold truncate">
+                                {toastItem.unit_name && (
+                                    <span className="bg-slate-100 px-1.5 py-0.2 rounded font-bold text-slate-700">
+                                        {toastItem.unit_name}
+                                    </span>
+                                )}
+                                {toastItem.location_name && (
+                                    <span className="flex items-center gap-0.5 text-slate-600">
+                                        <FiMapPin size={9} className="text-emerald-600" />
+                                        <span>{toastItem.location_name}</span>
+                                    </span>
+                                )}
+                                {toastItem.phone && (
+                                    <span className="text-slate-400 font-mono text-[9px]">
+                                        • {toastItem.phone}
+                                    </span>
                                 )}
                             </div>
+                        </div>
 
-                            {/* Right Compact Action Buttons */}
-                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                {/* View button */}
-                                <button
-                                    type="button"
-                                    onClick={(e) => handleViewTransactions(toastItem.receipt, e)}
-                                    className="px-2.5 py-0.5 rounded-full bg-slate-950 hover:bg-slate-900 text-white font-black text-[9px] shadow-sm hover:scale-[1.03] active:scale-95 transition-all flex items-center gap-0.5 cursor-pointer"
-                                >
-                                    <span>View →</span>
-                                </button>
+                        {/* Bottom Action Buttons */}
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 pl-1.5">
+                            <button
+                                type="button"
+                                onClick={(e) => handleViewTransactions(toastItem.receipt, e)}
+                                className="text-[11px] font-black text-emerald-700 hover:text-emerald-800 flex items-center gap-1 transition"
+                            >
+                                <span>View Details</span>
+                                <FiArrowRight size={11} />
+                            </button>
 
-                                {/* Verified button */}
-                                <button
-                                    type="button"
-                                    onClick={(e) => handleVerify(toastItem, e)}
-                                    disabled={isVerifying}
-                                    className="px-2.5 py-0.5 rounded-full bg-white hover:bg-emerald-50 text-emerald-950 font-black text-[9px] shadow-sm hover:scale-[1.03] active:scale-95 transition-all flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
-                                >
-                                    <FiCheck size={10} className="stroke-[3] text-emerald-700" />
-                                    <span>{isVerifying ? '…' : 'Verified'}</span>
-                                </button>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={(e) => handleVerify(toastItem, e)}
+                                disabled={isVerifying}
+                                className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] shadow-sm hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            >
+                                <FiCheck size={12} className="stroke-[3]" />
+                                <span>{isVerifying ? 'Verifying…' : 'Verified ✓'}</span>
+                            </button>
                         </div>
                     </div>
                 );
