@@ -22,6 +22,7 @@ import {
 } from 'chart.js';
 import { Bar, Line, Doughnut, Radar } from 'react-chartjs-2';
 import { topProgress } from '@/components/TopProgressBar';
+import KcbBuniNotificationToast from '@/components/KcbBuniNotificationToast';
 
 ChartJS.register(
     CategoryScale, LinearScale, BarElement, LineElement, PointElement,
@@ -803,6 +804,8 @@ export default function DashboardPage() {
 
     return (
         <div className="animate-fadeIn space-y-5 pb-16 font-sans text-slate-800">
+            {/* ── Toast notification for incoming & unverified KCB Buni student payments ── */}
+            <KcbBuniNotificationToast />
 
             {/* ══════════════════════════════════════════════════════════════════════
                 1. EXACT TOP HEADER (MATCHING USER REFERENCE SCREENSHOT)
@@ -1586,7 +1589,17 @@ export default function DashboardPage() {
                                 const isMpesa = p.payment_method === 'M-Pesa';
                                 const isToday = p.payment_date?.startsWith(todayStr);
                                 return (
-                                    <div key={p.payment_id || i} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition">
+                                    <div
+                                        key={p.payment_id || i}
+                                        onClick={() => {
+                                            if (isKcb) {
+                                                router.push(`/dashboard/kcb-transactions?search=${encodeURIComponent(p.mpesa_receipt || p.arms_tenants?.tenant_name || '')}`);
+                                            } else {
+                                                router.push('/dashboard/payments');
+                                            }
+                                        }}
+                                        className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition cursor-pointer"
+                                    >
                                         <div
                                             className={`w-9 h-9 rounded-2xl flex items-center justify-center text-xs font-black text-white flex-shrink-0 shadow-sm ${
                                                 isKcb ? 'bg-teal-500' : isMpesa ? 'bg-emerald-500' : 'bg-blue-500'

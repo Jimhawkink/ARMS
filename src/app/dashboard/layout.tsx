@@ -38,6 +38,7 @@ const menuGroups = [
             { href: '/dashboard/billing', label: 'Billing', icon: FiFileText, requiredPerm: 'can_manage_billing' },
             { href: '/dashboard/payments', label: 'Payments', icon: FiDollarSign, requiredPerm: 'can_record_payments' },
             { href: '/dashboard/mpesa-transactions', label: 'M-Pesa Txns', icon: FiSmartphone, requiredPerm: 'can_record_payments' },
+            { href: '/dashboard/kcb-transactions', label: 'KCB Buni Txns', icon: FiCreditCard, requiredPerm: 'can_record_payments' },
             { href: '/dashboard/unpaid', label: 'Unpaid Rent', icon: FiAlertTriangle, requiredPerm: 'can_view_reports' },
             { href: '/dashboard/checklists', label: 'Checklists', icon: FiClipboard, requiredPerm: 'can_manage_checklists' },
         ],

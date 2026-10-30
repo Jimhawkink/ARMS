@@ -323,7 +323,7 @@ export async function saveTenantUnits(
     const newUnitIds = new Set(units.map(u => u.unit_id));
 
     // Units being removed → set to Vacant
-    for (const cuid of currentUnitIds) {
+    for (const cuid of Array.from(currentUnitIds)) {
         if (!newUnitIds.has(cuid)) {
             await supabase.from('arms_units')
                 .update({ status: 'Vacant', updated_at: new Date().toISOString() })
@@ -1565,6 +1565,64 @@ export async function getKcbStkRequests(limit: number = 30) {
     } catch (err: any) {
         console.error('getKcbStkRequests error:', err.message);
         return [];
+    }
+}
+
+export async function getKcbBuniPayments(limit: number = 1000) {
+    try {
+        const { data, error } = await supabase
+            .from('arms_payments')
+            .select('*, arms_tenants(tenant_name, phone, id_number, monthly_rent, balance, arms_units(unit_name), arms_locations(location_name)), arms_locations(location_name), arms_billing(billing_month, balance, rent_amount, status)')
+            .or('payment_method.eq.KCB Buni,payment_method.ilike.%KCB%,notes.ilike.%KCB%')
+            .order('payment_date', { ascending: false })
+            .limit(limit);
+        if (!error && data) {
+            return data.map((p: any) => ({
+                ...p,
+                is_verified: !!(p.notes && (p.notes.includes('[VerifiedBy:') || p.notes.includes('[Verified:true]'))),
+                arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+                current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+            }));
+        }
+    } catch { /* fallback */ }
+
+    try {
+        const { data, error } = await supabase
+            .from('arms_payments')
+            .select('*, arms_tenants(tenant_name, phone), arms_locations(location_name)')
+            .or('payment_method.eq.KCB Buni,payment_method.ilike.%KCB%,notes.ilike.%KCB%')
+            .order('payment_date', { ascending: false })
+            .limit(limit);
+        if (error) throw error;
+        return (data || []).map((p: any) => ({
+            ...p,
+            is_verified: !!(p.notes && (p.notes.includes('[VerifiedBy:') || p.notes.includes('[Verified:true]'))),
+            arrears_paid: parseNoteTag(p.notes, 'ArrearsPaid'),
+            current_rent_paid: parseNoteTag(p.notes, 'CurrentRentPaid'),
+        }));
+    } catch (err: any) {
+        console.error('getKcbBuniPayments error:', err.message);
+        return [];
+    }
+}
+
+export async function markPaymentVerified(paymentId: number, verifiedBy: string = 'Manager') {
+    try {
+        const { data: p } = await supabase.from('arms_payments').select('notes').eq('payment_id', paymentId).single();
+        const existingNotes = p?.notes || '';
+        if (existingNotes.includes('[VerifiedBy:') || existingNotes.includes('[Verified:true]')) {
+            return { success: true, notes: existingNotes };
+        }
+        const tag = ` [VerifiedBy:${verifiedBy}] [VerifiedAt:${new Date().toISOString()}]`;
+        const updatedNotes = (existingNotes + tag).trim();
+        const { data, error } = await supabase.from('arms_payments').update({ notes: updatedNotes }).eq('payment_id', paymentId).select().single();
+        if (error) throw error;
+        invalidateCache('payments');
+        invalidateCache('stats');
+        return { success: true, data };
+    } catch (err: any) {
+        console.error('markPaymentVerified error:', err.message);
+        return { success: false, error: err.message };
     }
 }
 
