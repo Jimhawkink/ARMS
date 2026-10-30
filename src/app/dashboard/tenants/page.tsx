@@ -613,7 +613,7 @@ export default function TenantsPage() {
                     await updateMoveInPayment(
                         editItem.tenant_id,
                         parseFloat(form.initial_payment) || 0,
-                        form.move_in_date
+                        Number(form.location_id || editItem.location_id || 0)
                     );
                 }
                 const junctionUnits = [

@@ -130,7 +130,7 @@ export default function CaretakersPage() {
             {tab === 'caretakers' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {caretakers.map((c, idx) => {
-                        const initials = (c.caretaker_name || '?').split(' ').slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '?';
+                        const initials = (c.caretaker_name || '?').split(' ').slice(0, 2).map((w: string) => w[0]?.toUpperCase() || '').join('') || '?';
                         return (
                             <div key={c.caretaker_id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-all">
                                 <div className="px-5 py-3 flex items-center gap-3 relative overflow-hidden" style={{ background: c.is_active ? GRADIENTS[idx % GRADIENTS.length] : '#f1f5f9' }}>

@@ -225,7 +225,7 @@ export default function UsersAccessPage() {
                 <div className="flex items-center gap-2">
                     <button onClick={loadData} className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition"><FiRefreshCw size={15} /></button>
                     {tab === 'users' && (
-                        <button onClick={() => { setShowAddUser(true); setEditUser(null); setForm({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager' }); }}
+                        <button onClick={() => { setShowAddUser(true); setEditUser(null); setForm({ user_name: '', password_hash: '', name: '', email: '', phone: '', user_role: 'manager', mobile_pin: '' }); }}
                             className="btn-primary flex items-center gap-2"><FiPlus size={14} /> Add User</button>
                     )}
                 </div>

@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
                 return NextResponse.json({ agreements: [] });
 
             // Fetch tenant info separately — plain query, no FK joins needed
-            const tenantIds = [...new Set(agreements.map((a: any) => a.tenant_id))];
+            const tenantIds = Array.from(new Set(agreements.map((a: any) => a.tenant_id)));
             const { data: tenants } = await supabase
                 .from('arms_tenants')
                 .select('tenant_id, tenant_name, phone')
