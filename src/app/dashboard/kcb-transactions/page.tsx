@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
     getKcbBuniPayments, getLocations, getTenants, getUnits,
@@ -48,7 +48,7 @@ function timeAgo(iso: string) {
     }
 }
 
-export default function KcbBuniTransactionsPage() {
+function KcbBuniTransactionsContent() {
     const searchParams = useSearchParams();
     const initialSearch = searchParams?.get('search') || '';
 
@@ -1088,5 +1088,17 @@ export default function KcbBuniTransactionsPage() {
                 </div>
             )}
         </div>
+    );
+}
+
+export default function KcbBuniTransactionsPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-[400px] flex items-center justify-center text-xs text-slate-400 font-bold">
+                Loading KCB Buni Inflow Ledger…
+            </div>
+        }>
+            <KcbBuniTransactionsContent />
+        </Suspense>
     );
 }
