@@ -21,8 +21,9 @@ const KCB_COOLDOWN_MS = 90_000;
 // Sandbox units     → accounts.buni.kcbgroup.com / sandbox.buni.kcbgroup.com (hard-coded KCB sandbox URLs)
 const PROD_TOKEN_URL   = process.env.KCB_TOKEN_URL     || "https://api.buni.kcbgroup.com/token";
 const PROD_STK_URL     = process.env.KCB_STK_URL       || "https://api.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
-const SBX_TOKEN_URL    = "https://accounts.buni.kcbgroup.com/oauth2/token";
-const SBX_STK_URL      = "https://sandbox.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
+// UAT/Sandbox gateway: portal is sandbox.buni.kcbgroup.com but the API GATEWAY is uat.buni.kcbgroup.com
+const SBX_TOKEN_URL    = "https://uat.buni.kcbgroup.com/token";
+const SBX_STK_URL      = "https://uat.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
 const KCB_CALLBACK_URL = process.env.KCB_CALLBACK_URL  || "https://arms-opal.vercel.app/api/kcb/callback";
 
 // Helper: pick correct URLs based on environment
