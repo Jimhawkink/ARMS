@@ -16,11 +16,23 @@ export const dynamic = "force-dynamic";
 const lastPushTime = new Map<string, number>();
 const KCB_COOLDOWN_MS = 90_000;
 
-// Endpoints — read from env var so you can change without redeploying
-// Token URL from KCB portal: https://accounts.buni.kcbgroup.com/oauth2/token
-const TOKEN_URL        = process.env.KCB_TOKEN_URL     || "https://accounts.buni.kcbgroup.com/oauth2/token";
-const STK_URL          = process.env.KCB_STK_URL       || "https://sandbox.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
+// Endpoints — resolved PER REQUEST based on the unit's environment field in DB.
+// Production units  → api.buni.kcbgroup.com   (set via KCB_TOKEN_URL / KCB_STK_URL env vars)
+// Sandbox units     → accounts.buni.kcbgroup.com / sandbox.buni.kcbgroup.com (hard-coded KCB sandbox URLs)
+const PROD_TOKEN_URL   = process.env.KCB_TOKEN_URL     || "https://api.buni.kcbgroup.com/token";
+const PROD_STK_URL     = process.env.KCB_STK_URL       || "https://api.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
+const SBX_TOKEN_URL    = "https://accounts.buni.kcbgroup.com/oauth2/token";
+const SBX_STK_URL      = "https://sandbox.buni.kcbgroup.com/mm/api/request/1.0.0/stkpush";
 const KCB_CALLBACK_URL = process.env.KCB_CALLBACK_URL  || "https://arms-opal.vercel.app/api/kcb/callback";
+
+// Helper: pick correct URLs based on environment
+function getKcbUrls(environment: string): { tokenUrl: string; stkUrl: string } {
+    const isSandbox = environment === "sandbox";
+    return {
+        tokenUrl: isSandbox ? SBX_TOKEN_URL : PROD_TOKEN_URL,
+        stkUrl:   isSandbox ? SBX_STK_URL   : PROD_STK_URL,
+    };
+}
 
 /* ── Resolve KCB credentials: DB first, env vars as fallback ── */
 async function resolveKcbCredentials(tenantId: number): Promise<{
@@ -92,9 +104,10 @@ async function resolveKcbCredentials(tenantId: number): Promise<{
 
 
 /* ── Step 2: Get OAuth2 Bearer token using DB credentials ── */
-async function getKCBToken(consumerKey: string, consumerSecret: string): Promise<string> {
+async function getKCBToken(consumerKey: string, consumerSecret: string, tokenUrl: string): Promise<string> {
     const credentials = Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
-    const res = await fetch(TOKEN_URL, {
+    console.log(`[KCB STK] Getting token from: ${tokenUrl}`);
+    const res = await fetch(tokenUrl, {
         method: "POST",
         headers: {
             "Authorization": `Basic ${credentials}`,
@@ -112,7 +125,7 @@ async function getKCBToken(consumerKey: string, consumerSecret: string): Promise
 }
 
 /* ── Step 3: Fire KCB STK Push ── */
-async function fireKCBSTK(token: string, params: {
+async function fireKCBSTK(token: string, stkUrl: string, params: {
     phone: string;
     amount: number;
     invoiceNumber: string;
@@ -128,7 +141,8 @@ async function fireKCBSTK(token: string, params: {
         transactionDescription: "Rent Pay",
     };
     console.log("[KCB STK] Payload:", JSON.stringify(body));
-    const res = await fetch(STK_URL, {
+    console.log("[KCB STK] STK URL:", stkUrl);
+    const res = await fetch(stkUrl, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
@@ -192,9 +206,13 @@ export async function POST(req: NextRequest) {
         // invoiceNumber: {accountNumber}-{tenantId}
         const invoiceNumber = `${creds.accountNumber}-${tenantId}`;
 
+        // ── Resolve URLs based on unit environment (sandbox vs production) ──
+        const { tokenUrl, stkUrl } = getKcbUrls(creds.environment);
+        console.log(`[KCB ARMS] Using tokenUrl=${tokenUrl} stkUrl=${stkUrl}`);
+
         // ── Get token & fire STK ──
-        const token = await getKCBToken(creds.consumerKey, creds.consumerSecret);
-        const { data: result, httpStatus } = await fireKCBSTK(token, {
+        const token = await getKCBToken(creds.consumerKey, creds.consumerSecret, tokenUrl);
+        const { data: result, httpStatus } = await fireKCBSTK(token, stkUrl, {
             phone:  normalizedPhone,
             amount: Number(amount),
             invoiceNumber,
