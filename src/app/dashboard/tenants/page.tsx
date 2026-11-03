@@ -77,7 +77,7 @@ function CompactKpiCard({
 
             {/* Middle row: Big bold punchy value */}
             <div className="relative z-10 my-0.5">
-                <p className="text-lg sm:text-xl font-black text-white tracking-tight leading-tight drop-shadow-sm font-sans truncate">
+                <p className="text-sm font-black text-white tracking-tight leading-tight drop-shadow-sm font-sans truncate">
                     {value}
                 </p>
             </div>
@@ -758,7 +758,7 @@ export default function TenantsPage() {
                     </div>
                     <div>
                         <div className="flex items-center gap-2.5 flex-wrap">
-                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-sans">
+                            <h1 className="text-base font-bold text-slate-900 tracking-tight">
                                 Tenant Portfolio & Identity Master
                             </h1>
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-300">
@@ -817,7 +817,7 @@ export default function TenantsPage() {
 
                     <button
                         onClick={openAdd}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs sm:text-sm font-black text-white transition-all shadow-md hover:scale-[1.02] active:scale-95"
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-black text-white transition-all shadow-md hover:scale-[1.02] active:scale-95"
                         style={{
                             background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
                             boxShadow: '0 8px 20px -6px rgba(79, 70, 229, 0.45)',
@@ -927,7 +927,7 @@ export default function TenantsPage() {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id as any)}
-                                className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all ${
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all ${
                                     isSel
                                         ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                                         : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
@@ -1084,7 +1084,7 @@ export default function TenantsPage() {
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
                         <div>
-                            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                                 <span className="text-rose-500">🚨</span> High-Priority Rent Recovery Watchlist
                             </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
@@ -1110,11 +1110,11 @@ export default function TenantsPage() {
                                         <div className="flex items-center gap-2.5">
                                             <TenantAvatar name={t.tenant_name} status={t.status} size={40} />
                                             <div>
-                                                <p className="font-black text-sm text-slate-900">{t.tenant_name}</p>
+                                                <p className="text-xs font-bold text-slate-900">{t.tenant_name}</p>
                                                 <p className="text-xs text-slate-500">🏠 {t.arms_units?.unit_name} · 📍 {t.arms_locations?.location_name}</p>
                                             </div>
                                         </div>
-                                        <span className="text-base font-black text-rose-600">{fmt(realBal)}</span>
+                                        <span className="text-sm font-bold text-rose-600">{fmt(realBal)}</span>
                                     </div>
 
                                     <div className="mt-3 pt-3 border-t border-rose-100 flex items-center justify-between text-xs">
@@ -1153,7 +1153,7 @@ export default function TenantsPage() {
             {activeTab === 'clusters' && (
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div>
-                        <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                             <span>📍</span> Property Occupancy & Revenue Density
                         </h3>
                         <p className="text-xs text-slate-500 mt-0.5">
@@ -1174,7 +1174,7 @@ export default function TenantsPage() {
                                             📍
                                         </div>
                                         <div>
-                                            <p className="text-sm font-black text-slate-900 group-hover:text-indigo-700 transition">
+                                            <p className="text-xs font-bold text-slate-900 group-hover:text-indigo-700 transition">
                                                 {loc.name}
                                             </p>
                                             <p className="text-[11px] text-slate-400">{loc.count} active tenants</p>
@@ -1208,7 +1208,7 @@ export default function TenantsPage() {
                 <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
                     <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
                         <div>
-                            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                                 <span>🏖️</span> University Student Vacation Roster
                             </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
@@ -1226,7 +1226,7 @@ export default function TenantsPage() {
                                 <div className="flex items-center gap-3">
                                     <TenantAvatar name={t.tenant_name} status={t.status} size={42} />
                                     <div>
-                                        <p className="font-black text-sm text-slate-900">{t.tenant_name}</p>
+                                        <p className="text-xs font-bold text-slate-900">{t.tenant_name}</p>
                                         <p className="text-xs text-violet-700">🏠 {t.arms_units?.unit_name} · Base: {fmt(t.monthly_rent)}</p>
                                         <p className="text-[10px] text-slate-500">Vacation Rate: {fmt(Math.round((t.monthly_rent || 0) * 0.5))}/mo</p>
                                     </div>
@@ -2287,7 +2287,7 @@ export default function TenantsPage() {
                                 <button
                                     onClick={handleSave}
                                     disabled={saving || issuingAgreement}
-                                    className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-xs sm:text-sm font-black text-white transition shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+                                    className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-xs font-black text-white transition shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-60"
                                     style={{
                                         background: editItem
                                             ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
