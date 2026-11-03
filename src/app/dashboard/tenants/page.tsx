@@ -259,6 +259,12 @@ export default function TenantsPage() {
         setLoading(true);
         topProgress.start();
         try {
+            // Auto-generate missing bills silently (catches up any unbilled months including next month)
+            const nowLocal = new Date();
+            const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+            const nextMonthDate = new Date(nowLocal.getFullYear(), nowLocal.getMonth() + 1, 1);
+            const nextMonth = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`;
+            generateMonthlyBills(nextMonth, locId ?? undefined).catch(() => {});
             const [t, u, l, ur] = await Promise.all([
                 getTenants(locId ?? undefined),
                 getUnits(),

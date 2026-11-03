@@ -535,12 +535,13 @@ export async function updateTenant(id: number, updates: any) {
             const locationId = safeUpdates.location_id || oldTenant.location_id;
             const unitId = safeUpdates.unit_id || oldTenant.unit_id;
 
-            // Update current & future unpaid bills with new rent amount
+            // Update ALL unpaid bills (past + current + future) with new rent amount
+            // This ensures comrade/rent-change propagates to every month that hasn't been fully paid
             const { data: futureBills } = await supabase
                 .from('arms_billing')
-                .select('billing_id, billing_month, rent_amount, amount_paid')
+                .select('billing_id, billing_month, rent_amount, amount_paid, balance, status')
                 .eq('tenant_id', id)
-                .gte('billing_month', currentMonth)
+                .neq('status', 'Paid')
                 .order('billing_month', { ascending: true });
 
             if (futureBills && futureBills.length > 0) {
@@ -980,7 +981,11 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
 
     // Iterate months using integer arithmetic — no Date timezone issues
     let [sy, sm] = earliestMonth.split('-').map(Number);
-    const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+    // Include next month so once current month is paid, next month shows as due immediately
+    let _nmy = nowLocal.getFullYear();
+    let _nmm = nowLocal.getMonth() + 2;
+    if (_nmm > 12) { _nmm = 1; _nmy++; }
+    const [ey, em] = [_nmy, _nmm];
 
     while (sy < ey || (sy === ey && sm <= em)) {
         const curMonth = `${sy}-${String(sm).padStart(2, '0')}`;
@@ -1109,7 +1114,7 @@ export async function recordPayment(payment: {
     const nowLocal = new Date();
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
-    const moveInDate = tenant.move_in_date || tenant.created_at?.slice(0, 10);
+    const moveInDate = tenant.billing_start_month || tenant.move_in_date || tenant.created_at?.slice(0, 10);
     const earliestMonth = moveInDate ? moveInDate.slice(0, 7) : currentMonth;
 
     const { data: existingBills } = await supabase
@@ -1120,8 +1125,11 @@ export async function recordPayment(payment: {
     let autoBalanceIncrease = 0;
 
     // Integer month arithmetic — avoids UTC timezone shift
+    // Generate bills through NEXT month so the upcoming month is always billed
     let [sy2, sm2] = earliestMonth.split('-').map(Number);
-    const [ey2, em2] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+    let _ny = nowLocal.getFullYear(), _nm = nowLocal.getMonth() + 2;
+    if (_nm > 12) { _nm = 1; _ny++; }
+    const [ey2, em2] = [_ny, _nm];
     while (sy2 < ey2 || (sy2 === ey2 && sm2 <= em2)) {
         const curM = `${sy2}-${String(sm2).padStart(2, '0')}`;
         if (!existingMonths.has(curM) && (tenant.monthly_rent || 0) > 0) {
@@ -1751,7 +1759,12 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
 
             const expectedMonths: string[] = [];
             let [sy, sm] = moveInMonth.split('-').map(Number);
-            const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
+            // Always bill through next month so when current month is fully paid,
+            // the upcoming month immediately shows as due (not "cleared")
+            let nextMonthYear = nowLocal.getFullYear();
+            let nextMonth = nowLocal.getMonth() + 2; // +1 for 0-index, +1 for next month
+            if (nextMonth > 12) { nextMonth = 1; nextMonthYear++; }
+            const [ey, em] = [nextMonthYear, nextMonth];
             while (sy < ey || (sy === ey && sm <= em)) {
                 expectedMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
                 sm++;
