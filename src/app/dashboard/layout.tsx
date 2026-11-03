@@ -182,9 +182,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }, []);
 
     useEffect(() => {
-        fetchUnreadChats();
-        const interval = setInterval(fetchUnreadChats, 15000);
-        return () => clearInterval(interval);
+        fetchUnreadChats(); // fetch once on mount only
     }, [fetchUnreadChats]);
 
     // Reset unread count when on chats page

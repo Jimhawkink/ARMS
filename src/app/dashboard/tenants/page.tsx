@@ -259,12 +259,6 @@ export default function TenantsPage() {
         setLoading(true);
         topProgress.start();
         try {
-            // Auto-generate missing bills silently (catches up any unbilled months including next month)
-            const nowLocal = new Date();
-            const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
-            const nextMonthDate = new Date(nowLocal.getFullYear(), nowLocal.getMonth() + 1, 1);
-            const nextMonth = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`;
-            generateMonthlyBills(nextMonth, locId ?? undefined).catch(() => {});
             const [t, u, l, ur] = await Promise.all([
                 getTenants(locId ?? undefined),
                 getUnits(),
@@ -2282,63 +2276,6 @@ export default function TenantsPage() {
                                             placeholder="Amount paid at registration (optional)"
                                         />
                                     </div>
-
-                                    {/* Interactive Live Simulation Preview */}
-                                    {!editItem && form.monthly_rent && form.move_in_date && (() => {
-                                        const baseRent = totalCombinedRent;
-                                        const moveInMonth = form.move_in_date.slice(0, 7);
-                                        const curMonth = new Date().toISOString().slice(0, 7);
-                                        if (!baseRent || moveInMonth > curMonth) return null;
-
-                                        const months: { month: string; rent: number; isVac: boolean; isCurrent: boolean }[] = [];
-                                        let c = new Date(moveInMonth + '-01');
-                                        const end = new Date(curMonth + '-01');
-                                        while (c <= end) {
-                                            const m = c.toISOString().slice(0, 7);
-                                            const mm = m.slice(5, 7);
-                                            const isVac = form.is_on_vacation && ['05','06','07','08'].includes(mm);
-                                            months.push({ month: m, rent: isVac ? Math.round(baseRent * 0.5) : baseRent, isVac, isCurrent: m === curMonth });
-                                            c.setMonth(c.getMonth() + 1);
-                                        }
-
-                                        const initPay = parseFloat(form.initial_payment || '0') || 0;
-                                        let remaining = initPay;
-                                        const allocated = months.map(m => {
-                                            const pay = Math.min(remaining, m.rent);
-                                            remaining = Math.max(0, remaining - pay);
-                                            return { ...m, paid: pay, balance: m.rent - pay };
-                                        });
-
-                                        const pastArrears = allocated.filter(m => !m.isCurrent).reduce((s, m) => s + m.balance, 0);
-                                        const currentDue = allocated.filter(m => m.isCurrent).reduce((s, m) => s + m.balance, 0);
-                                        const finalArrears = pastArrears + currentDue;
-                                        const credit = Math.max(0, remaining);
-
-                                        return (
-                                            <div className="p-3.5 rounded-2xl bg-white border border-indigo-200 shadow-sm space-y-2">
-                                                <div className="flex items-center justify-between text-xs font-black text-slate-800">
-                                                    <span>📊 Live Allocation Simulation</span>
-                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${finalArrears > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                                        Expected Balance: {fmt(finalArrears)}
-                                                    </span>
-                                                </div>
-                                                <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                                    <div className="p-2 bg-slate-50 rounded-xl">
-                                                        <p className="text-[9px] font-bold text-slate-400">Total Billed</p>
-                                                        <p className="font-black text-slate-800">{fmt(months.reduce((s, m) => s + m.rent, 0))}</p>
-                                                    </div>
-                                                    <div className="p-2 bg-slate-50 rounded-xl">
-                                                        <p className="text-[9px] font-bold text-slate-400">Paid Now</p>
-                                                        <p className="font-black text-emerald-600">{fmt(initPay)}</p>
-                                                    </div>
-                                                    <div className="p-2 bg-slate-50 rounded-xl">
-                                                        <p className="text-[9px] font-bold text-slate-400">Advance Credit</p>
-                                                        <p className="font-black text-indigo-600">{fmt(credit)}</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
                                 </div>
                             )}
 
