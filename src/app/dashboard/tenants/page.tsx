@@ -206,7 +206,8 @@ export default function TenantsPage() {
     const [tenantDetails, setTenantDetails] = useState<Record<number, any>>({});
     const [tenantUnitsMap, setTenantUnitsMap] = useState<Record<number, any[]>>({});
     const [additionalUnits, setAdditionalUnits] = useState<Array<{ unit_id: number; rent: string }>>([])
-    const [comrades, setComrades] = useState<Array<{ name: string; phone: string; amount: string }>>([]);
+    const [comradeEnabled, setComradeEnabled] = useState(false);
+    const [comrades, setComrades] = useState<Array<{ name: string; phone: string; amount: string }>>([{ name: '', phone: '', amount: '1000' }]);
 
     // Dossier Modal State
     const [dossierTenant, setDossierTenant] = useState<any | null>(null);
@@ -507,7 +508,8 @@ export default function TenantsPage() {
         setEditItem(null);
         setModalStep('identity');
         setAdditionalUnits([]);
-        setComrades([]);
+        setComradeEnabled(false);
+        setComrades([{ name: '', phone: '', amount: '1000' }]);
         setForm({
             tenant_name: '', phone: '', email: '', id_number: '',
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
@@ -533,11 +535,37 @@ export default function TenantsPage() {
                 .map((tu: any) => ({ unit_id: tu.unit_id, rent: String(tu.custom_rent || 0) }));
         } catch { /* multi-room table check */ }
         setAdditionalUnits(loadedAdditional);
-        setComrades([]);
+
+        // Parse comrades from notes if saved
+        let loadedComrades: Array<{ name: string; phone: string; amount: string }> = [];
+        let isComradeActive = false;
+        let cleanNotes = t.notes || '';
+        if (t.notes && t.notes.includes('[COMRADES:')) {
+            const m = t.notes.match(/\[COMRADES:\s*([\s\S]*?)\]/);
+            if (m) {
+                cleanNotes = t.notes.replace(/\n?\[COMRADES:[\s\S]*?\]/, '').trim();
+                const segments = m[1].split(/\s*\|\s*(?=Comrade \d+:)/);
+                segments.forEach((seg: string) => {
+                    const pure = seg.replace(/^Comrade \d+:\s*/, '');
+                    const parts = pure.split(/\s*\|\s*/);
+                    if (parts.length > 0 && parts[0]) {
+                        const cName = parts[0]?.trim() || '';
+                        const cPhone = parts[1]?.trim() || '';
+                        const cAmt = parts[2]?.replace(/[^0-9.]/g, '') || '';
+                        loadedComrades.push({ name: cName, phone: cPhone, amount: cAmt });
+                    }
+                });
+                if (loadedComrades.length > 0) isComradeActive = true;
+            }
+        }
+        if (loadedComrades.length === 0) loadedComrades = [{ name: '', phone: '', amount: '1000' }];
+        setComradeEnabled(isComradeActive);
+        setComrades(loadedComrades);
 
         const totalRent = t.monthly_rent || 0;
         const additionalRentSum = loadedAdditional.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
-        const primaryRent = totalRent - additionalRentSum;
+        const comradeRentSum = isComradeActive ? loadedComrades.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0) : 0;
+        const primaryRent = totalRent - additionalRentSum - comradeRentSum;
 
         setForm({
             tenant_name: t.tenant_name, phone: t.phone || '', email: t.email || '', id_number: t.id_number || '',
@@ -555,7 +583,10 @@ export default function TenantsPage() {
 
     const totalAdditionalRent = additionalUnits.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
     const primaryRentNum = parseFloat(form.monthly_rent) || 0;
-    const totalCombinedRent = primaryRentNum + totalAdditionalRent;
+    const totalComradeAddedRent = comradeEnabled
+        ? comrades.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0)
+        : 0;
+    const totalCombinedRent = primaryRentNum + totalAdditionalRent + totalComradeAddedRent;
     const totalRoomCount = 1 + additionalUnits.filter(au => au.unit_id > 0).length;
 
     // ── Save Tenant Logic ──
@@ -589,24 +620,19 @@ export default function TenantsPage() {
                 unit_id: form.unit_id,
                 location_id: form.location_id,
                 location_name: locations.find(l => l.location_id === form.location_id)?.location_name || '',
-                monthly_rent: (() => {
-                    if (comrades.length > 0) {
-                        const comradeTotal = comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-                        return Math.max(0, totalCombinedRent - comradeTotal);
-                    }
-                    return totalCombinedRent;
-                })(),
+                monthly_rent: totalCombinedRent,
                 deposit_paid: parseFloat(form.deposit_paid) || 0,
                 move_in_date: form.move_in_date,
                 emergency_contact: form.emergency_contact.trim() || null,
                 emergency_phone: form.emergency_phone.trim() || null,
                 notes: (() => {
-                    let n = form.notes.trim() || null;
-                    if (comrades.length > 0 && comrades.some(c => c.name)) {
-                        const ci = comrades.filter(c => c.name).map((c, i) => `Comrade ${i+1}: ${c.name} | ${c.phone} | KES ${c.amount}`).join(' | ');
-                        n = (n ? n + '\n' : '') + `[COMRADES: ${ci}]`;
+                    let clean = (form.notes || '').replace(/\n?\[COMRADES:[\s\S]*?\]/, '').trim();
+                    if (comradeEnabled && comrades.some(c => c.name.trim() || c.amount.trim())) {
+                        const valid = comrades.filter(c => c.name.trim() || c.amount.trim());
+                        const ci = valid.map((c, i) => `Comrade ${i+1}: ${c.name.trim() || 'Unnamed'} | ${c.phone.trim() || 'N/A'} | +KES ${c.amount.trim() || '0'}`).join(' | ');
+                        clean = (clean ? clean + '\n' : '') + `[COMRADES: ${ci}]`;
                     }
-                    return n;
+                    return clean || null;
                 })(),
                 is_on_vacation: form.is_on_vacation,
             };
@@ -633,7 +659,7 @@ export default function TenantsPage() {
                     );
                 }
                 const junctionUnits = [
-                    { unit_id: form.unit_id, custom_rent: primaryRentNum, is_primary: true },
+                    { unit_id: form.unit_id, custom_rent: primaryRentNum + totalComradeAddedRent, is_primary: true },
                     ...capturedAdditionalUnits.map(au => ({
                         unit_id: au.unit_id, custom_rent: parseFloat(au.rent) || 0, is_primary: false,
                     })),
@@ -2069,94 +2095,117 @@ export default function TenantsPage() {
                                         )}
 
                                 {/* ── COMRADE / ROOM-SHARING SECTION ── */}
-                                <div className="rounded-2xl border-2 border-orange-200 overflow-hidden bg-white shadow-sm">
-                                    <div className="px-4 py-2.5 bg-orange-50/80 border-b border-orange-200/80 flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <span>🤝</span>
-                                            <span className="text-xs font-black text-orange-900 uppercase tracking-wider">
-                                                Room Sharing / Comrades
-                                            </span>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setComrades(prev => [...prev, { name: '', phone: '', amount: '' }])}
-                                            className="px-3 py-1 rounded-xl text-xs font-black text-white bg-orange-500 hover:bg-orange-600 transition flex items-center gap-1 shadow-sm"
-                                        >
-                                            <FiPlus size={12} /> Add Comrade
-                                        </button>
+                                <div className="rounded-2xl border-2 border-amber-200 overflow-hidden bg-white shadow-sm transition-all">
+                                    <div className="px-4 py-3 bg-amber-50/80 border-b border-amber-200 flex items-center justify-between">
+                                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                                            <input
+                                                type="checkbox"
+                                                checked={comradeEnabled}
+                                                onChange={e => {
+                                                    const checked = e.target.checked;
+                                                    setComradeEnabled(checked);
+                                                    if (checked && comrades.length === 0) {
+                                                        setComrades([{ name: '', phone: '', amount: '1000' }]);
+                                                    }
+                                                }}
+                                                className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                                            />
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-base">🤝</span>
+                                                <div>
+                                                    <span className="text-xs font-black text-amber-950 uppercase tracking-wider block">
+                                                        Room Sharing / Comrade (Multiple Students)
+                                                    </span>
+                                                    <span className="text-[10px] text-amber-700 font-medium">
+                                                        Check to add room-mate and added rent surcharge
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </label>
+
+                                        {comradeEnabled && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setComrades(prev => [...prev, { name: '', phone: '', amount: '1000' }])}
+                                                className="px-3 py-1 rounded-xl text-xs font-black text-white bg-amber-600 hover:bg-amber-700 transition flex items-center gap-1 shadow-sm"
+                                            >
+                                                <FiPlus size={12} /> Add Another Comrade
+                                            </button>
+                                        )}
                                     </div>
 
-                                    {comrades.length > 0 ? (
-                                        <div className="p-4 space-y-3">
-                                            <div className="p-2.5 rounded-xl bg-orange-50 border border-orange-200 text-[10px] text-orange-800 font-bold">
-                                                💡 Room rent <strong>KES {Number(form.monthly_rent || 0).toLocaleString()}</strong> split between <strong>{comrades.length + 1}</strong> people.
-                                                Primary tenant pays: <span className="text-orange-900 font-black">
-                                                    KES {Math.max(0, Number(form.monthly_rent || 0) - comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0)).toLocaleString()}
-                                                </span>
+                                    {comradeEnabled ? (
+                                        <div className="p-4 space-y-3 bg-amber-50/20">
+                                            {/* Live Rent Banner */}
+                                            <div className="p-3 rounded-xl bg-amber-100/70 border border-amber-300 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-amber-950">
+                                                <div className="flex items-center gap-2">
+                                                    <span>💡</span>
+                                                    <span>
+                                                        Normal Rent: <strong className="font-black">KES {(parseFloat(form.monthly_rent) || 0).toLocaleString()}</strong>
+                                                        {' + '}
+                                                        Added Comrade Rent: <strong className="font-black text-emerald-700">+{fmt(totalComradeAddedRent)}</strong>
+                                                    </span>
+                                                </div>
+                                                <div className="px-2.5 py-1 bg-amber-600 text-white rounded-lg text-xs font-black shadow-sm">
+                                                    Total Room Rent: {fmt((parseFloat(form.monthly_rent) || 0) + totalComradeAddedRent)}
+                                                </div>
                                             </div>
 
                                             {comrades.map((comrade, idx) => (
-                                                <div key={idx} className="p-3 rounded-2xl bg-orange-50/50 border border-orange-200/80">
+                                                <div key={idx} className="p-3 rounded-2xl bg-white border border-amber-200 shadow-sm">
                                                     <div className="flex items-center justify-between mb-2">
-                                                        <span className="text-[10px] font-black text-orange-700 uppercase">Comrade {idx + 1}</span>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setComrades(prev => prev.filter((_, i) => i !== idx))}
-                                                            className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 border border-rose-200 transition"
-                                                        >
-                                                            <FiTrash2 size={11} />
-                                                        </button>
+                                                        <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider">
+                                                            Comrade #{idx + 1}
+                                                        </span>
+                                                        {comrades.length > 1 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setComrades(prev => prev.filter((_, i) => i !== idx))}
+                                                                className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 border border-rose-200 transition"
+                                                                title="Remove comrade"
+                                                            >
+                                                                <FiTrash2 size={11} />
+                                                            </button>
+                                                        )}
                                                     </div>
-                                                    <div className="grid grid-cols-3 gap-2">
-                                                        <div className="col-span-1">
-                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Full Name</label>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                        <div>
+                                                            <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Comrade Full Name</label>
                                                             <input
                                                                 type="text"
                                                                 value={comrade.name}
                                                                 onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, name: e.target.value } : item))}
-                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                                                                placeholder="Comrade name"
+                                                                className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:border-amber-500 transition"
+                                                                placeholder="e.g. Brian Kiprop"
                                                             />
                                                         </div>
-                                                        <div className="col-span-1">
-                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Phone</label>
+                                                        <div>
+                                                            <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Phone Number</label>
                                                             <input
                                                                 type="text"
                                                                 value={comrade.phone}
                                                                 onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, phone: e.target.value } : item))}
-                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:border-amber-500 transition"
                                                                 placeholder="07XXXXXXXX"
                                                             />
                                                         </div>
-                                                        <div className="col-span-1">
-                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Their Rent (KES)</label>
+                                                        <div>
+                                                            <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Added Amount To Rent (KES)</label>
                                                             <input
                                                                 type="number"
                                                                 value={comrade.amount}
                                                                 onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, amount: e.target.value } : item))}
-                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                                                                placeholder="Amount"
+                                                                className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:border-amber-500 transition"
+                                                                placeholder="e.g. 1000"
                                                             />
                                                         </div>
                                                     </div>
                                                 </div>
                                             ))}
-
-                                            {(() => {
-                                                const comradeTotal = comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-                                                const primaryShare = Number(form.monthly_rent || 0) - comradeTotal;
-                                                const isOver = primaryShare < 0;
-                                                return (
-                                                    <div className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between ${isOver ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
-                                                        <span>{isOver ? '⚠️ Comrades pay more than room rent!' : '✅ Split looks good'}</span>
-                                                        <span>Primary pays: KES {Math.max(0, primaryShare).toLocaleString()}</span>
-                                                    </div>
-                                                );
-                                            })()}
                                         </div>
                                     ) : (
                                         <div className="p-3 text-center text-xs text-slate-400 font-medium">
-                                            Single occupancy. Click "Add Comrade" if this room will be shared between students.
+                                            Single occupancy (Normal rent applies: {fmt(parseFloat(form.monthly_rent) || 0)}). Check box above if students will share this room.
                                         </div>
                                     )}
                                 </div>
