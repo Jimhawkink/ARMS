@@ -205,7 +205,8 @@ export default function TenantsPage() {
     const [expandedTenants, setExpandedTenants] = useState<Set<number>>(new Set());
     const [tenantDetails, setTenantDetails] = useState<Record<number, any>>({});
     const [tenantUnitsMap, setTenantUnitsMap] = useState<Record<number, any[]>>({});
-    const [additionalUnits, setAdditionalUnits] = useState<Array<{ unit_id: number; rent: string }>>([]);
+    const [additionalUnits, setAdditionalUnits] = useState<Array<{ unit_id: number; rent: string }>>([])
+    const [comrades, setComrades] = useState<Array<{ name: string; phone: string; amount: string }>>([]);
 
     // Dossier Modal State
     const [dossierTenant, setDossierTenant] = useState<any | null>(null);
@@ -506,6 +507,7 @@ export default function TenantsPage() {
         setEditItem(null);
         setModalStep('identity');
         setAdditionalUnits([]);
+        setComrades([]);
         setForm({
             tenant_name: '', phone: '', email: '', id_number: '',
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
@@ -531,6 +533,7 @@ export default function TenantsPage() {
                 .map((tu: any) => ({ unit_id: tu.unit_id, rent: String(tu.custom_rent || 0) }));
         } catch { /* multi-room table check */ }
         setAdditionalUnits(loadedAdditional);
+        setComrades([]);
 
         const totalRent = t.monthly_rent || 0;
         const additionalRentSum = loadedAdditional.reduce((s, au) => s + (parseFloat(au.rent) || 0), 0);
@@ -586,12 +589,25 @@ export default function TenantsPage() {
                 unit_id: form.unit_id,
                 location_id: form.location_id,
                 location_name: locations.find(l => l.location_id === form.location_id)?.location_name || '',
-                monthly_rent: totalCombinedRent,
+                monthly_rent: (() => {
+                    if (comrades.length > 0) {
+                        const comradeTotal = comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                        return Math.max(0, totalCombinedRent - comradeTotal);
+                    }
+                    return totalCombinedRent;
+                })(),
                 deposit_paid: parseFloat(form.deposit_paid) || 0,
                 move_in_date: form.move_in_date,
                 emergency_contact: form.emergency_contact.trim() || null,
                 emergency_phone: form.emergency_phone.trim() || null,
-                notes: form.notes.trim() || null,
+                notes: (() => {
+                    let n = form.notes.trim() || null;
+                    if (comrades.length > 0 && comrades.some(c => c.name)) {
+                        const ci = comrades.filter(c => c.name).map((c, i) => `Comrade ${i+1}: ${c.name} | ${c.phone} | KES ${c.amount}`).join(' | ');
+                        n = (n ? n + '\n' : '') + `[COMRADES: ${ci}]`;
+                    }
+                    return n;
+                })(),
                 is_on_vacation: form.is_on_vacation,
             };
 
@@ -2051,6 +2067,99 @@ export default function TenantsPage() {
                                                 Single room tenancy. Click "Add Room" if tenant occupies multiple rooms or stores.
                                             </div>
                                         )}
+
+                                {/* ── COMRADE / ROOM-SHARING SECTION ── */}
+                                <div className="rounded-2xl border-2 border-orange-200 overflow-hidden bg-white shadow-sm">
+                                    <div className="px-4 py-2.5 bg-orange-50/80 border-b border-orange-200/80 flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <span>🤝</span>
+                                            <span className="text-xs font-black text-orange-900 uppercase tracking-wider">
+                                                Room Sharing / Comrades
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setComrades(prev => [...prev, { name: '', phone: '', amount: '' }])}
+                                            className="px-3 py-1 rounded-xl text-xs font-black text-white bg-orange-500 hover:bg-orange-600 transition flex items-center gap-1 shadow-sm"
+                                        >
+                                            <FiPlus size={12} /> Add Comrade
+                                        </button>
+                                    </div>
+
+                                    {comrades.length > 0 ? (
+                                        <div className="p-4 space-y-3">
+                                            <div className="p-2.5 rounded-xl bg-orange-50 border border-orange-200 text-[10px] text-orange-800 font-bold">
+                                                💡 Room rent <strong>KES {Number(form.monthly_rent || 0).toLocaleString()}</strong> split between <strong>{comrades.length + 1}</strong> people.
+                                                Primary tenant pays: <span className="text-orange-900 font-black">
+                                                    KES {Math.max(0, Number(form.monthly_rent || 0) - comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0)).toLocaleString()}
+                                                </span>
+                                            </div>
+
+                                            {comrades.map((comrade, idx) => (
+                                                <div key={idx} className="p-3 rounded-2xl bg-orange-50/50 border border-orange-200/80">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[10px] font-black text-orange-700 uppercase">Comrade {idx + 1}</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setComrades(prev => prev.filter((_, i) => i !== idx))}
+                                                            className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 border border-rose-200 transition"
+                                                        >
+                                                            <FiTrash2 size={11} />
+                                                        </button>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div className="col-span-1">
+                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Full Name</label>
+                                                            <input
+                                                                type="text"
+                                                                value={comrade.name}
+                                                                onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, name: e.target.value } : item))}
+                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                placeholder="Comrade name"
+                                                            />
+                                                        </div>
+                                                        <div className="col-span-1">
+                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Phone</label>
+                                                            <input
+                                                                type="text"
+                                                                value={comrade.phone}
+                                                                onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, phone: e.target.value } : item))}
+                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                placeholder="07XXXXXXXX"
+                                                            />
+                                                        </div>
+                                                        <div className="col-span-1">
+                                                            <label className="text-[9px] font-bold text-orange-700 uppercase block mb-1">Their Rent (KES)</label>
+                                                            <input
+                                                                type="number"
+                                                                value={comrade.amount}
+                                                                onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, amount: e.target.value } : item))}
+                                                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                                                                placeholder="Amount"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {(() => {
+                                                const comradeTotal = comrades.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                                                const primaryShare = Number(form.monthly_rent || 0) - comradeTotal;
+                                                const isOver = primaryShare < 0;
+                                                return (
+                                                    <div className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between ${isOver ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+                                                        <span>{isOver ? '⚠️ Comrades pay more than room rent!' : '✅ Split looks good'}</span>
+                                                        <span>Primary pays: KES {Math.max(0, primaryShare).toLocaleString()}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    ) : (
+                                        <div className="p-3 text-center text-xs text-slate-400 font-medium">
+                                            Single occupancy. Click "Add Comrade" if this room will be shared between students.
+                                        </div>
+                                    )}
+                                </div>
                                     </div>
                                 </div>
                             )}
