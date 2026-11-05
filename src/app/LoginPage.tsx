@@ -155,7 +155,7 @@ export default function LoginPage() {
                 style={{
                     backgroundImage: `url('/login-bg.jpg')`,
                     backgroundSize: 'cover',
-                    backgroundPosition: 'right center',
+                    backgroundPosition: 'center',
                 }}
             >
                 {/* Seamless Midnight Navy Gradient Overlay */}
@@ -163,7 +163,7 @@ export default function LoginPage() {
                     className="absolute inset-0 pointer-events-none"
                     style={{
                         background:
-                            'linear-gradient(to right, rgba(4, 18, 38, 0.88) 0%, rgba(4, 18, 38, 0.50) 10%, rgba(4, 18, 38, 0.12) 18%, transparent 25%)',
+                            'linear-gradient(to right, rgba(4, 18, 38, 0.65) 0%, rgba(4, 18, 38, 0.20) 10%, transparent 18%)',
                     }}
                 />
 
