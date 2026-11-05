@@ -153,7 +153,7 @@ export default function LoginPage() {
             <div
                 className="flex-1 w-full flex flex-col lg:flex-row items-center justify-between px-6 sm:px-10 lg:px-16 xl:px-20 py-4 relative overflow-hidden bg-no-repeat bg-[#041226]"
                 style={{
-                    backgroundImage: `url('/arms-bg.jpg')`,
+                    backgroundImage: `url('/login-bg.jpg')`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'right center',
                 }}
@@ -163,7 +163,7 @@ export default function LoginPage() {
                     className="absolute inset-0 pointer-events-none"
                     style={{
                         background:
-                            'linear-gradient(to right, #041226 0%, #041226 26%, rgba(4, 18, 38, 0.92) 34%, rgba(4, 18, 38, 0.35) 46%, transparent 60%)',
+                            'linear-gradient(to right, #041226 0%, #041226 22%, rgba(4, 18, 38, 0.85) 30%, rgba(4, 18, 38, 0.25) 38%, transparent 50%)',
                     }}
                 />
 
