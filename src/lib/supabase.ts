@@ -981,9 +981,9 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
 
     // Iterate months using integer arithmetic — no Date timezone issues
     let [sy, sm] = earliestMonth.split('-').map(Number);
-    // Include next month so once current month is paid, next month shows as due immediately
+    // Bill only up to current month
     let _nmy = nowLocal.getFullYear();
-    let _nmm = nowLocal.getMonth() + 2;
+    let _nmm = nowLocal.getMonth() + 1;
     if (_nmm > 12) { _nmm = 1; _nmy++; }
     const [ey, em] = [_nmy, _nmm];
 
@@ -1125,9 +1125,9 @@ export async function recordPayment(payment: {
     let autoBalanceIncrease = 0;
 
     // Integer month arithmetic — avoids UTC timezone shift
-    // Generate bills through NEXT month so the upcoming month is always billed
+    // Generate bills only up to current month
     let [sy2, sm2] = earliestMonth.split('-').map(Number);
-    let _ny = nowLocal.getFullYear(), _nm = nowLocal.getMonth() + 2;
+    let _ny = nowLocal.getFullYear(), _nm = nowLocal.getMonth() + 1;
     if (_nm > 12) { _nm = 1; _ny++; }
     const [ey2, em2] = [_ny, _nm];
     while (sy2 < ey2 || (sy2 === ey2 && sm2 <= em2)) {
@@ -1759,10 +1759,9 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
 
             const expectedMonths: string[] = [];
             let [sy, sm] = moveInMonth.split('-').map(Number);
-            // Always bill through next month so when current month is fully paid,
-            // the upcoming month immediately shows as due (not "cleared")
+            // Bill only up to current month
             let nextMonthYear = nowLocal.getFullYear();
-            let nextMonth = nowLocal.getMonth() + 2; // +1 for 0-index, +1 for next month
+            let nextMonth = nowLocal.getMonth() + 1; // +1 for 0-index to get current month
             if (nextMonth > 12) { nextMonth = 1; nextMonthYear++; }
             const [ey, em] = [nextMonthYear, nextMonth];
             while (sy < ey || (sy === ey && sm <= em)) {
