@@ -151,7 +151,7 @@ export default function LoginPage() {
                 MAIN HERO AREA: Luxury Property Wallpaper with Left Gradient
             ═══════════════════════════════════════════════════════════════ */}
             <div
-                className="flex-1 w-full flex flex-col lg:flex-row items-center justify-between px-6 sm:px-10 lg:px-16 xl:px-20 py-4 relative overflow-hidden bg-no-repeat bg-[#041226]"
+                className="flex-1 w-full flex flex-col lg:flex-row items-center justify-between px-4 sm:px-6 lg:px-8 xl:px-12 py-3 relative overflow-hidden bg-no-repeat bg-[#041226]"
                 style={{
                     backgroundImage: `url('/login-bg.jpg')`,
                     backgroundSize: 'cover',
@@ -163,12 +163,12 @@ export default function LoginPage() {
                     className="absolute inset-0 pointer-events-none"
                     style={{
                         background:
-                            'linear-gradient(to right, #041226 0%, #041226 22%, rgba(4, 18, 38, 0.85) 30%, rgba(4, 18, 38, 0.25) 38%, transparent 50%)',
+                            'linear-gradient(to right, rgba(4, 18, 38, 0.88) 0%, rgba(4, 18, 38, 0.50) 10%, rgba(4, 18, 38, 0.12) 18%, transparent 25%)',
                     }}
                 />
 
                 {/* 🌟 LEFT HERO BRANDING (Identical to AlphaPharmacy / AlphaRetail layout) 🌟 */}
-                <div className="hidden lg:flex flex-col justify-center max-w-[420px] xl:max-w-[460px] relative z-10 text-white space-y-3.5 py-2">
+                <div className="hidden lg:flex flex-col justify-center max-w-[330px] xl:max-w-[360px] relative z-10 text-white space-y-2 py-1">
                     {/* Logo & Brand Pill */}
                     <div className="flex items-center gap-3">
                         <div
@@ -192,7 +192,7 @@ export default function LoginPage() {
                     </div>
 
                     {/* Headline */}
-                    <h1 className="text-3xl xl:text-4xl font-black text-white leading-tight tracking-tight pt-1">
+                    <h1 className="text-2xl xl:text-[27px] font-black text-white leading-tight tracking-tight pt-0.5">
                         Everything You Need<br />
                         <span className="text-white">to Run Your Properties.</span>
                     </h1>
@@ -215,7 +215,7 @@ export default function LoginPage() {
 
                     {/* Luminous Cursive Script Accent */}
                     <div className="pt-1">
-                        <p className="cursive-highlight text-2xl xl:text-[28px] text-[#00E676] font-bold tracking-wide -rotate-1 drop-shadow-[0_2px_10px_rgba(0,230,118,0.45)] leading-tight">
+                        <p className="cursive-highlight text-xl xl:text-2xl text-[#00E676] font-bold tracking-wide -rotate-1 drop-shadow-[0_2px_10px_rgba(0,230,118,0.45)] leading-tight">
                             Smart Rentals... Better Yield!
                         </p>
                     </div>
@@ -241,9 +241,9 @@ export default function LoginPage() {
                 </div>
 
                 {/* 🌟 RIGHT LOGIN CARD (EXACT ALPHAPHARMA / ALPHARETAIL FLOATING CARD) 🌟 */}
-                <div className="w-full max-w-[420px] relative z-10 py-2">
+                <div className="w-full max-w-[380px] relative z-10 py-1">
                     <div
-                        className="w-full bg-white/98 lg:bg-white rounded-3xl p-6 sm:p-7 shadow-2xl relative border-2 border-emerald-400/90 backdrop-blur-xl"
+                        className="w-full bg-white/98 lg:bg-white rounded-3xl p-5 sm:p-6 shadow-2xl relative border-2 border-emerald-400/90 backdrop-blur-xl"
                         style={{
                             boxShadow: '0 25px 65px -12px rgba(0, 0, 0, 0.7), 0 0 35px rgba(16, 185, 129, 0.25)',
                         }}
