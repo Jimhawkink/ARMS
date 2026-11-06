@@ -104,16 +104,22 @@ function CompactKpiCard({
 }
 
 /* ─── KCB Tills Dashboard Panel ─── */
+// TillInfo: discovered dynamically from arms_unit_kcb_config via /api/kcb/location-config
+interface TillInfo {
+    accountNumber: string;
+    locations: string[];   // location names linked to this till
+    totalAmount: number;
+    txnCount: number;
+}
+
 function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
     const router = useRouter();
     const [dateFrom, setDateFrom]       = useState('');
     const [dateTo, setDateTo]           = useState('');
     const [filterUnit, setFilterUnit]   = useState('');
     const [filterTenant, setFilterTenant] = useState('');
-    const [till1Total, setTill1Total]   = useState(0);
-    const [till2Total, setTill2Total]   = useState(0);
-    const [till1Count, setTill1Count]   = useState(0);
-    const [till2Count, setTill2Count]   = useState(0);
+    // Tills discovered from DB config — NOT hardcoded
+    const [tills, setTills] = useState<TillInfo[]>([]);
     const [loading, setLoading]         = useState(false);
 
     // Derive unique units from allTenants
@@ -143,6 +149,20 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
     const fetchTotals = useCallback(async () => {
         setLoading(true);
         try {
+            // ── Step 1: Discover tills + their linked locations from DB config ──
+            const cfgRes = await fetch('/api/kcb/location-config');
+            const cfgData: any[] = cfgRes.ok ? await cfgRes.json() : [];
+
+            // Build a map: accountNumber → Set<locationName>
+            const tillLocMap: Record<string, Set<string>> = {};
+            for (const loc of cfgData) {
+                const acc = loc.account_number?.trim();
+                if (!acc) continue;                       // skip unconfigured locations
+                if (!tillLocMap[acc]) tillLocMap[acc] = new Set();
+                tillLocMap[acc].add(loc.location_name);
+            }
+
+            // ── Step 2: Fetch completed STK requests with optional filters ──
             let query = supabase
                 .from('arms_kcb_stk_requests')
                 .select('invoice_number, amount_paid, tenant_id, created_at')
@@ -150,27 +170,46 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
 
             if (dateFrom) query = (query as any).gte('created_at', dateFrom + 'T00:00:00');
             if (dateTo)   query = (query as any).lte('created_at', dateTo   + 'T23:59:59');
-
             if (filterTenant) {
                 query = (query as any).eq('tenant_id', Number(filterTenant));
             } else if (filterUnit) {
                 const unitTenantIds = allTenants
                     .filter(t => t.unit_id === Number(filterUnit))
                     .map(t => t.tenant_id);
-                if (unitTenantIds.length > 0) {
-                    query = (query as any).in('tenant_id', unitTenantIds);
-                }
+                if (unitTenantIds.length > 0) query = (query as any).in('tenant_id', unitTenantIds);
             }
 
-            const { data } = await query;
-            let t1 = 0, t2 = 0, c1 = 0, c2 = 0;
-            for (const r of (data || [])) {
+            const { data: rows } = await query;
+
+            // ── Step 3: Accumulate totals per account_number (from invoice prefix) ──
+            const totals: Record<string, { amount: number; count: number }> = {};
+            for (const r of (rows || [])) {
                 const inv = r.invoice_number || '';
-                if (inv.startsWith('8128983')) { t1 += Number(r.amount_paid) || 0; c1++; }
-                else if (inv.startsWith('8157418')) { t2 += Number(r.amount_paid) || 0; c2++; }
+                // invoice_number format is "{accountNumber}-{tenantId}"
+                const acc = inv.split('-')[0];
+                if (!acc) continue;
+                if (!totals[acc]) totals[acc] = { amount: 0, count: 0 };
+                totals[acc].amount += Number(r.amount_paid) || 0;
+                totals[acc].count  += 1;
             }
-            setTill1Total(t1); setTill1Count(c1);
-            setTill2Total(t2); setTill2Count(c2);
+
+            // ── Step 4: Merge config + totals into TillInfo array ──
+            const allAccounts = new Set([
+                ...Object.keys(tillLocMap),
+                ...Object.keys(totals),
+            ]);
+
+            const result: TillInfo[] = Array.from(allAccounts)
+                .filter(acc => tillLocMap[acc] && tillLocMap[acc].size > 0) // only show configured tills
+                .map(acc => ({
+                    accountNumber: acc,
+                    locations:     Array.from(tillLocMap[acc] || []).sort(),
+                    totalAmount:   totals[acc]?.amount || 0,
+                    txnCount:      totals[acc]?.count  || 0,
+                }))
+                .sort((a, b) => a.accountNumber.localeCompare(b.accountNumber));
+
+            setTills(result);
         } catch (e) { console.error('KCB panel error:', e); }
         finally { setLoading(false); }
     }, [dateFrom, dateTo, filterUnit, filterTenant, allTenants]);
@@ -178,8 +217,15 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
     useEffect(() => { fetchTotals(); }, [fetchTotals]);
 
     const fmtK = (n: number) => `KES ${n.toLocaleString('en-KE')}`;
-
     const inputCls = 'text-[11px] border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition w-full';
+
+    // Gradient palette cycles per till index
+    const GRADIENTS = [
+        { bg: 'linear-gradient(135deg,#047857 0%,#059669 55%,#10b981 100%)', shadow: 'rgba(4,120,87,0.45)',   sub: 'text-emerald-100' },
+        { bg: 'linear-gradient(135deg,#1d4ed8 0%,#2563eb 55%,#3b82f6 100%)', shadow: 'rgba(29,78,216,0.45)',  sub: 'text-blue-100'    },
+        { bg: 'linear-gradient(135deg,#7c3aed 0%,#8b5cf6 55%,#a78bfa 100%)', shadow: 'rgba(124,58,237,0.45)', sub: 'text-violet-100'  },
+        { bg: 'linear-gradient(135deg,#b45309 0%,#d97706 55%,#f59e0b 100%)', shadow: 'rgba(180,83,9,0.45)',   sub: 'text-amber-100'   },
+    ];
 
     return (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -190,49 +236,42 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
                     <span className="text-lg">🏦</span>
                     <div>
                         <p className="text-white font-black text-sm tracking-wide">KCB BUNI TILL PERFORMANCE</p>
-                        <p className="text-indigo-200 text-[10px]">Live collection per till · filtered view</p>
+                        <p className="text-indigo-200 text-[10px]">
+                            {tills.length > 0
+                                ? `${tills.length} till${tills.length > 1 ? 's' : ''} configured · live collection`
+                                : 'Loading till configuration…'}
+                        </p>
                     </div>
                 </div>
-                {loading && (
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
+                {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
             </div>
 
             {/* Filter Bar */}
             <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {/* Date From */}
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">From Date</label>
                         <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputCls} />
                     </div>
-                    {/* Date To */}
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">To Date</label>
                         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={inputCls} />
                     </div>
-                    {/* Unit */}
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Unit</label>
                         <select value={filterUnit} onChange={e => { setFilterUnit(e.target.value); setFilterTenant(''); }} className={inputCls}>
                             <option value="">All Units</option>
-                            {unitOptions.map(u => (
-                                <option key={u.id} value={u.id}>{u.name}</option>
-                            ))}
+                            {unitOptions.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                         </select>
                     </div>
-                    {/* Tenant */}
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Tenant</label>
                         <select value={filterTenant} onChange={e => { setFilterTenant(e.target.value); setFilterUnit(''); }} className={inputCls}>
                             <option value="">All Tenants</option>
-                            {tenantOptions.map(t => (
-                                <option key={t.id} value={t.id}>{t.name}</option>
-                            ))}
+                            {tenantOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                     </div>
                 </div>
-                {/* Clear filters */}
                 {(dateFrom || dateTo || filterUnit || filterTenant) && (
                     <button onClick={() => { setDateFrom(''); setDateTo(''); setFilterUnit(''); setFilterTenant(''); }}
                         className="mt-2 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition">
@@ -241,63 +280,57 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
                 )}
             </div>
 
-            {/* Till Cards */}
-            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Till 1 */}
-                <div
-                    onClick={() => router.push('/dashboard/kcb-transactions?till=8128983')}
-                    className="relative overflow-hidden rounded-2xl p-4 cursor-pointer hover:-translate-y-0.5 transition-all duration-200 group"
-                    style={{ background: 'linear-gradient(135deg,#047857 0%,#059669 55%,#10b981 100%)', boxShadow: '0 8px 24px -6px rgba(4,120,87,0.45)' }}>
-                    <div className="absolute -right-4 -bottom-4 w-20 h-20 rounded-full bg-white/10 group-hover:scale-125 transition-transform duration-500" />
-                    <div className="absolute right-2 top-2 w-10 h-10 rounded-full border border-white/15" />
-                    <div className="relative z-10">
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xl">🏦</span>
-                            <div>
-                                <p className="text-white font-black text-xs tracking-widest uppercase">KCB Till 1</p>
-                                <p className="text-emerald-100 text-[9px] font-medium">Account · 8128983</p>
-                            </div>
-                        </div>
-                        <p className={`text-white font-black text-xl sm:text-2xl tracking-tight leading-none ${loading ? 'opacity-40' : ''}`}>
-                            {fmtK(till1Total)}
-                        </p>
-                        <p className="text-emerald-100 text-[10px] mt-1 font-medium">
-                            {till1Count} completed transaction{till1Count !== 1 ? 's' : ''}
-                        </p>
-                    </div>
-                    <div className="relative z-10 mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between">
-                        <span className="text-[9px] text-white/70 font-bold uppercase tracking-wider">MM · All Locations</span>
-                        <span className="text-[9px] text-white/70 font-bold">View →</span>
-                    </div>
-                </div>
+            {/* Dynamic Till Cards — one per configured till in DB */}
+            <div className={`p-4 grid gap-3 ${tills.length === 1 ? 'grid-cols-1 max-w-sm' : tills.length >= 3 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
+                {tills.length === 0 && !loading && (
+                    <p className="text-slate-400 text-xs text-center py-6 col-span-full">
+                        No KCB tills configured yet. Go to <strong>Settings → KCB Buni Tills</strong> to set up.
+                    </p>
+                )}
+                {tills.map((till, idx) => {
+                    const g = GRADIENTS[idx % GRADIENTS.length];
+                    return (
+                        <div key={till.accountNumber}
+                            onClick={() => router.push(`/dashboard/kcb-transactions?till=${till.accountNumber}`)}
+                            className="relative overflow-hidden rounded-2xl p-4 cursor-pointer hover:-translate-y-0.5 transition-all duration-200 group"
+                            style={{ background: g.bg, boxShadow: `0 8px 24px -6px ${g.shadow}` }}>
+                            {/* Glass orbs */}
+                            <div className="absolute -right-4 -bottom-4 w-20 h-20 rounded-full bg-white/10 group-hover:scale-125 transition-transform duration-500" />
+                            <div className="absolute right-2 top-2 w-10 h-10 rounded-full border border-white/15" />
 
-                {/* Till 2 */}
-                <div
-                    onClick={() => router.push('/dashboard/kcb-transactions?till=8157418')}
-                    className="relative overflow-hidden rounded-2xl p-4 cursor-pointer hover:-translate-y-0.5 transition-all duration-200 group"
-                    style={{ background: 'linear-gradient(135deg,#1d4ed8 0%,#2563eb 55%,#3b82f6 100%)', boxShadow: '0 8px 24px -6px rgba(29,78,216,0.45)' }}>
-                    <div className="absolute -right-4 -bottom-4 w-20 h-20 rounded-full bg-white/10 group-hover:scale-125 transition-transform duration-500" />
-                    <div className="absolute right-2 top-2 w-10 h-10 rounded-full border border-white/15" />
-                    <div className="relative z-10">
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xl">🏦</span>
-                            <div>
-                                <p className="text-white font-black text-xs tracking-widest uppercase">KCB Till 2</p>
-                                <p className="text-blue-100 text-[9px] font-medium">Account · 8157418</p>
+                            <div className="relative z-10">
+                                {/* Title row */}
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-xl">🏦</span>
+                                    <div>
+                                        <p className="text-white font-black text-xs tracking-widest uppercase">
+                                            KCB Till {idx + 1}
+                                        </p>
+                                        <p className={`${g.sub} text-[9px] font-medium`}>
+                                            Account · {till.accountNumber}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Amount */}
+                                <p className={`text-white font-black text-xl sm:text-2xl tracking-tight leading-none ${loading ? 'opacity-40' : ''}`}>
+                                    {fmtK(till.totalAmount)}
+                                </p>
+                                <p className={`${g.sub} text-[10px] mt-1 font-medium`}>
+                                    {till.txnCount} completed transaction{till.txnCount !== 1 ? 's' : ''}
+                                </p>
+                            </div>
+
+                            {/* Footer: show linked locations from DB config */}
+                            <div className="relative z-10 mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between gap-2">
+                                <span className="text-[9px] text-white/80 font-bold uppercase tracking-wider truncate">
+                                    {till.locations.join(' · ')}
+                                </span>
+                                <span className="text-[9px] text-white/70 font-bold flex-shrink-0">View →</span>
                             </div>
                         </div>
-                        <p className={`text-white font-black text-xl sm:text-2xl tracking-tight leading-none ${loading ? 'opacity-40' : ''}`}>
-                            {fmtK(till2Total)}
-                        </p>
-                        <p className="text-blue-100 text-[10px] mt-1 font-medium">
-                            {till2Count} completed transaction{till2Count !== 1 ? 's' : ''}
-                        </p>
-                    </div>
-                    <div className="relative z-10 mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between">
-                        <span className="text-[9px] text-white/70 font-bold uppercase tracking-wider">HIGHRISE</span>
-                        <span className="text-[9px] text-white/70 font-bold">View →</span>
-                    </div>
-                </div>
+                    );
+                })}
             </div>
         </div>
     );
