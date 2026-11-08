@@ -21,6 +21,14 @@ interface ChatThread {
     unread_count: number;
 }
 
+interface AllTenant {
+    tenant_id: number;
+    tenant_name: string;
+    phone: string;
+    unit_name: string;
+    location_name: string;
+}
+
 type FilterTab = 'all' | 'unread' | 'admin';
 
 function formatTime(dt: string) {
@@ -49,6 +57,126 @@ function avatarColors(name: string) {
     return colors[idx];
 }
 
+// ── New Chat Modal ─────────────────────────────────────────────
+function NewChatModal({ onClose, onSelect }: { onClose: () => void; onSelect: (t: AllTenant) => void }) {
+    const [q, setQ] = useState('');
+    const [all, setAll] = useState<AllTenant[]>([]);
+    const [loading, setLoading] = useState(true);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        fetch('/api/chats?inbox=1')
+            .then(r => r.json())
+            .then(d => setAll(d.inbox || []))
+            .finally(() => setLoading(false));
+        setTimeout(() => inputRef.current?.focus(), 100);
+    }, []);
+
+    const results = all.filter(t => {
+        if (!q) return true;
+        const query = q.toLowerCase().replace(/[\s\-]/g, '');
+        return (
+            t.tenant_name.toLowerCase().includes(q.toLowerCase()) ||
+            (t.phone || '').replace(/[\s\-]/g, '').includes(query) ||
+            (t.unit_name || '').toLowerCase().includes(q.toLowerCase()) ||
+            (t.location_name || '').toLowerCase().includes(q.toLowerCase()) ||
+            String(t.tenant_id).includes(query)
+        );
+    }).slice(0, 50);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+            onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+                style={{ background: '#1e1b4b', border: '1.5px solid rgba(167,139,250,0.3)' }}>
+
+                {/* Header */}
+                <div className="px-5 py-4 flex items-center justify-between"
+                    style={{ background: 'linear-gradient(135deg,#4f46e5,#7c3aed)' }}>
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center text-xl">✉️</div>
+                        <div>
+                            <p className="text-white font-extrabold text-base">New Chat</p>
+                            <p className="text-indigo-200 text-xs">Select a tenant to message</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose}
+                        className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white/30 flex items-center justify-center text-white text-lg transition">
+                        ×
+                    </button>
+                </div>
+
+                {/* Search */}
+                <div className="px-4 pt-4 pb-2">
+                    <div className="relative">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-300">🔍</span>
+                        <input
+                            ref={inputRef}
+                            value={q}
+                            onChange={e => setQ(e.target.value)}
+                            placeholder="Search name, phone, room, location…"
+                            className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm focus:outline-none"
+                            style={{
+                                background: 'rgba(255,255,255,0.08)',
+                                border: '1.5px solid rgba(167,139,250,0.3)',
+                                color: '#e2e8f0',
+                            }}
+                        />
+                        {q && (
+                            <button onClick={() => setQ('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-300 hover:text-white text-lg">
+                                ×
+                            </button>
+                        )}
+                    </div>
+                    <p className="text-xs mt-2 text-right" style={{ color: '#6366f1' }}>
+                        {loading ? 'Loading…' : `${results.length} tenant${results.length !== 1 ? 's' : ''} found`}
+                    </p>
+                </div>
+
+                {/* Tenant list */}
+                <div className="overflow-y-auto" style={{ maxHeight: 380 }}>
+                    {loading ? (
+                        <div className="flex items-center justify-center py-12">
+                            <div className="text-indigo-300 animate-pulse text-sm">Loading tenants…</div>
+                        </div>
+                    ) : results.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 gap-2">
+                            <span className="text-4xl">🔍</span>
+                            <p className="text-indigo-300 text-sm">No tenants found for "{q}"</p>
+                        </div>
+                    ) : (
+                        results.map(t => {
+                            const [c1, c2] = avatarColors(t.tenant_name || 'T');
+                            const initials = (t.tenant_name || '?').split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
+                            return (
+                                <button key={t.tenant_id} onClick={() => onSelect(t)}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition hover:bg-white/5 border-b"
+                                    style={{ borderColor: 'rgba(167,139,250,0.1)' }}>
+                                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-white font-extrabold text-base flex-shrink-0"
+                                        style={{ background: `linear-gradient(135deg,${c1},${c2})` }}>
+                                        {initials}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-white truncate">{t.tenant_name}</p>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                            <span className="text-xs text-indigo-300">📱 {t.phone || '—'}</span>
+                                            <span className="text-xs text-emerald-400">🏠 {t.unit_name || '—'}</span>
+                                            <span className="text-xs text-amber-400">📍 {t.location_name || '—'}</span>
+                                        </div>
+                                    </div>
+                                    <span className="text-indigo-400 text-lg flex-shrink-0">→</span>
+                                </button>
+                            );
+                        })
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function ChatsPage() {
     const [inbox, setInbox] = useState<ChatThread[]>([]);
     const [loading, setLoading] = useState(true);
@@ -57,6 +185,7 @@ export default function ChatsPage() {
     const [quickReplyTenant, setQuickReplyTenant] = useState<number | null>(null);
     const [quickMsg, setQuickMsg] = useState('');
     const [sendingQuick, setSendingQuick] = useState(false);
+    const [showNewChat, setShowNewChat] = useState(false);
     const router = useRouter();
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -118,6 +247,17 @@ export default function ChatsPage() {
     return (
         <div className="flex flex-col h-full bg-gray-50 animate-fadeIn">
 
+            {/* New Chat Modal */}
+            {showNewChat && (
+                <NewChatModal
+                    onClose={() => setShowNewChat(false)}
+                    onSelect={(t) => {
+                        setShowNewChat(false);
+                        router.push(`/dashboard/chats/${t.tenant_id}`);
+                    }}
+                />
+            )}
+
             {/* ── Top Header ── */}
             <div style={{ background: 'linear-gradient(135deg,#6366f1 0%,#7c3aed 50%,#a855f7 100%)' }}
                 className="px-6 py-5 flex-shrink-0">
@@ -135,11 +275,20 @@ export default function ChatsPage() {
                             </p>
                         </div>
                     </div>
-                    <button onClick={loadInbox}
-                        className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/30 flex items-center justify-center text-white text-lg transition"
-                        title="Refresh">
-                        ↺
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {/* New Chat Button */}
+                        <button onClick={() => setShowNewChat(true)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl font-extrabold text-sm transition shadow-lg"
+                            style={{ background: 'rgba(255,255,255,0.95)', color: '#4f46e5' }}
+                            title="Start new conversation">
+                            ✉️ New Chat
+                        </button>
+                        <button onClick={loadInbox}
+                            className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/30 flex items-center justify-center text-white text-lg transition"
+                            title="Refresh">
+                            ↺
+                        </button>
+                    </div>
                 </div>
 
                 {/* Search */}
