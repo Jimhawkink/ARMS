@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server';
 // Bump MIN_VERSION here to force all old APKs to update
 // ============================================================
 
-const LATEST_VERSION = 'v4.11';
-const MIN_VERSION    = 'v4.11'; // v4.11 — WhatsApp-style push notifications
+const LATEST_VERSION = 'v4.12';
+const MIN_VERSION    = 'v4.12'; // v4.12 — Realtime push notifications (no FCM needed)
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
@@ -43,4 +43,3 @@ export async function GET(req: Request) {
             : `✅ App is up to date (${appVersion})`,
     });
 }
-
