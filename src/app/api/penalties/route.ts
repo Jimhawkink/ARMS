@@ -81,7 +81,6 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
-        const locationId = searchParams.get('locationId') ? Number(searchParams.get('locationId')) : undefined;
         const tenantId   = searchParams.get('tenantId')   ? Number(searchParams.get('tenantId'))   : undefined;
         const month      = searchParams.get('month')      || undefined;
         const status     = searchParams.get('status')     || undefined;
@@ -89,42 +88,54 @@ export async function GET(req: NextRequest) {
         const pageSize   = Number(searchParams.get('pageSize') || '50');
         const offset     = (page - 1) * pageSize;
 
+        // ── 1. Query arms_penalties (simple, no join) ──────────────────────
         let q = supabaseAdmin
             .from('arms_penalties')
-            .select(`
-                penalty_id, tenant_id, billing_id, billing_month, penalty_date,
-                amount, status, reason, waived_by, waived_at, waive_reason, created_at,
-                arms_tenants!inner(tenant_name, phone, unit_id,
-                    arms_units(unit_name,
-                        arms_locations(location_id, location_name)))
-            `, { count: 'exact' })
+            .select('penalty_id, tenant_id, billing_id, billing_month, penalty_date, amount, status, reason, waived_by, waived_at, waive_reason, created_at', { count: 'exact' })
             .order('penalty_date', { ascending: false })
             .order('tenant_id',    { ascending: true })
             .range(offset, offset + pageSize - 1);
 
-        if (tenantId)   q = (q as any).eq('tenant_id',     tenantId);
-        if (month)      q = (q as any).eq('billing_month', month);
-        if (status)     q = (q as any).eq('status',        status);
-        if (locationId) q = (q as any).eq('arms_tenants.arms_units.arms_locations.location_id', locationId);
+        if (tenantId) q = (q as any).eq('tenant_id', tenantId);
+        if (month)    q = (q as any).eq('billing_month', month);
+        if (status)   q = (q as any).eq('status', status);
 
-        const { data, count, error } = await q;
+        const { data: penalties, count, error } = await q;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        // Summary query (all pages)
+        // ── 2. Summary query ───────────────────────────────────────────────
         let sq = supabaseAdmin.from('arms_penalties').select('status, amount');
-        if (tenantId) sq = (sq as any).eq('tenant_id',     tenantId);
+        if (tenantId) sq = (sq as any).eq('tenant_id', tenantId);
         if (month)    sq = (sq as any).eq('billing_month', month);
         const { data: all } = await sq;
-
         const summary = (all || []).reduce((acc: any, r: any) => {
             const s = (r.status || '').toLowerCase();
             if (s === 'active') { acc.active++; acc.totalActive += Number(r.amount); }
-            if (s === 'waived') { acc.waived++; }
-            if (s === 'paid')   { acc.paid++; }
+            if (s === 'waived') acc.waived++;
+            if (s === 'paid')   acc.paid++;
             return acc;
         }, { active: 0, waived: 0, paid: 0, totalActive: 0 });
 
-        return NextResponse.json({ rows: data || [], total: count || 0, summary });
+        // ── 3. Fetch tenant info for the penalty rows ──────────────────────
+        const tenantIds = Array.from(new Set((penalties || []).map((p: any) => p.tenant_id)));
+        let tenantMap: Record<number, any> = {};
+        if (tenantIds.length > 0) {
+            const { data: tenants } = await supabaseAdmin
+                .from('arms_tenants')
+                .select('tenant_id, tenant_name, phone, unit_id, arms_units(unit_name, arms_locations(location_id, location_name))')
+                .in('tenant_id', tenantIds);
+            for (const t of (tenants || [])) {
+                tenantMap[t.tenant_id] = t;
+            }
+        }
+
+        // ── 4. Merge tenant info into penalty rows ─────────────────────────
+        const rows = (penalties || []).map((p: any) => ({
+            ...p,
+            arms_tenants: tenantMap[p.tenant_id] || null,
+        }));
+
+        return NextResponse.json({ rows, total: count || 0, summary });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
     }
