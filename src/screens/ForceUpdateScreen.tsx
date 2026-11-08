@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, Platform,
+    StatusBar, TouchableOpacity, Platform, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 
 const { width, height } = Dimensions.get('window');
@@ -114,7 +114,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
         setErrMsg('');
 
         const apkUrl      = `${APK_BASE_URL}${latestVersion}.apk`;
-        const localPath   = `${(FileSystem as any).cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
+        const localPath   = `${FileSystem.cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
 
         // Delete any previous partial download
         try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch (_) {}
@@ -308,6 +308,27 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                         </View>
                     ))}
                 </View>
+
+                {/* Direct Browser Download Fallback */}
+                <TouchableOpacity
+                    onPress={() => Linking.openURL('https://arms-opal.vercel.app/api/dl')}
+                    activeOpacity={0.8}
+                    style={{
+                        marginTop: 14,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 14,
+                        backgroundColor: 'rgba(99,102,241,0.15)',
+                        borderWidth: 1,
+                        borderColor: 'rgba(99,102,241,0.3)',
+                        width: '100%',
+                        alignItems: 'center',
+                    }}
+                >
+                    <Text style={{ color: '#a5b4fc', fontSize: 12, fontWeight: 'bold' }}>
+                        🌐 Alternative: Download via Browser (Fast)
+                    </Text>
+                </TouchableOpacity>
             </Animated.View>
         </View>
     );
