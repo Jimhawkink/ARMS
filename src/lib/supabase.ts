@@ -1643,13 +1643,28 @@ export async function markPaymentVerified(paymentId: number, verifiedBy: string 
 
 // ==================== REPORTS ====================
 export async function getTenantStatement(tenantId: number) {
-    const [tenant, bills, payments, penaltiesRes] = await Promise.all([
+    let penaltiesList: any[] = [];
+    try {
+        if (typeof window !== 'undefined') {
+            const penRes = await fetch(`/api/penalties?tenantId=${tenantId}`).then(r => r.json()).catch(() => null);
+            penaltiesList = penRes?.active_penalties || [];
+        } else if (typeof supabaseAdmin !== 'undefined') {
+            const { data } = await supabaseAdmin.from('arms_penalties')
+                .select('*')
+                .eq('tenant_id', tenantId)
+                .order('penalty_date', { ascending: true });
+            penaltiesList = data || [];
+        }
+    } catch {
+        // non-fatal
+    }
+
+    const [tenant, bills, payments] = await Promise.all([
         getTenantById(tenantId),
         getBilling({ tenantId }),
         getPayments({ tenantId }),
-        supabaseAdmin.from('arms_penalties').select('*').eq('tenant_id', tenantId).order('penalty_date', { ascending: true })
     ]);
-    return { tenant, bills, payments, penalties: penaltiesRes?.data || [] };
+    return { tenant, bills, payments, penalties: penaltiesList };
 }
 
 export async function getLocationSummary(locationId?: number) {
@@ -3020,6 +3035,19 @@ export async function markPenaltiesPaid(tenantId: number, month: string): Promis
 
 /** Get total active penalty balance for a tenant (for payment page) */
 export async function getTenantPenaltyBalance(tenantId: number): Promise<{ total: number; count: number; months: string[] }> {
+    try {
+        if (typeof window !== 'undefined') {
+            const res = await fetch(`/api/penalties?tenantId=${tenantId}`).then(r => r.json()).catch(() => null);
+            if (res && typeof res.total_penalty === 'number') {
+                return {
+                    total: res.total_penalty,
+                    count: res.penalty_days || 0,
+                    months: Array.from(new Set((res.active_penalties || []).map((p: any) => p.billing_month || ''))),
+                };
+            }
+        }
+    } catch {}
+
     const { data } = await supabaseAdmin.from('arms_penalties')
         .select('amount, billing_month')
         .eq('tenant_id', tenantId)

@@ -450,7 +450,7 @@ export default function ReportsPage() {
         statement.bills?.forEach((b: any) => items.push({
             date: b.billing_date || `${b.billing_month}-01`,
             type: 'bill',
-            amount: b.rent_amount,
+            amount: Number(b.rent_amount) || 0,
             desc: `Monthly Rent · ${monthFull(b.billing_month)}`
         }));
         statement.penalties?.forEach((pen: any) => {
@@ -459,26 +459,38 @@ export default function ReportsPage() {
                     date: pen.penalty_date,
                     type: 'penalty',
                     amount: Number(pen.amount) || 100,
-                    desc: `⚡ Late Rent Penalty · ${pen.penalty_date}`
+                    desc: `Late Rent Penalty (KES 100/day) · ${pen.penalty_date}`
                 });
             }
         });
         statement.payments?.forEach((p: any) => items.push({
             date: p.payment_date?.split('T')[0] || '',
             type: 'payment',
-            amount: p.amount,
+            amount: Number(p.amount) || 0,
             desc: `${p.payment_method} Payment${p.mpesa_receipt ? ' (' + p.mpesa_receipt + ')' : ''}`
         }));
-        items.sort((a, b) => a.date.localeCompare(b.date));
+        const typeOrder: Record<string, number> = { bill: 1, penalty: 2, payment: 3 };
+        items.sort((a, b) => {
+            const dateCmp = a.date.localeCompare(b.date);
+            if (dateCmp !== 0) return dateCmp;
+            return (typeOrder[a.type] || 0) - (typeOrder[b.type] || 0);
+        });
         let bal = 0;
         return items.map(item => {
-            if (item.type === 'bill' || item.type === 'penalty') { bal += item.amount; return { ...item, debit: item.amount, credit: 0, balance: bal }; }
-            else { bal -= item.amount; return { ...item, debit: 0, credit: item.amount, balance: bal }; }
+            if (item.type === 'bill' || item.type === 'penalty') {
+                bal += item.amount;
+                return { ...item, debit: item.amount, credit: 0, balance: bal };
+            } else {
+                bal -= item.amount;
+                return { ...item, debit: 0, credit: item.amount, balance: bal };
+            }
         });
     };
 
     const stmtEntries = buildStatementEntries();
-    const stmtTotalBilled = stmtEntries.reduce((s, e) => s + e.debit, 0);
+    const stmtRentBilled = stmtEntries.filter(e => e.type === 'bill').reduce((s, e) => s + e.debit, 0);
+    const stmtPenaltiesBilled = stmtEntries.filter(e => e.type === 'penalty').reduce((s, e) => s + e.debit, 0);
+    const stmtTotalBilled = stmtRentBilled + stmtPenaltiesBilled;
     const stmtTotalPaid = stmtEntries.reduce((s, e) => s + e.credit, 0);
     const stmtBalance = stmtEntries.length > 0 ? stmtEntries[stmtEntries.length - 1].balance : 0;
 
@@ -1814,7 +1826,7 @@ export default function ReportsPage() {
 
                             {/* Tenant Details Card */}
                             <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
                                     {[
                                         { label: 'Tenant Name', value: statement.tenant?.tenant_name },
                                         { label: 'Phone', value: statement.tenant?.phone || '—' },
@@ -1824,10 +1836,20 @@ export default function ReportsPage() {
                                         { label: 'National ID', value: statement.tenant?.id_number || '—' },
                                         { label: 'Move-In Date', value: statement.tenant?.move_in_date || '—' },
                                         { label: 'Lease Status', value: statement.tenant?.status || 'Active' },
+                                        {
+                                            label: '⚡ Late Penalty',
+                                            value: stmtPenaltiesBilled > 0
+                                                ? `+${fmt(stmtPenaltiesBilled)} (${statement.penalties?.filter((p: any) => p.status === 'Active').length || 0}d)`
+                                                : '✓ None'
+                                        },
+                                        {
+                                            label: '🏦 Total Due (Rent+Penalty)',
+                                            value: fmt(stmtBalance)
+                                        },
                                     ].map((f, i) => (
-                                        <div key={i}>
+                                        <div key={i} className="bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs">
                                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{f.label}</p>
-                                            <p className="font-extrabold text-slate-900 mt-0.5">{f.value}</p>
+                                            <p className={`font-extrabold mt-0.5 ${i === 8 && stmtPenaltiesBilled > 0 ? 'text-rose-600' : i === 9 && stmtBalance > 0 ? 'text-amber-700' : 'text-slate-900'}`}>{f.value}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -1835,20 +1857,25 @@ export default function ReportsPage() {
 
                             {/* Statement Summary KPI */}
                             <div className="p-6">
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                                     <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-100 text-center">
-                                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Total Invoiced</span>
-                                        <p className="text-xl font-black text-indigo-900 mt-1">{fmt(stmtTotalBilled)}</p>
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Rent Invoiced</span>
+                                        <p className="text-xl font-black text-indigo-900 mt-1">{fmt(stmtRentBilled)}</p>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 text-center">
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-rose-600">⚡ Late Penalties Accrued</span>
+                                        <p className="text-xl font-black text-rose-900 mt-1">{stmtPenaltiesBilled > 0 ? `+${fmt(stmtPenaltiesBilled)}` : 'KES 0'}</p>
+                                        <span className="text-[9px] font-bold text-rose-500">{statement.penalties?.filter((p: any) => p.status === 'Active').length || 0} active day(s)</span>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 text-center">
                                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Total Paid</span>
                                         <p className="text-xl font-black text-emerald-900 mt-1">{fmt(stmtTotalPaid)}</p>
                                     </div>
-                                    <div className={`p-4 rounded-2xl border text-center ${stmtBalance > 0 ? 'bg-rose-50 border-rose-100' : 'bg-emerald-50 border-emerald-100'}`}>
-                                        <span className={`text-[10px] font-black uppercase tracking-wider ${stmtBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                            {stmtBalance > 0 ? 'Outstanding Due' : 'Account Settled'}
+                                    <div className={`p-4 rounded-2xl border text-center ${stmtBalance > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-100'}`}>
+                                        <span className={`text-[10px] font-black uppercase tracking-wider ${stmtBalance > 0 ? 'text-amber-700' : 'text-emerald-600'}`}>
+                                            {stmtBalance > 0 ? 'Outstanding Due (Rent + Penalty)' : 'Account Settled'}
                                         </span>
-                                        <p className={`text-xl font-black mt-1 ${stmtBalance > 0 ? 'text-rose-900' : 'text-emerald-900'}`}>
+                                        <p className={`text-xl font-black mt-1 ${stmtBalance > 0 ? 'text-amber-950 font-mono' : 'text-emerald-900'}`}>
                                             {fmt(Math.abs(stmtBalance))}
                                         </p>
                                     </div>
@@ -1868,10 +1895,19 @@ export default function ReportsPage() {
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {stmtEntries.map((e, idx) => (
-                                                <tr key={idx} className="hover:bg-slate-50/60 transition">
+                                                <tr key={idx} className={`hover:bg-slate-50/60 transition ${e.type === 'penalty' ? 'bg-rose-50/20' : ''}`}>
                                                     <td className="px-4 py-3 font-mono text-slate-500 text-xs">{e.date}</td>
-                                                    <td className={`px-4 py-3 font-semibold ${e.type === 'payment' ? 'text-emerald-800' : 'text-slate-800'}`}>
-                                                        {e.desc}
+                                                    <td className="px-4 py-3 font-semibold">
+                                                        {e.type === 'penalty' ? (
+                                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                                                <span>⚡</span>
+                                                                <span>{e.desc}</span>
+                                                            </span>
+                                                        ) : e.type === 'payment' ? (
+                                                            <span className="text-emerald-800">{e.desc}</span>
+                                                        ) : (
+                                                            <span className="text-slate-800">{e.desc}</span>
+                                                        )}
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-black text-rose-700">
                                                         {e.debit > 0 ? fmt(e.debit) : '—'}
@@ -1879,16 +1915,16 @@ export default function ReportsPage() {
                                                     <td className="px-4 py-3 text-right font-black text-emerald-700">
                                                         {e.credit > 0 ? fmt(e.credit) : '—'}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-black text-slate-900">
+                                                    <td className="px-4 py-3 text-right font-black text-slate-900 font-mono">
                                                         {fmt(e.balance)}
                                                     </td>
                                                 </tr>
                                             ))}
                                             <tr className="bg-slate-50 border-t-2 border-slate-200 font-black">
-                                                <td colSpan={2} className="px-4 py-3 uppercase text-slate-700">Closing Balance</td>
-                                                <td className="px-4 py-3 text-right text-rose-800">{fmt(stmtTotalBilled)}</td>
-                                                <td className="px-4 py-3 text-right text-emerald-800">{fmt(stmtTotalPaid)}</td>
-                                                <td className={`px-4 py-3 text-right text-sm ${stmtBalance > 0 ? 'text-rose-800' : 'text-emerald-800'}`}>
+                                                <td colSpan={2} className="px-4 py-3 uppercase text-slate-700">Closing Balance (Rent + Penalties)</td>
+                                                <td className="px-4 py-3 text-right text-rose-800 font-mono">{fmt(stmtTotalBilled)}</td>
+                                                <td className="px-4 py-3 text-right text-emerald-800 font-mono">{fmt(stmtTotalPaid)}</td>
+                                                <td className={`px-4 py-3 text-right text-sm font-mono ${stmtBalance > 0 ? 'text-amber-900' : 'text-emerald-800'}`}>
                                                     {fmt(stmtBalance)}
                                                 </td>
                                             </tr>

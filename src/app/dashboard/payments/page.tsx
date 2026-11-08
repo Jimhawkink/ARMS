@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import {
     getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull,
     getTenants, getLocations, getMpesaTransactions, getKcbStkRequests, autoMatchMpesa, autoMatchAllUnmatched,
-    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth, getTenantPenaltyBalance
+    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth, getTenantPenaltyBalance, getActivePenaltiesMap
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
@@ -391,7 +391,7 @@ export default function PaymentsPage() {
     const [locations, setLocations] = useState<any[]>([]);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
     const [kcbRequests, setKcbRequests] = useState<any[]>([]);
-    const [penaltyBalances, setPenaltyBalances] = useState<Record<number, { total: number; count: number }>>({});
+    const [penaltyBalances, setPenaltyBalances] = useState<Record<number, { total: number; count: number; total_debt?: number }>>({});
     const [loading, setLoading] = useState(true);
     const [showPayModal, setShowPayModal] = useState(false);
     const [locationId, setLocationId] = useState<number | null>(null);
@@ -403,6 +403,24 @@ export default function PaymentsPage() {
     });
     const [deletingPayment, setDeletingPayment] = useState<any>(null);
     const [actionLoading, setActionLoading] = useState(false);
+
+    // ── Table Column Headers (Matching Penalties/Billing Grid Theme) ─────────
+    const paymentTableHeaders = [
+        { label: '📅 Date & Time', bg: '#f8fafc', color: '#64748b', align: 'left' },
+        { label: '👤 Tenant Folio', bg: '#eef2ff', color: '#4338ca', align: 'left' },
+        { label: '🏠 Location', bg: '#f0fdfa', color: '#0f766e', align: 'left' },
+        { label: '📅 Month', bg: '#faf5ff', color: '#7e22ce', align: 'left' },
+        { label: '💵 Total Paid', bg: '#ecfdf5', color: '#047857', align: 'right' },
+        { label: '⏳ Arrears Paid', bg: '#fff7ed', color: '#c2410c', align: 'right' },
+        { label: '🏠 Current Rent', bg: '#eff6ff', color: '#1d4ed8', align: 'right' },
+        { label: '⚠️ Rem. Rent Debt', bg: '#fff1f2', color: '#be123c', align: 'right' },
+        { label: '⚡ Late Penalty', bg: '#fff1f2', color: '#be123c', align: 'right' },
+        { label: '🏦 Final Debt', bg: '#fef9c3', color: '#92400e', align: 'right' },
+        { label: '💳 Method', bg: '#f0fdf4', color: '#15803d', align: 'center' },
+        { label: '🧾 Receipt / Ref', bg: '#f8fafc', color: '#475569', align: 'left' },
+        { label: '👤 By', bg: '#f8fafc', color: '#64748b', align: 'left' },
+        { label: '⚙️ Actions', bg: '#f1f5f9', color: '#475569', align: 'center' },
+    ];
 
     // ── Filter State ──────────────────────────────────────────────────────────
     const [filterMethodTab, setFilterMethodTab] = useState<'all' | 'kcb' | 'cash' | 'mpesa' | 'bank'>('all');
@@ -419,27 +437,30 @@ export default function PaymentsPage() {
         setLoading(true);
         topProgress.start();
         try {
-            const [p, t, l, m, k] = await Promise.all([
+            const [p, t, l, m, k, penMap] = await Promise.all([
                 getPayments({ locationId: locId ?? undefined }),
                 getTenants(locId ?? undefined),
                 getLocations(),
                 getMpesaTransactions(false),
                 getKcbStkRequests(30),
+                getActivePenaltiesMap(true),
             ]);
             setPayments(p || []);
             setTenants((t || []).filter((te: any) => te.status === 'Active'));
             setLocations(l || []);
             setMpesaTxns(m || []);
             setKcbRequests(k || []);
-            // Load penalty balances for all active tenants
-            const activeTenants = (t || []).filter((te: any) => te.status === 'Active');
-            const penaltyResults = await Promise.all(
-                activeTenants.map((te: any) => getTenantPenaltyBalance(te.tenant_id))
-            );
-            const balMap: Record<number, { total: number; count: number }> = {};
-            activeTenants.forEach((te: any, i: number) => {
-                balMap[te.tenant_id] = { total: penaltyResults[i].total, count: penaltyResults[i].count };
-            });
+
+            const balMap: Record<number, { total: number; count: number; total_debt?: number }> = {};
+            if (penMap) {
+                Object.entries(penMap).forEach(([tid, val]: [string, any]) => {
+                    balMap[Number(tid)] = {
+                        total: val.total_penalty || 0,
+                        count: val.penalty_days || 0,
+                        total_debt: val.total_debt,
+                    };
+                });
+            }
             setPenaltyBalances(balMap);
         } catch {
             toast.error('Failed to load payment records');
@@ -1092,28 +1113,26 @@ export default function PaymentsPage() {
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-xs">
+                    <table className="w-full border-collapse" style={{ fontSize: 11 }}>
                         <thead>
-                            <tr className="border-b border-slate-100 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-50/70">
-                                <th className="text-left px-3.5 py-3">Date & Time</th>
-                                <th className="text-left px-3.5 py-3">Tenant Folio</th>
-                                <th className="text-left px-3.5 py-3">Location</th>
-                                <th className="text-left px-3.5 py-3">Month</th>
-                                <th className="text-right px-3.5 py-3">Total Paid</th>
-                                <th className="text-right px-3.5 py-3">Arrears Paid</th>
-                                <th className="text-right px-3.5 py-3">Current Rent</th>
-                                <th className="text-right px-3.5 py-3">Rem. Debt</th>
-                                <th className="text-right px-3.5 py-3">⚠ Penalty</th>
-                                <th className="text-center px-3.5 py-3">Method</th>
-                                <th className="text-left px-3.5 py-3">Receipt / Ref</th>
-                                <th className="text-left px-3.5 py-3">By</th>
-                                <th className="text-center px-3.5 py-3">Actions</th>
+                            <tr className="border-b border-gray-100">
+                                {paymentTableHeaders.map((h, i) => (
+                                    <th
+                                        key={i}
+                                        className={`px-2.5 py-2.5 text-[9px] font-bold uppercase tracking-wider whitespace-nowrap ${
+                                            h.align === 'right' ? 'text-right' : h.align === 'center' ? 'text-center' : 'text-left'
+                                        }`}
+                                        style={{ background: h.bg, color: h.color, borderBottom: `2px solid ${h.color}30` }}
+                                    >
+                                        {h.label}
+                                    </th>
+                                ))}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {filteredPayments.length === 0 ? (
                                 <tr>
-                                    <td colSpan={12} className="text-center py-14 text-slate-400">
+                                    <td colSpan={14} className="text-center py-14 text-slate-400">
                                         <div className="flex flex-col items-center gap-2">
                                             <span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span>
                                             <p className="text-sm font-bold text-slate-700">
@@ -1133,26 +1152,36 @@ export default function PaymentsPage() {
                                 const arrearsRemaining = Math.max(0, tenantBalance);
                                 const isKcb = isKcbPayment(p);
                                 const isMpesa = isMpesaDirect(p);
+                                const tid = p.arms_tenants?.tenant_id ?? p.tenant_id;
+                                const pb = tid ? (penaltyBalances[tid] || { total: 0, count: 0 }) : { total: 0, count: 0 };
+                                const penaltyTotal = pb.total || 0;
+                                const finalDebt = arrearsRemaining + penaltyTotal;
 
                                 return (
-                                    <tr key={p.payment_id} className="hover:bg-slate-50/80 transition group">
-                                        <td className="px-3.5 py-3 font-semibold text-slate-800">
+                                    <tr
+                                        key={p.payment_id}
+                                        style={{ borderBottom: '1px solid #f1f5f9' }}
+                                        onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = '#fafbff'}
+                                        onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background = ''}
+                                        className="group transition"
+                                    >
+                                        <td className="px-2.5 py-2 whitespace-nowrap text-slate-700">
                                             <div className="font-bold text-slate-900">{new Date(p.payment_date).toLocaleDateString('en-KE')}</div>
-                                            <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                            <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5 font-mono">
                                                 <FiClock size={10} /> {payTime}
                                             </div>
                                         </td>
-                                        <td className="px-3.5 py-3 font-semibold text-slate-900">
+                                        <td className="px-2.5 py-2 font-semibold text-slate-900 whitespace-nowrap">
                                             <div className="font-bold text-slate-900">{p.arms_tenants?.tenant_name || '-'}</div>
                                             <div className="text-[10px] text-slate-400 font-mono">
                                                 {p.arms_tenants?.phone || 'No phone'}
                                             </div>
                                         </td>
-                                        <td className="px-3.5 py-3 text-slate-500">
-                                            <div className="font-semibold text-slate-700">{p.arms_locations?.location_name || '-'}</div>
+                                        <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">
+                                            <div className="font-semibold text-slate-800">{p.arms_locations?.location_name || '-'}</div>
                                             <div className="text-[10px] text-slate-400 font-mono">Room {p.arms_tenants?.arms_units?.unit_name || '-'}</div>
                                         </td>
-                                        <td className="px-3.5 py-3">
+                                        <td className="px-2.5 py-2 whitespace-nowrap">
                                             {(() => {
                                                 const billingMonth = p.arms_billing?.billing_month;
                                                 const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0, 7);
@@ -1178,40 +1207,46 @@ export default function PaymentsPage() {
                                                 );
                                             })()}
                                         </td>
-                                        <td className="px-3.5 py-3 text-right font-mono font-black text-emerald-600">
+                                        <td className="px-2.5 py-2 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
                                             {fmt(p.amount)}
                                         </td>
-                                        <td className="px-3.5 py-3 text-right font-mono font-bold text-orange-600">
+                                        <td className="px-2.5 py-2 text-right font-mono font-bold text-orange-600 whitespace-nowrap">
                                             {arrearsPaid > 0 ? fmt(arrearsPaid) : <span className="text-slate-300 font-normal">—</span>}
                                         </td>
-                                        <td className="px-3.5 py-3 text-right font-mono font-bold text-blue-600">
+                                        <td className="px-2.5 py-2 text-right font-mono font-bold text-blue-600 whitespace-nowrap">
                                             {currentRentPaid > 0 ? fmt(currentRentPaid) : <span className="text-slate-300 font-normal">—</span>}
                                         </td>
-                                        <td className="px-3.5 py-3 text-right font-mono font-bold">
+                                        <td className="px-2.5 py-2 text-right font-mono font-bold whitespace-nowrap">
                                             {arrearsRemaining > 0 ? (
                                                 <span className="text-rose-600 font-bold">{fmt(arrearsRemaining)}</span>
                                             ) : (
                                                 <span className="text-emerald-600 text-[10px]">✓ Clear</span>
                                             )}
                                         </td>
-                                        {/* ⚠ Penalty Balance Column */}
-                                        {(() => {
-                                            const tid = p.arms_tenants?.tenant_id ?? p.tenant_id;
-                                            const pb = tid ? (penaltyBalances[tid] || { total: 0, count: 0 }) : { total: 0, count: 0 };
-                                            return (
-                                                <td className="px-3.5 py-3 text-right font-mono font-bold">
-                                                    {pb.total > 0 ? (
-                                                        <span className="inline-flex flex-col items-end">
-                                                            <span className="text-orange-600 font-black">{fmt(pb.total)}</span>
-                                                            <span className="text-[9px] text-orange-400 font-semibold">{pb.count} day{pb.count !== 1 ? 's' : ''}</span>
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-emerald-600 text-[10px]">✓ None</span>
-                                                    )}
-                                                </td>
-                                            );
-                                        })()}
-                                        <td className="px-3.5 py-3 text-center">
+                                        {/* ⚡ Late Penalty Column */}
+                                        <td className="px-2.5 py-2 text-right font-mono font-bold whitespace-nowrap">
+                                            {penaltyTotal > 0 ? (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                                    ⚡ +{fmt(penaltyTotal)}
+                                                    <span className="text-[8px] text-rose-500 font-medium">({pb.count}d)</span>
+                                                </span>
+                                            ) : (
+                                                <span className="text-emerald-600 text-[10px]">✓ None</span>
+                                            )}
+                                        </td>
+                                        {/* 🏦 Final Debt Column (Rent + Penalty) */}
+                                        <td className="px-2.5 py-2 text-right font-mono font-extrabold whitespace-nowrap">
+                                            {finalDebt > 0 ? (
+                                                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200 font-black text-[11px]">
+                                                    {fmt(finalDebt)}
+                                                </span>
+                                            ) : (
+                                                <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold">
+                                                    ✓ Settled
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-2.5 py-2 text-center whitespace-nowrap">
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                                                 isKcb
                                                     ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-sm'
@@ -1225,7 +1260,7 @@ export default function PaymentsPage() {
                                                 {isKcb ? 'KCB Buni STK' : p.payment_method}
                                             </span>
                                         </td>
-                                        <td className="px-3.5 py-3 text-[10px] font-mono text-slate-700">
+                                        <td className="px-2.5 py-2 text-[10px] font-mono text-slate-700 whitespace-nowrap">
                                             <div className="flex items-center gap-1">
                                                 {isKcb && p.mpesa_receipt && (
                                                     <span className="text-[9px] font-black px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 font-sans">
@@ -1247,7 +1282,7 @@ export default function PaymentsPage() {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-3.5 py-3 text-[10px] text-slate-500 font-medium">
+                                        <td className="px-2.5 py-2 text-[10px] text-slate-500 font-medium whitespace-nowrap">
                                             {p.recorded_by === 'KCB Buni STK Auto' ? (
                                                 <span className="inline-flex items-center gap-1 text-emerald-700 font-bold">
                                                     🤖 ARMS APK Auto

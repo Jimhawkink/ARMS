@@ -147,12 +147,12 @@ export async function GET(req: NextRequest) {
                 .from('arms_penalties')
                 .select('*')
                 .eq('tenant_id', tenantId)
-                .eq('status', 'Active')
                 .order('penalty_date', { ascending: true });
 
             if (penErr) return NextResponse.json({ error: penErr.message }, { status: 500 });
 
-            const activePens = tenantPens || [];
+            const allPens = tenantPens || [];
+            const activePens = allPens.filter(p => p.status === 'Active');
             const penTotal = activePens.reduce((s, p) => s + Number(p.amount), 0);
             const penDays = activePens.length;
             const penDates = activePens.map(p => p.penalty_date);
@@ -163,6 +163,7 @@ export async function GET(req: NextRequest) {
                 total_penalty: penTotal,
                 penalty_dates: penDates,
                 active_penalties: activePens,
+                penalties: allPens,
                 daily_rate: 100
             });
         }
