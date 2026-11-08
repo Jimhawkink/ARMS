@@ -5,8 +5,8 @@ import { NextResponse } from 'next/server';
 // Bump MIN_VERSION here to force all old APKs to update
 // ============================================================
 
-const LATEST_VERSION = 'v4.9';
-const MIN_VERSION    = 'v4.8'; // Temporarily allow v4.8 while we push v4.10
+const LATEST_VERSION = 'v4.10';
+const MIN_VERSION    = 'v4.10'; // v4.10 uses browser download — works on all phones
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
