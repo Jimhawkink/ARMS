@@ -134,13 +134,14 @@ async function buildInboxResponse(tenants: any[]) {
     return NextResponse.json({ inbox: merged });
 }
 
-// POST — send message
+// POST — send message + fire push notification to tenant's phone
 export async function POST(req: NextRequest) {
     try {
         const { tenant_id, sender, message } = await req.json();
         if (!tenant_id || !sender || !message?.trim())
             return NextResponse.json({ error: 'tenant_id, sender, message required' }, { status: 400 });
 
+        // Save message to DB
         const { data, error } = await supabase
             .from('arms_chats')
             .insert([{
@@ -154,6 +155,45 @@ export async function POST(req: NextRequest) {
             .single();
 
         if (error) throw error;
+
+        // Fire push notification to student's phone when admin sends a message
+        if (sender === 'admin') {
+            try {
+                // Get tenant's push token + name
+                const { data: tenant } = await supabase
+                    .from('arms_tenants')
+                    .select('tenant_name, push_token')
+                    .eq('tenant_id', tenant_id)
+                    .single();
+
+                const pushToken = tenant?.push_token;
+
+                if (pushToken && pushToken.startsWith('ExponentPushToken[')) {
+                    // Send via Expo Push Notification Service (free, no account needed)
+                    await fetch('https://exp.host/--/api/v2/push/send', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'Accept-Encoding': 'gzip, deflate',
+                        },
+                        body: JSON.stringify({
+                            to: pushToken,
+                            title: '💬 ARMS — New Message',
+                            body: message.trim(),
+                            sound: 'default',
+                            priority: 'high',
+                            channelId: 'arms_messages',
+                            data: { screen: 'Chat', tenant_id },
+                        }),
+                    });
+                }
+            } catch (pushErr) {
+                // Never fail message send because push failed
+                console.warn('[push notification]', pushErr);
+            }
+        }
+
         return NextResponse.json({ message: data });
     } catch (err: any) {
         console.error('[POST /api/chats]', err);
