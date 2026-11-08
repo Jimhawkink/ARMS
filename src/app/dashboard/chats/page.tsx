@@ -83,11 +83,13 @@ export default function ChatsPage() {
     }, [loadInbox]);
 
     const filtered = inbox.filter(t => {
-        const matchSearch =
+        const q = search.toLowerCase().replace(/[\s\-]/g, '');
+        const matchSearch = !search ||
             t.tenant_name.toLowerCase().includes(search.toLowerCase()) ||
-            t.phone.includes(search) ||
+            (t.phone || '').replace(/[\s\-]/g, '').includes(q) ||
             t.unit_name.toLowerCase().includes(search.toLowerCase()) ||
-            t.location_name.toLowerCase().includes(search.toLowerCase());
+            t.location_name.toLowerCase().includes(search.toLowerCase()) ||
+            String(t.tenant_id).includes(q);
         if (!matchSearch) return false;
         if (filter === 'unread') return t.unread_count > 0;
         if (filter === 'admin') return t.last_message_sender === 'admin';

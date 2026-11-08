@@ -16,26 +16,15 @@ export async function GET(req: NextRequest) {
         const tenantId = searchParams.get('tenantId');
         const inbox    = searchParams.get('inbox');
 
-        // ── INBOX: ALL active tenants merged with chat data ──────
+        // ── INBOX: ALL tenants merged with chat data ──────
         if (inbox) {
-            // 1. Fetch ALL active tenants using CORRECT schema syntax
+            // Fetch ALL tenants (Active + Inactive) so admin can message anyone
             const { data: tenants, error: tErr } = await supabase
                 .from('arms_tenants')
                 .select('tenant_id, tenant_name, phone, arms_units(unit_name), arms_locations(location_name, location_id)')
-                .eq('status', 'Active')
                 .order('tenant_name', { ascending: true });
 
-            if (tErr) {
-                console.error('[inbox] tenant fetch error:', tErr);
-                // Fallback: try with is_active
-                const { data: t2, error: e2 } = await supabase
-                    .from('arms_tenants')
-                    .select('tenant_id, tenant_name, phone, arms_units(unit_name), arms_locations(location_name, location_id)')
-                    .order('tenant_name', { ascending: true });
-                if (e2) throw e2;
-                return buildInboxResponse(t2 || []);
-            }
-
+            if (tErr) throw tErr;
             return buildInboxResponse(tenants || []);
         }
 
