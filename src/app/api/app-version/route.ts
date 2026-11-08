@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 // ============================================================
 
 const LATEST_VERSION = 'v4.10';
-const MIN_VERSION    = 'v4.10'; // v4.10 uses browser download — works on all phones
+const MIN_VERSION    = 'v4.8'; // Allow v4.8 — students update voluntarily via banner
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
