@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import {
     getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull,
     getTenants, getLocations, getMpesaTransactions, getKcbStkRequests, autoMatchMpesa, autoMatchAllUnmatched,
-    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth
+    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth, getTenantPenaltyBalance
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
@@ -391,6 +391,7 @@ export default function PaymentsPage() {
     const [locations, setLocations] = useState<any[]>([]);
     const [mpesaTxns, setMpesaTxns] = useState<any[]>([]);
     const [kcbRequests, setKcbRequests] = useState<any[]>([]);
+    const [penaltyBalances, setPenaltyBalances] = useState<Record<number, { total: number; count: number }>>({});
     const [loading, setLoading] = useState(true);
     const [showPayModal, setShowPayModal] = useState(false);
     const [locationId, setLocationId] = useState<number | null>(null);
@@ -430,6 +431,16 @@ export default function PaymentsPage() {
             setLocations(l || []);
             setMpesaTxns(m || []);
             setKcbRequests(k || []);
+            // Load penalty balances for all active tenants
+            const activeTenants = (t || []).filter((te: any) => te.status === 'Active');
+            const penaltyResults = await Promise.all(
+                activeTenants.map((te: any) => getTenantPenaltyBalance(te.tenant_id))
+            );
+            const balMap: Record<number, { total: number; count: number }> = {};
+            activeTenants.forEach((te: any, i: number) => {
+                balMap[te.tenant_id] = { total: penaltyResults[i].total, count: penaltyResults[i].count };
+            });
+            setPenaltyBalances(balMap);
         } catch {
             toast.error('Failed to load payment records');
         } finally {
@@ -1092,6 +1103,7 @@ export default function PaymentsPage() {
                                 <th className="text-right px-3.5 py-3">Arrears Paid</th>
                                 <th className="text-right px-3.5 py-3">Current Rent</th>
                                 <th className="text-right px-3.5 py-3">Rem. Debt</th>
+                                <th className="text-right px-3.5 py-3">⚠ Penalty</th>
                                 <th className="text-center px-3.5 py-3">Method</th>
                                 <th className="text-left px-3.5 py-3">Receipt / Ref</th>
                                 <th className="text-left px-3.5 py-3">By</th>
@@ -1182,6 +1194,23 @@ export default function PaymentsPage() {
                                                 <span className="text-emerald-600 text-[10px]">✓ Clear</span>
                                             )}
                                         </td>
+                                        {/* ⚠ Penalty Balance Column */}
+                                        {(() => {
+                                            const tid = p.arms_tenants?.tenant_id ?? p.tenant_id;
+                                            const pb = tid ? (penaltyBalances[tid] || { total: 0, count: 0 }) : { total: 0, count: 0 };
+                                            return (
+                                                <td className="px-3.5 py-3 text-right font-mono font-bold">
+                                                    {pb.total > 0 ? (
+                                                        <span className="inline-flex flex-col items-end">
+                                                            <span className="text-orange-600 font-black">{fmt(pb.total)}</span>
+                                                            <span className="text-[9px] text-orange-400 font-semibold">{pb.count} day{pb.count !== 1 ? 's' : ''}</span>
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-emerald-600 text-[10px]">✓ None</span>
+                                                    )}
+                                                </td>
+                                            );
+                                        })()}
                                         <td className="px-3.5 py-3 text-center">
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                                                 isKcb

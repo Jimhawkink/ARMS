@@ -308,7 +308,8 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
                                             </p>
                                             <p className={`${g.sub} text-[8px] font-semibold opacity-90`}>
                                                 {till.accountNumber}
-                                        </p>
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
 

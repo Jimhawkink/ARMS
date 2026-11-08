@@ -2809,6 +2809,163 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
         .replace(/\{phone\}/g, vars.phone || '');
 }
 
+// ============================================================
+// PENALTIES — KES 100/day after 5th of month if unpaid
+// ============================================================
+
+function localDateStr(d: Date = new Date()): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function localMonthStr(d: Date = new Date()): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Generate KES 100/day penalties for every unpaid tenant past the 5th.
+ *  Safe to call repeatedly — unique constraint prevents duplicates. */
+export async function generatePenalties(locationId?: number): Promise<{ generated: number; skipped: number }> {
+    const today = new Date();
+    const todayDay = today.getDate();
+    if (todayDay < 5) return { generated: 0, skipped: 0 }; // before 5th — no penalties yet
+
+    const currentMonth = localMonthStr(today);
+    // Build array of all penalty dates: 5th … today
+    const penaltyDates: string[] = [];
+    for (let d = 5; d <= todayDay; d++) {
+        penaltyDates.push(localDateStr(new Date(today.getFullYear(), today.getMonth(), d)));
+    }
+
+    // Fetch all unpaid/partial bills for current month
+    let q = supabaseAdmin.from('arms_billing')
+        .select('billing_id, tenant_id, location_id, balance, status')
+        .eq('billing_month', currentMonth)
+        .in('status', ['Unpaid', 'Partial'])
+        .gt('balance', 0);
+    if (locationId) q = (q as any).eq('location_id', locationId);
+    const { data: bills } = await q;
+
+    let generated = 0, skipped = 0;
+    const rows = (bills || []).flatMap((bill: any) =>
+        penaltyDates.map(date => ({
+            tenant_id:     bill.tenant_id,
+            billing_id:    bill.billing_id,
+            billing_month: currentMonth,
+            penalty_date:  date,
+            amount:        100,
+            status:        'Active',
+            reason:        `Late payment penalty — ${currentMonth} (after 5th)`,
+        }))
+    );
+
+    // Upsert in batches of 100 — conflict on (tenant_id, billing_month, penalty_date) → skip
+    for (let i = 0; i < rows.length; i += 100) {
+        const batch = rows.slice(i, i + 100);
+        const { data, error } = await supabaseAdmin.from('arms_penalties')
+            .upsert(batch, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: true })
+            .select('penalty_id');
+        if (!error) generated += (data?.length || 0);
+        else skipped += batch.length;
+    }
+    return { generated, skipped };
+}
+
+/** Fetch penalties with optional filters. Returns full tenant/location info. */
+export async function getPenalties(opts: {
+    locationId?: number;
+    tenantId?: number;
+    month?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+} = {}): Promise<{ rows: any[]; total: number; summary: { active: number; waived: number; paid: number; totalActive: number } }> {
+    const { locationId, tenantId, month, status, page = 1, pageSize = 50 } = opts;
+    const offset = (page - 1) * pageSize;
+
+    let q = supabaseAdmin.from('arms_penalties')
+        .select(`
+            penalty_id, tenant_id, billing_id, billing_month, penalty_date,
+            amount, status, reason, waived_by, waived_at, waive_reason, created_at,
+            arms_tenants!inner(tenant_name, phone, unit_id,
+                arms_units(unit_name,
+                    arms_locations(location_id, location_name)))
+        `, { count: 'exact' })
+        .order('penalty_date', { ascending: false })
+        .order('tenant_id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+    if (tenantId) q = (q as any).eq('tenant_id', tenantId);
+    if (month)    q = (q as any).eq('billing_month', month);
+    if (status)   q = (q as any).eq('status', status);
+    if (locationId) {
+        // filter via nested location
+        q = (q as any).eq('arms_tenants.arms_units.arms_locations.location_id', locationId);
+    }
+
+    const { data, count, error } = await q;
+    if (error) { console.error('[getPenalties]', error.message); return { rows: [], total: 0, summary: { active: 0, waived: 0, paid: 0, totalActive: 0 } }; }
+
+    // Compute summary from ALL (not just page) — separate lightweight query
+    let sq = supabaseAdmin.from('arms_penalties').select('status, amount');
+    if (tenantId) sq = (sq as any).eq('tenant_id', tenantId);
+    if (month)    sq = (sq as any).eq('billing_month', month);
+    const { data: all } = await sq;
+    const summary = (all || []).reduce((acc: any, r: any) => {
+        const s = (r.status || '').toLowerCase();
+        if (s === 'active')  { acc.active++; acc.totalActive += Number(r.amount); }
+        if (s === 'waived')  { acc.waived++; }
+        if (s === 'paid')    { acc.paid++; }
+        return acc;
+    }, { active: 0, waived: 0, paid: 0, totalActive: 0 });
+
+    return { rows: data || [], total: count || 0, summary };
+}
+
+/** Waive a single penalty */
+export async function waivePenalty(penaltyId: number, waivedBy: string, reason: string): Promise<void> {
+    const { error } = await supabaseAdmin.from('arms_penalties').update({
+        status:       'Waived',
+        waived_by:    waivedBy,
+        waived_at:    new Date().toISOString(),
+        waive_reason: reason,
+        updated_at:   new Date().toISOString(),
+    }).eq('penalty_id', penaltyId);
+    if (error) throw error;
+}
+
+/** Waive ALL active penalties for a tenant in a given month */
+export async function waiveTenantPenalties(tenantId: number, month: string, waivedBy: string, reason: string): Promise<number> {
+    const { data, error } = await supabaseAdmin.from('arms_penalties').update({
+        status:       'Waived',
+        waived_by:    waivedBy,
+        waived_at:    new Date().toISOString(),
+        waive_reason: reason,
+        updated_at:   new Date().toISOString(),
+    }).eq('tenant_id', tenantId).eq('billing_month', month).eq('status', 'Active').select('penalty_id');
+    if (error) throw error;
+    return data?.length || 0;
+}
+
+/** Mark all active penalties for a tenant as Paid (called after payment recorded) */
+export async function markPenaltiesPaid(tenantId: number, month: string): Promise<void> {
+    await supabaseAdmin.from('arms_penalties').update({
+        status:     'Paid',
+        updated_at: new Date().toISOString(),
+    }).eq('tenant_id', tenantId).eq('billing_month', month).eq('status', 'Active');
+}
+
+/** Get total active penalty balance for a tenant (for payment page) */
+export async function getTenantPenaltyBalance(tenantId: number): Promise<{ total: number; count: number; months: string[] }> {
+    const { data } = await supabaseAdmin.from('arms_penalties')
+        .select('amount, billing_month')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'Active');
+    const rows = data || [];
+    return {
+        total:  rows.reduce((s: number, r: any) => s + Number(r.amount), 0),
+        count:  rows.length,
+        months: Array.from(new Set(rows.map((r: any) => r.billing_month as string))),
+    };
+}
+
 /** Standard message templates */
 export const MESSAGE_TEMPLATES = {
     rent_reminder: `Dear {name}, your rent for {unit} of KES {balance} is due by the {due_date}. Please pay promptly to avoid penalties. - ARMS`,
