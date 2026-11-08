@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     recordPayment, getAccumulatedArrearsForTenant,
-    getEffectiveRent, c2bSupabase, getMpesaTransactions
+    getEffectiveRent, c2bSupabase, getMpesaTransactions, markPenaltiesPaid
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
@@ -244,6 +244,11 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 recorded_by: user.name || 'Admin',
                 location_id: tenant.location_id,
             });
+
+            // Mark active penalties as Paid in database if tenant had active penalties
+            if (penaltyAmount > 0) {
+                await markPenaltiesPaid(selectedTenantId).catch(() => {});
+            }
 
             // 🎆 Play beautiful celebratory audio & show fireworks for ANY payment method
             playPaymentSuccessSound();

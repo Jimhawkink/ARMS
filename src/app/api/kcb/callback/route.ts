@@ -306,6 +306,14 @@ export async function POST(req: NextRequest) {
                 updated_at: new Date().toISOString(),
             }).eq("tenant_id", tenantId);
 
+            // 11. Mark active penalties as Paid if debt is settled or bills cleared
+            if (trueTenantBalance <= 0) {
+                await supabase.from("arms_penalties").update({
+                    status: "Paid",
+                    updated_at: new Date().toISOString(),
+                }).eq("tenant_id", tenantId).eq("status", "Active");
+            }
+
             console.log(`[KCB Callback ARMS] Tenant ${tenantId} new balance: ${trueTenantBalance}`);
         }
 

@@ -276,6 +276,14 @@ export async function POST(request: NextRequest) {
                             updated_at: new Date().toISOString()
                         }).eq('tenant_id', tenantId);
 
+                        // Mark active penalties as Paid if debt is settled
+                        if (newBalance <= 0) {
+                            await supabase.from('arms_penalties').update({
+                                status: 'Paid',
+                                updated_at: new Date().toISOString()
+                            }).eq('tenant_id', tenantId).eq('status', 'Active');
+                        }
+
                         // Store in arms_mpesa_transactions for tracking
                         await supabase.from('arms_mpesa_transactions').insert([{
                             transaction_type: 'STK Push',

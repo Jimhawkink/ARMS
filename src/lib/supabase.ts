@@ -1250,6 +1250,11 @@ export async function recordPayment(payment: {
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', payment.tenant_id);
 
+    // If tenant balance is fully settled (zero remaining), clear all remaining active penalties
+    if (newTenantBalance <= 0) {
+        await markPenaltiesPaid(payment.tenant_id).catch(() => {});
+    }
+
     invalidateCache('payments');
     invalidateCache('unpaid');
     invalidateCache('stats');
@@ -3026,11 +3031,30 @@ export async function waiveTenantPenalties(tenantId: number, month: string, waiv
 }
 
 /** Mark all active penalties for a tenant as Paid (called after payment recorded) */
-export async function markPenaltiesPaid(tenantId: number, month: string): Promise<void> {
-    await supabaseAdmin.from('arms_penalties').update({
-        status:     'Paid',
-        updated_at: new Date().toISOString(),
-    }).eq('tenant_id', tenantId).eq('billing_month', month).eq('status', 'Active');
+export async function markPenaltiesPaid(tenantId: number, month?: string): Promise<void> {
+    try {
+        if (typeof window !== 'undefined') {
+            await fetch('/api/penalties', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'mark_paid', tenantId, month }),
+            });
+            return;
+        }
+    } catch {
+        // fallback to direct admin if server-side
+    }
+
+    try {
+        let q = supabaseAdmin.from('arms_penalties').update({
+            status:     'Paid',
+            updated_at: new Date().toISOString(),
+        }).eq('tenant_id', tenantId).eq('status', 'Active');
+        if (month) q = q.eq('billing_month', month);
+        await q;
+    } catch {
+        // non-fatal
+    }
 }
 
 /** Get total active penalty balance for a tenant (for payment page) */

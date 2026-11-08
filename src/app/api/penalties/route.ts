@@ -182,6 +182,46 @@ export async function GET(req: NextRequest) {
         const { data: bills, error: billErr } = await billQ;
         if (billErr) return NextResponse.json({ error: billErr.message }, { status: 500 });
 
+        // 1.5 Auto-sync penalties for current month if date >= 6th
+        const today = new Date();
+        const todayDay = today.getDate();
+        const currentMonth = localMonthStr(today);
+
+        if (todayDay >= 6 && month === currentMonth && bills && bills.length > 0) {
+            try {
+                const unpaidBills = bills.filter((b: any) => (b.balance || 0) > 0 && b.status !== 'Paid');
+                if (unpaidBills.length > 0) {
+                    const syncRows: any[] = [];
+                    for (const b of unpaidBills) {
+                        for (let d = 6; d <= todayDay; d++) {
+                            const dateStr = localDateStr(new Date(today.getFullYear(), today.getMonth(), d));
+                            syncRows.push({
+                                tenant_id: b.tenant_id,
+                                billing_id: b.billing_id,
+                                billing_month: month,
+                                penalty_date: dateStr,
+                                amount: 100,
+                                status: 'Active',
+                                reason: `Late rent penalty — ${month} (after 5th grace period)`,
+                            });
+                        }
+                    }
+                    if (syncRows.length > 0) {
+                        for (let i = 0; i < syncRows.length; i += 200) {
+                            await supabaseAdmin
+                                .from('arms_penalties')
+                                .upsert(syncRows.slice(i, i + 200), {
+                                    onConflict: 'tenant_id,billing_month,penalty_date',
+                                    ignoreDuplicates: true,
+                                });
+                        }
+                    }
+                }
+            } catch (syncErr) {
+                console.error('Error auto-syncing penalties:', syncErr);
+            }
+        }
+
         // 2. Fetch all penalties for this month
         let penQ = supabaseAdmin
             .from('arms_penalties')
@@ -296,8 +336,6 @@ export async function GET(req: NextRequest) {
         tenantRows.sort((a, b) => b.total_rent_plus_penalty - a.total_rent_plus_penalty);
 
         // Calculate days elapsed from 6th to today
-        const today = new Date();
-        const todayDay = today.getDate();
         const daysElapsed = todayDay >= 6 ? (todayDay - 6 + 1) : 0;
 
         const totalDebtWithPenalties = tenantRows.reduce((sum, t) => sum + Number(t.overall_arrears || 0), 0);
@@ -326,12 +364,24 @@ export async function GET(req: NextRequest) {
     }
 }
 
-// ─── PATCH /api/penalties  → waive single or bulk ─────────────────────────────
+// ─── PATCH /api/penalties  → waive single/bulk or mark paid ──────────────────
 export async function PATCH(req: NextRequest) {
     try {
         const body = await req.json();
         const { action, penaltyId, tenantId, month, waivedBy, reason } = body;
         const now = new Date().toISOString();
+
+        if (action === 'mark_paid') {
+            if (!tenantId) return NextResponse.json({ error: 'tenantId is required' }, { status: 400 });
+            let q = supabaseAdmin.from('arms_penalties').update({
+                status: 'Paid',
+                updated_at: now,
+            }).eq('tenant_id', Number(tenantId)).eq('status', 'Active');
+            if (month) q = (q as any).eq('billing_month', month);
+            const { data, error } = await q.select('penalty_id');
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ ok: true, count: data?.length || 0 });
+        }
 
         if (action === 'waive_single') {
             const { error } = await supabaseAdmin.from('arms_penalties').update({

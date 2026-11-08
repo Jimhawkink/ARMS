@@ -175,6 +175,13 @@ export async function POST(req: NextRequest) {
             balance: newBalance, updated_at: new Date().toISOString(),
         }).eq("tenant_id", tenantIdNum);
 
+        // 11. Mark active penalties as Paid if debt is settled
+        if (newBalance <= 0) {
+            await supabase.from("arms_penalties").update({
+                status: "Paid", updated_at: new Date().toISOString(),
+            }).eq("tenant_id", tenantIdNum).eq("status", "Active");
+        }
+
         return NextResponse.json({
             success: true, status: "Completed",
             receipt: realReceipt, amount: txnAmount,
