@@ -2820,31 +2820,35 @@ function localMonthStr(d: Date = new Date()): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Generate KES 100/day penalties for every unpaid tenant past the 5th.
+/** Generate KES 100/day penalties for every unpaid/partial tenant past the 5th.
+ *  ONLY applies to the current month onwards (November 2026+).
  *  Safe to call repeatedly — unique constraint prevents duplicates. */
 export async function generatePenalties(locationId?: number): Promise<{ generated: number; skipped: number }> {
     const today = new Date();
     const todayDay = today.getDate();
-    if (todayDay < 5) return { generated: 0, skipped: 0 }; // before 5th — no penalties yet
+    const currentMonth = localMonthStr(today); // e.g. "2026-11"
 
-    const currentMonth = localMonthStr(today);
-    // Build array of all penalty dates: 5th … today
+    // No penalties before the 5th of the month
+    if (todayDay < 5) return { generated: 0, skipped: 0 };
+
+    // Build penalty dates: 5th of this month → today
     const penaltyDates: string[] = [];
     for (let d = 5; d <= todayDay; d++) {
         penaltyDates.push(localDateStr(new Date(today.getFullYear(), today.getMonth(), d)));
     }
 
-    // Fetch all unpaid/partial bills for current month
+    // Only look at CURRENT month bills (November 2026 onwards by nature of running now)
     let q = supabaseAdmin.from('arms_billing')
-        .select('billing_id, tenant_id, location_id, balance, status')
+        .select('billing_id, tenant_id, location_id, balance, status, billing_month')
         .eq('billing_month', currentMonth)
         .in('status', ['Unpaid', 'Partial'])
         .gt('balance', 0);
     if (locationId) q = (q as any).eq('location_id', locationId);
     const { data: bills } = await q;
+    if (!bills || bills.length === 0) return { generated: 0, skipped: 0 };
 
-    let generated = 0, skipped = 0;
-    const rows = (bills || []).flatMap((bill: any) =>
+    // Build one penalty row per tenant per day they haven't paid
+    const rows = bills.flatMap((bill: any) =>
         penaltyDates.map(date => ({
             tenant_id:     bill.tenant_id,
             billing_id:    bill.billing_id,
@@ -2856,9 +2860,10 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
         }))
     );
 
-    // Upsert in batches of 100 — conflict on (tenant_id, billing_month, penalty_date) → skip
-    for (let i = 0; i < rows.length; i += 100) {
-        const batch = rows.slice(i, i + 100);
+    // Upsert in batches of 200 — conflict = skip (safe to call daily/on every page load)
+    let generated = 0, skipped = 0;
+    for (let i = 0; i < rows.length; i += 200) {
+        const batch = rows.slice(i, i + 200);
         const { data, error } = await supabaseAdmin.from('arms_penalties')
             .upsert(batch, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: true })
             .select('penalty_id');

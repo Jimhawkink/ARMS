@@ -122,6 +122,24 @@ export default function PenaltiesPage() {
         getTenants().then(t => setTenants(t || []));
     }, []);
 
+    // ── AUTO-GENERATE on every page load (silent, background) ─────────────────
+    // Runs once when the page mounts. No button press needed.
+    // Safe to call repeatedly — DB unique constraint prevents duplicates.
+    useEffect(() => {
+        const today = new Date();
+        if (today.getDate() < 5) return; // before the 5th — nothing to generate yet
+        // Fire silently in the background — don't block the UI
+        generatePenalties().then(r => {
+            if (r.generated > 0) {
+                // New penalties were inserted — reload the table so they show up
+                load();
+            }
+        }).catch(() => {
+            // silent fail — user can hit Recalculate manually if needed
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // mount only
+
     // ── Generate penalties ─────────────────────────────────────────────────
     const handleGenerate = async () => {
         setGenerating(true);
@@ -198,7 +216,7 @@ export default function PenaltiesPage() {
                             KES 100/day auto-penalty from the 5th of each month for unpaid rent ·
                             {dayOfMonth < 5
                                 ? <span className="text-amber-600 font-bold"> Penalties start on the 5th (in {5 - dayOfMonth} day{5 - dayOfMonth !== 1 ? 's' : ''})</span>
-                                : <span className="text-red-600 font-bold"> Day {dayOfMonth} — penalties active</span>}
+                                : <span className="text-red-600 font-bold"> Day {dayOfMonth} — penalties active · auto-applied on page load</span>}
                         </p>
                     </div>
                     <button
@@ -207,7 +225,7 @@ export default function PenaltiesPage() {
                         className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-black shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <FiZap size={15} className={generating ? 'animate-spin' : ''} />
-                        {generating ? 'Generating…' : 'Generate Today\'s Penalties'}
+                        {generating ? 'Recalculating…' : 'Recalculate'}
                     </button>
                 </div>
 
@@ -358,7 +376,7 @@ export default function PenaltiesPage() {
                                         {total === 0
                                             ? dayOfMonth < 5
                                                 ? 'No penalties — before the 5th of month'
-                                                : 'No penalties found. Click "Generate Today\'s Penalties" to calculate.'
+                                                : 'No unpaid tenants found for November — all penalties auto-applied! ✅'
                                             : 'No results for this search'}
                                     </td></tr>
                                 ) : filtered.map(row => {
