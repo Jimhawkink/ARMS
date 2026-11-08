@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // APK hosted on GitHub Releases CDN (Fastly) — much faster than Vercel for large files
-const APK_VERSION  = 'v4.12';
+const APK_VERSION  = 'v4.14';
 const APK_FILENAME = `ARMSTenantApp-${APK_VERSION}.apk`;
 const GITHUB_RELEASE_URL = `https://github.com/Jimhawkink/ARMS/releases/download/${APK_VERSION}/${APK_FILENAME}`;
 

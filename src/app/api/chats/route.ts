@@ -1,8 +1,8 @@
 // ============================================================
-// ARMS — Chat API v3 (FIXED — uses correct schema joins)
+// ARMS — Chat API v4 (FCM Push via Firebase Admin SDK)
 // GET  /api/chats?tenantId=X   → messages + tenant info
-// GET  /api/chats?inbox=1      → ALL active tenants + chat data
-// POST /api/chats              → send message
+// GET  /api/chats?inbox=1      → ALL tenants + chat data
+// POST /api/chats              → send message + FCM push
 // PATCH /api/chats?tenantId=X → mark tenant messages as read
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,15 +10,35 @@ import { supabaseAdmin as supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+// ── Firebase Admin (lazy init — only once) ───────────────────
+let _firebaseApp: any = null;
+async function getFirebaseMessaging() {
+    if (!_firebaseApp) {
+        const admin = await import('firebase-admin');
+        if (!admin.apps.length) {
+            _firebaseApp = admin.initializeApp({
+                credential: admin.credential.cert({
+                    projectId:   process.env.FIREBASE_PROJECT_ID,
+                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                    privateKey:  (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+                }),
+            });
+        } else {
+            _firebaseApp = admin.apps[0];
+        }
+    }
+    const admin = await import('firebase-admin');
+    return admin.messaging();
+}
+
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
         const tenantId = searchParams.get('tenantId');
         const inbox    = searchParams.get('inbox');
 
-        // ── INBOX: ALL tenants merged with chat data ──────
+        // ── INBOX ──────────────────────────────────────────────
         if (inbox) {
-            // Fetch ALL tenants (Active + Inactive) so admin can message anyone
             const { data: tenants, error: tErr } = await supabase
                 .from('arms_tenants')
                 .select('tenant_id, tenant_name, phone, arms_units(unit_name), arms_locations(location_name, location_id)')
@@ -28,21 +48,14 @@ export async function GET(req: NextRequest) {
             return buildInboxResponse(tenants || []);
         }
 
-        // ── THREAD: messages for one tenant ─────────────────────
+        // ── THREAD ─────────────────────────────────────────────
         if (tenantId) {
             const tid = parseInt(tenantId);
-
             const [{ data: messages }, { data: tenant }] = await Promise.all([
-                supabase
-                    .from('arms_chats')
-                    .select('*')
-                    .eq('tenant_id', tid)
-                    .order('created_at', { ascending: true }),
-                supabase
-                    .from('arms_tenants')
+                supabase.from('arms_chats').select('*').eq('tenant_id', tid).order('created_at', { ascending: true }),
+                supabase.from('arms_tenants')
                     .select('tenant_id, tenant_name, phone, arms_units(unit_name), arms_locations(location_name, location_id)')
-                    .eq('tenant_id', tid)
-                    .single(),
+                    .eq('tenant_id', tid).single(),
             ]);
 
             return NextResponse.json({
@@ -57,12 +70,10 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        // ── UNREAD COUNT badge ────────────────────────────────────
+        // ── UNREAD COUNT ────────────────────────────────────────
         const { count } = await supabase
-            .from('arms_chats')
-            .select('*', { count: 'exact', head: true })
-            .eq('is_read', false)
-            .eq('sender', 'tenant');
+            .from('arms_chats').select('*', { count: 'exact', head: true })
+            .eq('is_read', false).eq('sender', 'tenant');
 
         return NextResponse.json({ unread_count: count || 0 });
 
@@ -73,28 +84,19 @@ export async function GET(req: NextRequest) {
 }
 
 async function buildInboxResponse(tenants: any[]) {
-    // Fetch all chat summaries
     const { data: chats } = await supabase
-        .from('arms_chats')
-        .select('tenant_id, message, sender, is_read, created_at')
+        .from('arms_chats').select('tenant_id, message, sender, is_read, created_at')
         .order('created_at', { ascending: false });
 
-    // Build per-tenant chat summary
     const chatMap: Record<number, any> = {};
     for (const row of (chats || [])) {
         const tid = row.tenant_id;
         if (!chatMap[tid]) {
-            chatMap[tid] = {
-                last_message: row.message,
-                last_message_sender: row.sender,
-                last_message_at: row.created_at,
-                unread_count: 0,
-            };
+            chatMap[tid] = { last_message: row.message, last_message_sender: row.sender, last_message_at: row.created_at, unread_count: 0 };
         }
         if (!row.is_read && row.sender === 'tenant') chatMap[tid].unread_count++;
     }
 
-    // Merge every tenant with chat data
     const merged = tenants.map((t: any) => {
         const chat = chatMap[t.tenant_id];
         return {
@@ -111,7 +113,6 @@ async function buildInboxResponse(tenants: any[]) {
         };
     });
 
-    // Sort: unread first → recent chat → alphabetical
     merged.sort((a: any, b: any) => {
         if (b.unread_count !== a.unread_count) return b.unread_count - a.unread_count;
         if (b.has_chat !== a.has_chat) return b.has_chat ? 1 : -1;
@@ -123,63 +124,57 @@ async function buildInboxResponse(tenants: any[]) {
     return NextResponse.json({ inbox: merged });
 }
 
-// POST — send message + fire push notification to tenant's phone
+// POST — save message + send FCM push to tenant's phone
 export async function POST(req: NextRequest) {
     try {
         const { tenant_id, sender, message } = await req.json();
         if (!tenant_id || !sender || !message?.trim())
             return NextResponse.json({ error: 'tenant_id, sender, message required' }, { status: 400 });
 
-        // Save message to DB
+        // Save message
         const { data, error } = await supabase
             .from('arms_chats')
-            .insert([{
-                tenant_id,
-                sender,
-                message: message.trim(),
-                is_read: sender === 'admin',
-                created_at: new Date().toISOString(),
-            }])
-            .select()
-            .single();
+            .insert([{ tenant_id, sender, message: message.trim(), is_read: sender === 'admin', created_at: new Date().toISOString() }])
+            .select().single();
 
         if (error) throw error;
 
-        // Fire push notification to student's phone when admin sends a message
+        // Send FCM push when admin sends a message
         if (sender === 'admin') {
             try {
-                // Get tenant's push token + name
                 const { data: tenant } = await supabase
                     .from('arms_tenants')
                     .select('tenant_name, push_token')
-                    .eq('tenant_id', tenant_id)
-                    .single();
+                    .eq('tenant_id', tenant_id).single();
 
-                const pushToken = tenant?.push_token;
+                const fcmToken = tenant?.push_token;
 
-                if (pushToken && pushToken.startsWith('ExponentPushToken[')) {
-                    // Send via Expo Push Notification Service (free, no account needed)
-                    await fetch('https://exp.host/--/api/v2/push/send', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json',
-                            'Accept-Encoding': 'gzip, deflate',
-                        },
-                        body: JSON.stringify({
-                            to: pushToken,
+                if (fcmToken) {
+                    const fcm = await getFirebaseMessaging();
+                    await fcm.send({
+                        token: fcmToken,
+                        notification: {
                             title: '💬 ARMS — New Message',
                             body: message.trim(),
-                            sound: 'default',
+                        },
+                        android: {
                             priority: 'high',
-                            channelId: 'arms_messages',
-                            data: { screen: 'Chat', tenant_id },
-                        }),
+                            notification: {
+                                channelId: 'arms_messages',
+                                sound: 'default',
+                            },
+                        },
+                        data: {
+                            screen: 'Chat',
+                            tenant_id: String(tenant_id),
+                        },
                     });
+                    console.log('[FCM] Push sent to', tenant?.tenant_name);
+                } else {
+                    console.warn('[FCM] No push_token for tenant', tenant_id);
                 }
             } catch (pushErr) {
-                // Never fail message send because push failed
-                console.warn('[push notification]', pushErr);
+                console.warn('[FCM push error]', pushErr);
             }
         }
 
@@ -196,12 +191,8 @@ export async function PATCH(req: NextRequest) {
         const tenantId = new URL(req.url).searchParams.get('tenantId');
         if (!tenantId) return NextResponse.json({ error: 'tenantId required' }, { status: 400 });
 
-        await supabase
-            .from('arms_chats')
-            .update({ is_read: true, read_at: new Date().toISOString() })
-            .eq('tenant_id', parseInt(tenantId))
-            .eq('sender', 'tenant')
-            .eq('is_read', false);
+        await supabase.from('arms_chats').update({ is_read: true, read_at: new Date().toISOString() })
+            .eq('tenant_id', parseInt(tenantId)).eq('sender', 'tenant').eq('is_read', false);
 
         return NextResponse.json({ success: true });
     } catch (err: any) {
