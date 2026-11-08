@@ -7,27 +7,27 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
+import * as admin from 'firebase-admin';
 
 export const dynamic = 'force-dynamic';
 
-// ── Firebase Admin (lazy init — only once) ───────────────────
-let _firebaseApp: any = null;
-async function getFirebaseMessaging() {
-    if (!_firebaseApp) {
-        const admin = await import('firebase-admin');
-        if (!admin.apps.length) {
-            _firebaseApp = admin.initializeApp({
-                credential: admin.credential.cert({
-                    projectId:   process.env.FIREBASE_PROJECT_ID,
-                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-                    privateKey:  (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-                }),
-            });
-        } else {
-            _firebaseApp = admin.apps[0];
-        }
+// ── Firebase Admin (singleton) ───────────────────────────────
+function getFirebaseMessaging() {
+    if (!admin.apps.length) {
+        // Fix private key: Vercel stores \n as literal \\n — fix both cases
+        const rawKey = process.env.FIREBASE_PRIVATE_KEY || '';
+        const privateKey = rawKey.includes('\\n')
+            ? rawKey.replace(/\\n/g, '\n')
+            : rawKey;
+
+        admin.initializeApp({
+            credential: admin.credential.cert({
+                projectId:   process.env.FIREBASE_PROJECT_ID!,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+                privateKey,
+            }),
+        });
     }
-    const admin = await import('firebase-admin');
     return admin.messaging();
 }
 
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
                 const fcmToken = tenant?.push_token;
 
                 if (fcmToken) {
-                    const fcm = await getFirebaseMessaging();
+                    const fcm = getFirebaseMessaging();
                     await fcm.send({
                         token: fcmToken,
                         notification: {
