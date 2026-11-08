@@ -330,6 +330,11 @@ export default function BillingPage() {
                                                 <span className={`font-extrabold ${t.totalUnpaid > 0 ? 'text-red-600' : 'text-green-600'}`}>
                                                     {t.totalUnpaid > 0 ? fmt(t.totalUnpaid) : '✓ Clear'}
                                                 </span>
+                                                {(t.totalPenalty || 0) > 0 && (
+                                                    <span className="block text-[10px] font-black text-rose-600 mt-0.5" title="Active late rent penalty">
+                                                        ⚡ +{fmt(t.totalPenalty)} pen
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="px-3 py-3">
                                                 {t.is_on_vacation ? (
@@ -449,6 +454,11 @@ export default function BillingPage() {
                                         <td className="px-4 py-3 text-xs font-bold text-green-600">{fmt(b.amount_paid)}</td>
                                         <td className="px-4 py-3">
                                             <span className={`text-xs font-extrabold ${b.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>{fmt(b.balance)}</span>
+                                            {b.balance > 0 && isOverdue && (
+                                                <span className="block text-[9px] font-black text-rose-600 mt-0.5" title="Overdue penalty applies">
+                                                    ⚡ +KES 300 pen
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${b.status === 'Paid' ? 'bg-green-50 text-green-700 border-green-200' : b.status === 'Partial' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>

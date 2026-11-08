@@ -1525,11 +1525,18 @@ export default function TenantsPage() {
 
                                             {/* FIFO Debt Balance */}
                                             <td className="py-3 px-3">
-                                                {hasArrears ? (
+                                                {hasArrears || (tenantDetails[t.tenant_id]?.totalPenalty || 0) > 0 ? (
                                                     <div>
                                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
                                                             ⚠️ {fmt(realBalance)}
                                                         </span>
+                                                        {(tenantDetails[t.tenant_id]?.totalPenalty || 0) > 0 && (
+                                                            <div className="mt-0.5">
+                                                                <span className="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-200" title="Active late rent penalty">
+                                                                    ⚡ +{fmt(tenantDetails[t.tenant_id]?.totalPenalty)} pen
+                                                                </span>
+                                                            </div>
+                                                        )}
                                                         <div className="mt-1">
                                                             <MonthsBehindBadge moveInDate={t.move_in_date} arrears={realBalance} />
                                                         </div>

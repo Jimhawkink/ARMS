@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { FiSearch, FiX, FiChevronDown, FiAlertTriangle } from 'react-icons/fi';
+import { getActivePenaltiesMap } from '@/lib/supabase';
 
 /**
  * Tenant shape expected by this component.
@@ -16,6 +17,8 @@ export interface TenantOption {
     monthly_rent: number;
     arms_units?: { unit_name: string } | null;
     arms_locations?: { location_name: string } | null;
+    total_penalty?: number;
+    penalty_days?: number;
 }
 
 interface SearchableTenantSelectorProps {
@@ -24,6 +27,7 @@ interface SearchableTenantSelectorProps {
     onSelect: (tenantId: number | null) => void;
     placeholder?: string;
     disabled?: boolean;
+    penaltiesMap?: Record<number, { penalty_days: number; total_penalty: number; total_debt?: number }>;
 }
 
 /**
@@ -31,13 +35,24 @@ interface SearchableTenantSelectorProps {
  * Feature: ultra-rent-payment-modal
  * Requirements: 5.3
  */
-export function filterTenants(tenants: TenantOption[], query: string): TenantOption[] {
+export function filterTenants(tenants: TenantOption[], query: string, penaltiesMap?: Record<number, any>): TenantOption[] {
     if (!query.trim()) return tenants;
     const q = query.toLowerCase();
-    return tenants.filter(t =>
-        t.tenant_name.toLowerCase().includes(q) ||
-        (t.phone || '').toLowerCase().includes(q)
-    );
+    return tenants.filter(t => {
+        const matchesNameOrPhone = t.tenant_name.toLowerCase().includes(q) ||
+            (t.phone || '').toLowerCase().includes(q) ||
+            (t.arms_units?.unit_name || '').toLowerCase().includes(q) ||
+            (t.arms_locations?.location_name || '').toLowerCase().includes(q);
+        if (matchesNameOrPhone) return true;
+        if (q === 'penalty' || q === 'penalties' || q === 'late') {
+            const pen = penaltiesMap?.[t.tenant_id];
+            return (pen && pen.total_penalty > 0) || (t.total_penalty && t.total_penalty > 0);
+        }
+        if (q === 'arrears' || q === 'unpaid' || q === 'debt') {
+            return (t.balance || 0) > 0;
+        }
+        return false;
+    });
 }
 
 /**
@@ -69,17 +84,27 @@ export default function SearchableTenantSelector({
     onSelect,
     placeholder = 'Search tenant by name or phone…',
     disabled = false,
+    penaltiesMap,
 }: SearchableTenantSelectorProps) {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
     const [highlightIndex, setHighlightIndex] = useState(0);
+    const [internalPenalties, setInternalPenalties] = useState<Record<number, { penalty_days: number; total_penalty: number }>>({});
+
+    useEffect(() => {
+        getActivePenaltiesMap().then(map => {
+            if (map) setInternalPenalties(map);
+        });
+    }, []);
+
+    const activePenalties = penaltiesMap && Object.keys(penaltiesMap).length > 0 ? penaltiesMap : internalPenalties;
 
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLUListElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const selectedTenant = tenants.find(t => t.tenant_id === selectedTenantId) ?? null;
-    const filtered = filterTenants(tenants, query);
+    const filtered = filterTenants(tenants, query, activePenalties);
 
     // Reset highlight when filtered list changes
     useEffect(() => { setHighlightIndex(0); }, [query]);
@@ -292,23 +317,48 @@ export default function SearchableTenantSelector({
 
                                     {/* Info */}
                                     <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-sm font-semibold text-gray-900 truncate">
-                                                {t.tenant_name}
-                                            </span>
-                                            {t.is_on_vacation && (
-                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-lg bg-amber-100 text-amber-700 flex-shrink-0">
-                                                    🏖️ Vacation
-                                                </span>
-                                            )}
-                                            {/* Arrears badge — shown iff balance > 0 (Property 5) */}
-                                            {t.balance > 0 && (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 flex-shrink-0">
-                                                    <FiAlertTriangle size={9} />
-                                                    {fmt(t.balance)} arrears
-                                                </span>
-                                            )}
-                                        </div>
+                                        {(() => {
+                                            const pen = activePenalties[t.tenant_id] || (t.total_penalty ? { penalty_days: t.penalty_days || 0, total_penalty: t.total_penalty } : null);
+                                            const hasPenalty = pen && pen.total_penalty > 0;
+                                            const totalCombined = (t.balance || 0) + (pen?.total_penalty || 0);
+
+                                            return (
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-sm font-semibold text-gray-900 truncate">
+                                                        {t.tenant_name}
+                                                    </span>
+                                                    {t.is_on_vacation && (
+                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-lg bg-amber-100 text-amber-700 flex-shrink-0">
+                                                            🏖️ Vacation
+                                                        </span>
+                                                    )}
+                                                    {/* Arrears & Penalty badges */}
+                                                    {hasPenalty ? (
+                                                        <>
+                                                            {t.balance > 0 && (
+                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 flex-shrink-0">
+                                                                    <FiAlertTriangle size={9} />
+                                                                    {fmt(t.balance)} rent
+                                                                </span>
+                                                            )}
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200 flex-shrink-0">
+                                                                ⚡ {pen.penalty_days}d +{fmt(pen.total_penalty)}
+                                                            </span>
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-300 flex-shrink-0">
+                                                                Total: {fmt(totalCombined)}
+                                                            </span>
+                                                        </>
+                                                    ) : (
+                                                        t.balance > 0 && (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 flex-shrink-0">
+                                                                <FiAlertTriangle size={9} />
+                                                                {fmt(t.balance)} arrears
+                                                            </span>
+                                                        )
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
                                         <p className="text-[11px] text-gray-400 truncate mt-0.5">
                                             {t.arms_units?.unit_name || '—'} · {t.arms_locations?.location_name || '—'}
                                             {t.phone ? ` · ${t.phone}` : ''}

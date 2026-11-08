@@ -1728,6 +1728,36 @@ export async function getOverdueTenants(locationId?: number) {
     return data || [];
 }
 
+// ==================== GLOBAL ACTIVE PENALTIES CACHE ====================
+let cachedPenaltiesMap: Record<number, { penalty_days: number; total_penalty: number; total_debt: number }> | null = null;
+
+export async function getActivePenaltiesMap(forceRefresh = false): Promise<Record<number, { penalty_days: number; total_penalty: number; total_debt: number }>> {
+    if (cachedPenaltiesMap && !forceRefresh) return cachedPenaltiesMap;
+    try {
+        if (typeof window !== 'undefined') {
+            const res = await fetch('/api/penalties');
+            const data = await res.json();
+            const map: Record<number, any> = {};
+            if (data?.tenants && Array.isArray(data.tenants)) {
+                data.tenants.forEach((t: any) => {
+                    if (t.total_penalty > 0) {
+                        map[t.tenant_id] = {
+                            penalty_days: t.penalty_days || 0,
+                            total_penalty: t.total_penalty || 0,
+                            total_debt: t.overall_arrears || (t.rent_balance + t.total_penalty),
+                        };
+                    }
+                });
+            }
+            cachedPenaltiesMap = map;
+            return map;
+        }
+    } catch {
+        // non-fatal
+    }
+    return {};
+}
+
 // ==================== UNPAID RENT CALCULATOR ====================
 export async function calculateUnpaidRent(locationId?: number, forceRefresh = false) {
     const key = `unpaid:${locationId ?? 'all'}`;
@@ -1752,9 +1782,27 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
             .select('tenant_id, amount, payment_date, created_at')
             .in('tenant_id', tenantIds);
 
+        // Fetch active penalties from arms_penalties table if accessible
+        let penMap: Record<number, number> = {};
+        try {
+            if (typeof supabaseAdmin !== 'undefined') {
+                const { data: pData } = await supabaseAdmin
+                    .from('arms_penalties')
+                    .select('tenant_id, amount')
+                    .eq('status', 'Active');
+                (pData || []).forEach(p => {
+                    penMap[p.tenant_id] = (penMap[p.tenant_id] || 0) + Number(p.amount);
+                });
+            }
+        } catch {
+            // fallback handled per-tenant below
+        }
+
         const paymentsList = allPayments || [];
         const nowLocal = new Date();
         const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
+        const currentDay = nowLocal.getDate();
+        const autoCurPenalty = currentDay >= 6 ? (currentDay - 5) * 100 : 0;
 
         const results = activeTenants.map(tenant => {
             // billing_start_month is authoritative; fall back to move_in_date
@@ -1810,9 +1858,10 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
             }
 
             let totalUnpaid = 0;
-            let totalPenalty = 0;
             const unpaidMonths: { month: string; rent: number; paid: number; balance: number; penalty: number; status: string }[] = [];
             const allMonths: { month: string; rent: number; paid: number; balance: number; isVacation: boolean; status: string }[] = [];
+
+            const dbPenalty = penMap[tenant.tenant_id] || 0;
 
             for (const ma of monthAllocations) {
                 const status = ma.balance <= 0 ? 'Paid' : ma.paid > 0 ? 'Partial' : 'Unpaid';
@@ -1826,22 +1875,26 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
                 });
 
                 if (ma.balance > 0) {
-                    const billMonthDate = new Date(ma.month + '-05');
-                    const isLate = nowLocal > billMonthDate;
-                    const penalty = isLate ? Math.round(ma.rent * 0.02) : 0;
+                    const isCurrent = ma.month === currentMonth;
+                    // Daily late penalty KES 100/day starting 6th
+                    const monthPenalty = isCurrent ? (dbPenalty > 0 ? dbPenalty : autoCurPenalty) : 0;
 
                     unpaidMonths.push({
                         month: ma.month,
                         rent: ma.rent,
                         paid: ma.paid,
                         balance: ma.balance,
-                        penalty,
+                        penalty: monthPenalty,
                         status,
                     });
                     totalUnpaid += ma.balance;
-                    totalPenalty += penalty;
                 }
             }
+
+            // Accurate total penalty: use database active penalties if present or KES 100/day from 6th
+            const totalPenalty = dbPenalty > 0 
+                ? dbPenalty 
+                : (unpaidMonths.length > 0 && currentDay >= 6 ? autoCurPenalty : 0);
 
             return {
                 ...tenant,

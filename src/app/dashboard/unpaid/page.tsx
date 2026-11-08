@@ -206,7 +206,7 @@ export default function UnpaidRentPage() {
                         <span className="text-2xl">⚠️</span>
                         <span>Unpaid Rent Tracker</span>
                     </h1>
-                    <p className="text-sm text-gray-400 mt-1">Auto-calculated from move-in date · 2% penalty after 5th · Active tenants only</p>
+                    <p className="text-sm text-gray-400 mt-1">Auto-calculated from move-in date · KES 100/day late penalty from 6th · Active tenants only</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={() => loadData(locationId)} className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 transition">
@@ -238,7 +238,7 @@ export default function UnpaidRentPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 {[
                     { label: 'Total Arrears', value: fmt(totalArrears), emoji: '💸', color: '#ef4444', bg: '#fef2f2', sub: 'Unpaid rent', pulse: true },
-                    { label: 'Late Penalties', value: fmt(totalPenalties), emoji: '⚡', color: '#f59e0b', bg: '#fffbeb', sub: '2% after 5th', pulse: false },
+                    { label: 'Late Penalties', value: fmt(totalPenalties), emoji: '⚡', color: '#f59e0b', bg: '#fffbeb', sub: 'KES 100/d after 5th', pulse: false },
                     { label: 'Total Owed', value: fmt(totalOwed), emoji: '💰', color: '#dc2626', bg: '#fff1f2', sub: 'Rent + penalties', pulse: totalOwed > 0 },
                     { label: 'Tenants Behind', value: filtered.length, emoji: '👥', color: '#6366f1', bg: '#eef2ff', sub: 'With arrears', pulse: false },
                     { label: 'Unpaid Months', value: totalMonths, emoji: '📅', color: '#8b5cf6', bg: '#f5f3ff', sub: 'Across all tenants', pulse: false },
@@ -426,10 +426,10 @@ export default function UnpaidRentPage() {
                                         <td className="px-3 py-3" style={{ background: C.penalty.bg + '60' }}>
                                             {(t.totalPenalty || 0) > 0 ? (
                                                 <div>
-                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold whitespace-nowrap" style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}>
-                                                        ⚡ {fmt(t.totalPenalty)}
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-black whitespace-nowrap" style={{ background: '#fff1f2', color: '#b91c1c', border: '1px solid #fecdd3' }}>
+                                                        ⚡ +{fmt(t.totalPenalty)}
                                                     </span>
-                                                    {penaltyPct > 0 && <span className="text-[9px] text-gray-400 ml-1">{penaltyPct}%</span>}
+                                                    <span className="text-[9px] text-rose-500 font-semibold block mt-0.5">KES 100/d</span>
                                                 </div>
                                             ) : <span className="text-gray-300">—</span>}
                                         </td>
