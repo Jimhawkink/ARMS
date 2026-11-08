@@ -1234,6 +1234,13 @@ export async function recordPayment(payment: {
         )
     );
 
+    // Mark penalties as Paid for any billing month fully cleared by this payment
+    for (const alloc of allocations) {
+        if (alloc.newStatus === 'Paid') {
+            await markPenaltiesPaid(payment.tenant_id, alloc.billing_month).catch(() => {});
+        }
+    }
+
     const { data: freshTenant } = await supabase
         .from('arms_tenants').select('balance').eq('tenant_id', payment.tenant_id).single();
     const latestBalance = Math.round(((freshTenant?.balance || 0)) * 100) / 100;
@@ -1636,12 +1643,13 @@ export async function markPaymentVerified(paymentId: number, verifiedBy: string 
 
 // ==================== REPORTS ====================
 export async function getTenantStatement(tenantId: number) {
-    const [tenant, bills, payments] = await Promise.all([
+    const [tenant, bills, payments, penaltiesRes] = await Promise.all([
         getTenantById(tenantId),
         getBilling({ tenantId }),
-        getPayments({ tenantId })
+        getPayments({ tenantId }),
+        supabaseAdmin.from('arms_penalties').select('*').eq('tenant_id', tenantId).order('penalty_date', { ascending: true })
     ]);
-    return { tenant, bills, payments };
+    return { tenant, bills, payments, penalties: penaltiesRes?.data || [] };
 }
 
 export async function getLocationSummary(locationId?: number) {
@@ -2828,12 +2836,12 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
     const todayDay = today.getDate();
     const currentMonth = localMonthStr(today); // e.g. "2026-11"
 
-    // No penalties before the 5th of the month
-    if (todayDay < 5) return { generated: 0, skipped: 0 };
+    // No penalties on or before the 5th of the month (5th is the payment due date grace)
+    if (todayDay < 6) return { generated: 0, skipped: 0 };
 
-    // Build penalty dates: 5th of this month → today
+    // Build penalty dates: 6th of this month → today (KES 100/day starting 6th)
     const penaltyDates: string[] = [];
-    for (let d = 5; d <= todayDay; d++) {
+    for (let d = 6; d <= todayDay; d++) {
         penaltyDates.push(localDateStr(new Date(today.getFullYear(), today.getMonth(), d)));
     }
 

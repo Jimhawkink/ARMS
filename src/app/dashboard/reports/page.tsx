@@ -453,6 +453,16 @@ export default function ReportsPage() {
             amount: b.rent_amount,
             desc: `Monthly Rent · ${monthFull(b.billing_month)}`
         }));
+        statement.penalties?.forEach((pen: any) => {
+            if (pen.status !== 'Waived') {
+                items.push({
+                    date: pen.penalty_date,
+                    type: 'penalty',
+                    amount: Number(pen.amount) || 100,
+                    desc: `⚡ Late Rent Penalty · ${pen.penalty_date}`
+                });
+            }
+        });
         statement.payments?.forEach((p: any) => items.push({
             date: p.payment_date?.split('T')[0] || '',
             type: 'payment',
@@ -462,7 +472,7 @@ export default function ReportsPage() {
         items.sort((a, b) => a.date.localeCompare(b.date));
         let bal = 0;
         return items.map(item => {
-            if (item.type === 'bill') { bal += item.amount; return { ...item, debit: item.amount, credit: 0, balance: bal }; }
+            if (item.type === 'bill' || item.type === 'penalty') { bal += item.amount; return { ...item, debit: item.amount, credit: 0, balance: bal }; }
             else { bal -= item.amount; return { ...item, debit: 0, credit: item.amount, balance: bal }; }
         });
     };

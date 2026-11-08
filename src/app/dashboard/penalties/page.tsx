@@ -1,15 +1,16 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { topProgress } from '@/components/TopProgressBar';
 import {
     FiAlertTriangle, FiCheckCircle, FiXCircle, FiRefreshCw,
-    FiSearch, FiMapPin, FiDollarSign,
-    FiChevronLeft, FiChevronRight, FiX, FiZap, FiTrendingUp, FiClock,
-    FiShield,
+    FiSearch, FiMapPin, FiDollarSign, FiCalendar, FiClock,
+    FiChevronLeft, FiChevronRight, FiX, FiZap, FiTrendingUp,
+    FiShield, FiDownload, FiPhone, FiExternalLink, FiInfo, FiSliders
 } from 'react-icons/fi';
 
-/* ─── helpers ──────────────────────────────────────────────────────────────── */
+/* ─── Formatters ───────────────────────────────────────────────────────────── */
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString('en-KE')}`;
 const fmtDate = (d: string) => {
     if (!d) return '—';
@@ -26,55 +27,67 @@ const currentMonth = () => {
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
 };
 
-/* ─── Stat Card ────────────────────────────────────────────────────────────── */
-function StatCard({ icon, label, value, sub, color }: {
-    icon: React.ReactNode; label: string; value: string | number; sub?: string; color: string;
+/* ─── Compact KPI Card (Light, High-Energy Modern Theme) ───────────────────── */
+function KpiCard({ icon, label, value, sub, borderColor, iconBg, textColor }: {
+    icon: React.ReactNode; 
+    label: string; 
+    value: string | number; 
+    sub?: string; 
+    borderColor: string;
+    iconBg: string;
+    textColor: string;
 }) {
     return (
-        <div className={`bg-white rounded-xl border ${color} p-3 flex items-start gap-3 shadow-sm`}>
-            <div className={`p-2 rounded-lg ${color.replace('border-', 'bg-').replace('-200', '-50')} flex-shrink-0`}>
-                <span className={color.replace('border-', 'text-').replace('-200', '-600')}>{icon}</span>
+        <div className={`bg-white rounded-2xl border ${borderColor} p-3 sm:p-4 shadow-sm hover:shadow-md transition-all flex items-start gap-3 relative overflow-hidden group`}>
+            <div className={`p-2.5 rounded-xl ${iconBg} ${textColor} flex-shrink-0 transition-transform group-hover:scale-105`}>
+                {icon}
             </div>
-            <div className="min-w-0">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none mb-0.5">{label}</p>
-                <p className="text-lg font-black text-slate-800 leading-none">{value}</p>
-                {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
+            <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 leading-tight mb-1">{label}</p>
+                <p className={`text-lg sm:text-xl font-black ${textColor} leading-tight truncate`}>{value}</p>
+                {sub && <p className="text-[11px] text-slate-500 font-semibold mt-1 leading-tight">{sub}</p>}
             </div>
         </div>
     );
 }
 
-/* ─── Status Badge ─────────────────────────────────────────────────────────── */
-function StatusBadge({ status }: { status: string }) {
-    const s = (status || '').toLowerCase();
-    if (s === 'active') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-50 text-red-600 border border-red-200"><FiAlertTriangle size={9} /> Active</span>;
-    if (s === 'waived') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-500 border border-slate-200"><FiXCircle size={9} /> Waived</span>;
-    if (s === 'paid')   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-600 border border-emerald-200"><FiCheckCircle size={9} /> Paid</span>;
-    return <span className="text-[10px] text-slate-400">{status}</span>;
-}
-
-/* ─── Main Page ────────────────────────────────────────────────────────────── */
+/* ─── Main Penalties Dashboard Page ────────────────────────────────────────── */
 export default function PenaltiesPage() {
+    const router = useRouter();
 
-    const [rows, setRows]           = useState<any[]>([]);
-    const [total, setTotal]         = useState(0);
-    const [summary, setSummary]     = useState({ active: 0, waived: 0, paid: 0, totalActive: 0 });
-    const [loading, setLoading]     = useState(true);
-    const [generating, setGenerating] = useState(false);
+    const [tenants, setTenants] = useState<any[]>([]);
+    const [summary, setSummary] = useState<any>({
+        total_tenants_penalized: 0,
+        total_penalty_accrued: 0,
+        total_rent_owed: 0,
+        grand_total_due: 0,
+        days_elapsed: 0,
+        total_waived_amount: 0,
+        total_paid_amount: 0,
+        daily_rate: 100
+    });
 
-    /* filters */
-    const [filterMonth,  setFilterMonth]  = useState(currentMonth());
-    const [filterStatus, setFilterStatus] = useState('');
-    const [search,       setSearch]       = useState('');
-    const [page,         setPage]         = useState(1);
-    const pageSize = 50;
+    const [loading, setLoading] = useState(true);
+    const [syncing, setSyncing] = useState(false);
 
-    /* waive modal */
-    const [waiveTarget, setWaiveTarget] = useState<any>(null);
+    // Filters
+    const [filterMonth, setFilterMonth] = useState(currentMonth());
+    const [filterLocation, setFilterLocation] = useState('');
+    const [statusTab, setStatusTab] = useState<'all' | 'penalized' | 'waived'>('all');
+    const [search, setSearch] = useState('');
+    const [sortBy, setSortBy] = useState<'due_desc' | 'penalty_desc' | 'name_asc'>('due_desc');
+
+    // Pagination
+    const [page, setPage] = useState(1);
+    const pageSize = 30;
+
+    // Modals
+    const [selectedTenantDetails, setSelectedTenantDetails] = useState<any>(null);
+    const [waiveModalTenant, setWaiveModalTenant] = useState<any>(null);
     const [waiveReason, setWaiveReason] = useState('');
-    const [waiving,     setWaiving]     = useState(false);
+    const [waiving, setWaiving] = useState(false);
 
-    /* months dropdown — last 12 */
+    // Available months (last 12 months)
     const monthOptions = useMemo(() => {
         const opts = [];
         const now = new Date();
@@ -86,457 +99,800 @@ export default function PenaltiesPage() {
         return opts;
     }, []);
 
-    /* ── LOAD from API ───────────────────────────────────────────────────── */
-    const load = useCallback(async () => {
-        setLoading(true);
+    /* ─── 1. Load Data from Server API ─────────────────────────────────────── */
+    const loadData = useCallback(async (autoTrigger = false) => {
+        if (!autoTrigger) setLoading(true);
         topProgress.start();
         try {
             const params = new URLSearchParams();
-            if (filterMonth)  params.set('month',    filterMonth);
-            if (filterStatus) params.set('status',   filterStatus);
-            params.set('page',     String(page));
-            params.set('pageSize', String(pageSize));
+            if (filterMonth) params.set('month', filterMonth);
+            if (filterLocation) params.set('locationId', filterLocation);
 
             const res = await fetch(`/api/penalties?${params.toString()}`);
-            if (!res.ok) throw new Error('Failed to fetch penalties');
+            if (!res.ok) throw new Error('Failed to load penalties data');
             const data = await res.json();
-            setRows(data.rows   || []);
-            setTotal(data.total || 0);
-            setSummary(data.summary || { active: 0, waived: 0, paid: 0, totalActive: 0 });
+
+            setTenants(data.tenants || []);
+            if (data.summary) setSummary(data.summary);
         } catch (e: any) {
-            toast.error(e.message || 'Failed to load penalties');
+            toast.error(e.message || 'Error loading penalties');
         } finally {
             topProgress.done();
             setLoading(false);
+            setSyncing(false);
         }
-    }, [filterMonth, filterStatus, page]);
+    }, [filterMonth, filterLocation]);
 
-    /* ── AUTO-GENERATE on mount (server-side, bypasses RLS) ─────────────── */
+    /* ─── 2. Auto-Generate & Sync on Mount (Starts 6th of Month) ──────────── */
     useEffect(() => {
         const today = new Date();
-        if (today.getDate() < 5) {
-            load(); // load existing records even if no generation needed
-            return;
-        }
-        setGenerating(true);
-        fetch('/api/penalties', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-            .then(r => r.json())
-            .then(r => {
-                if (r.error) { console.warn('Generate error:', r.error); }
-                else if (r.generated > 0) {
-                    toast.success(`⚡ ${r.generated} new penalty record${r.generated !== 1 ? 's' : ''} applied for ${r.bills} tenants`);
-                }
-            })
-            .catch(() => {}) // silent fail
-            .finally(() => {
-                setGenerating(false);
-                load(); // always reload after generate attempt
-            });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // mount only
+        const day = today.getDate();
 
-    useEffect(() => { load(); }, [load]);
-
-    /* ── Manual recalculate ──────────────────────────────────────────────── */
-    const handleGenerate = async () => {
-        setGenerating(true);
-        try {
-            const r = await fetch('/api/penalties', {
+        // If today is 6th or later, run silent generation to ensure every unpaid tenant is penalized
+        if (day >= 6) {
+            setSyncing(true);
+            fetch('/api/penalties', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
-            }).then(x => x.json());
-            if (r.error) throw new Error(r.error);
-            if (r.generated > 0) toast.success(`⚡ ${r.generated} new penalties applied for ${r.bills} tenants`);
-            else toast.success('All penalties are up to date');
-            await load();
+                body: JSON.stringify({})
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.generated > 0) {
+                    toast.success(`⚡ Auto-applied ${res.generated} penalties across ${res.bills} unpaid tenants`, { duration: 4000 });
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                loadData(true);
+            });
+        } else {
+            loadData();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
+
+    /* ─── 3. Manual Recalculate ────────────────────────────────────────────── */
+    const handleRecalculate = async () => {
+        setSyncing(true);
+        try {
+            const res = await fetch('/api/penalties', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    locationId: filterLocation ? Number(filterLocation) : undefined
+                })
+            }).then(r => r.json());
+
+            if (res.error) throw new Error(res.error);
+            toast.success(`✅ Updated! ${res.days || 0} penalty days scanned (KES 100/day starting 6th).`);
+            await loadData();
         } catch (e: any) {
-            toast.error(e.message || 'Failed to generate penalties');
+            toast.error(e.message || 'Recalculation error');
         } finally {
-            setGenerating(false);
+            setSyncing(false);
         }
     };
 
-    /* ── Waive ───────────────────────────────────────────────────────────── */
+    /* ─── 4. Waive Penalties for a Tenant ──────────────────────────────────── */
     const handleWaiveConfirm = async () => {
-        if (!waiveReason.trim()) { toast.error('Please enter a reason for waiving'); return; }
+        if (!waiveReason.trim()) {
+            toast.error('Please state a reason for waiving this penalty');
+            return;
+        }
         setWaiving(true);
         try {
-            const body = waiveTarget.isBulk
-                ? { action: 'waive_bulk',   tenantId: waiveTarget.tenantId, month: waiveTarget.month, waivedBy: 'Admin', reason: waiveReason }
-                : { action: 'waive_single', penaltyId: waiveTarget.penaltyId, waivedBy: 'Admin', reason: waiveReason };
-
-            const r = await fetch('/api/penalties', {
+            const res = await fetch('/api/penalties', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            }).then(x => x.json());
+                body: JSON.stringify({
+                    action: 'waive_tenant',
+                    tenantId: waiveModalTenant.tenant_id,
+                    month: filterMonth,
+                    waivedBy: 'Admin',
+                    reason: waiveReason
+                })
+            }).then(r => r.json());
 
-            if (r.error) throw new Error(r.error);
-            toast.success(waiveTarget.isBulk ? `Waived ${r.count} penalties for ${waiveTarget.tenantName}` : 'Penalty waived');
-            setWaiveTarget(null);
+            if (res.error) throw new Error(res.error);
+            toast.success(`Waived penalties for ${waiveModalTenant.tenant_name}`);
+            setWaiveModalTenant(null);
             setWaiveReason('');
-            await load();
+            await loadData();
         } catch (e: any) {
-            toast.error(e.message || 'Failed to waive');
+            toast.error(e.message || 'Failed to waive penalty');
         } finally {
             setWaiving(false);
         }
     };
 
-    /* ── Client-side text search ─────────────────────────────────────────── */
-    const filtered = useMemo(() => {
-        if (!search.trim()) return rows;
-        const q = search.toLowerCase();
-        return rows.filter(r =>
-            r.arms_tenants?.tenant_name?.toLowerCase().includes(q) ||
-            r.arms_tenants?.arms_units?.unit_name?.toLowerCase().includes(q) ||
-            r.arms_tenants?.arms_units?.arms_locations?.location_name?.toLowerCase().includes(q) ||
-            r.billing_month?.includes(q)
-        );
-    }, [rows, search]);
+    /* ─── 5. Distinct Locations for Filter Dropdown ───────────────────────── */
+    const locationList = useMemo(() => {
+        const map: Record<string, { id: number; name: string }> = {};
+        tenants.forEach(t => {
+            if (t.location_name && t.location_id) {
+                map[t.location_id] = { id: t.location_id, name: t.location_name };
+            }
+        });
+        return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
+    }, [tenants]);
 
-    const totalPages  = Math.max(1, Math.ceil(total / pageSize));
-    const today       = new Date();
-    const dayOfMonth  = today.getDate();
+    /* ─── 6. Client Search & Filter Pipeline ──────────────────────────────── */
+    const filteredTenants = useMemo(() => {
+        let list = [...tenants];
+
+        // Status tab filter
+        if (statusTab === 'penalized') {
+            list = list.filter(t => t.penalty_days > 0);
+        } else if (statusTab === 'waived') {
+            list = list.filter(t => t.waived_amount > 0);
+        }
+
+        // Search filter
+        if (search.trim()) {
+            const q = search.toLowerCase();
+            list = list.filter(t => 
+                t.tenant_name.toLowerCase().includes(q) ||
+                t.phone.toLowerCase().includes(q) ||
+                t.unit_name.toLowerCase().includes(q) ||
+                t.location_name.toLowerCase().includes(q)
+            );
+        }
+
+        // Sorting
+        if (sortBy === 'due_desc') {
+            list.sort((a, b) => b.total_rent_plus_penalty - a.total_rent_plus_penalty);
+        } else if (sortBy === 'penalty_desc') {
+            list.sort((a, b) => b.total_penalty - a.total_penalty);
+        } else if (sortBy === 'name_asc') {
+            list.sort((a, b) => a.tenant_name.localeCompare(b.tenant_name));
+        }
+
+        return list;
+    }, [tenants, statusTab, search, sortBy]);
+
+    // Paginated subset
+    const totalPages = Math.max(1, Math.ceil(filteredTenants.length / pageSize));
+    const paginatedTenants = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredTenants.slice(start, start + pageSize);
+    }, [filteredTenants, page, pageSize]);
+
+    /* ─── 7. Export to CSV ─────────────────────────────────────────────────── */
+    const handleExportCSV = () => {
+        if (filteredTenants.length === 0) {
+            toast.error('No records to export');
+            return;
+        }
+        const headers = [
+            'Tenant ID', 'Tenant Name', 'Phone', 'Unit', 'Estate', 
+            'Monthly Base Rent', 'Unpaid Rent', 'Penalty Days', 'Daily Rate', 
+            'Total Penalty', 'Rent + Penalty (Total Due)', 'Overall Arrears', 'Status'
+        ];
+        const rows = filteredTenants.map(t => [
+            t.tenant_id,
+            `"${t.tenant_name}"`,
+            `"${t.phone}"`,
+            `"${t.unit_name}"`,
+            `"${t.location_name}"`,
+            t.monthly_rent,
+            t.rent_balance,
+            t.penalty_days,
+            t.penalty_rate,
+            t.total_penalty,
+            t.total_rent_plus_penalty,
+            t.overall_arrears,
+            t.penalty_status
+        ]);
+        const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement('a');
+        link.setAttribute('href', encodedUri);
+        link.setAttribute('download', `ARMS_Penalties_${filterMonth}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success('Downloaded penalties report CSV!');
+    };
+
+    const today = new Date();
+    const dayOfMonth = today.getDate();
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <div className="max-w-[1400px] mx-auto px-3 sm:px-5 py-5 space-y-4">
-
-                {/* ── Header ──────────────────────────────────────────────── */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                        <h1 className="text-xl font-black text-slate-800 flex items-center gap-2">
-                            <span className="p-1.5 bg-red-100 rounded-lg text-red-600"><FiAlertTriangle size={18} /></span>
-                            Late Payment Penalties
-                        </h1>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                            KES 100/day auto-penalty from the 5th — applies automatically on page load ·
-                            {dayOfMonth < 5
-                                ? <span className="text-amber-600 font-bold"> Starts on the 5th ({5 - dayOfMonth} days)</span>
-                                : <span className="text-red-600 font-bold"> Day {dayOfMonth} — ACTIVE · {generating ? 'calculating…' : 'auto-applied ✓'}</span>}
-                        </p>
-                    </div>
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-black shadow-sm transition disabled:opacity-60"
-                    >
-                        <FiZap size={15} className={generating ? 'animate-spin' : ''} />
-                        {generating ? 'Calculating…' : 'Recalculate Now'}
-                    </button>
-                </div>
-
-                {/* ── Stat Cards ──────────────────────────────────────────── */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <StatCard icon={<FiAlertTriangle size={15} />} label="Active Penalties"   value={summary.active.toLocaleString()} sub={`${fmt(summary.totalActive)} owed`}       color="border-red-200"     />
-                    <StatCard icon={<FiDollarSign    size={15} />} label="Total Owed"         value={fmt(summary.totalActive)}        sub={`across ${summary.active} records`}       color="border-orange-200"  />
-                    <StatCard icon={<FiXCircle       size={15} />} label="Waived"             value={summary.waived.toLocaleString()} sub="penalties forgiven"                       color="border-slate-200"   />
-                    <StatCard icon={<FiCheckCircle   size={15} />} label="Paid"               value={summary.paid.toLocaleString()}   sub="penalties collected"                      color="border-emerald-200" />
-                </div>
-
-                {/* ── Info banner before 5th ───────────────────────────────── */}
-                {dayOfMonth < 5 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
-                        <FiClock className="text-amber-500 flex-shrink-0 mt-0.5" size={16} />
+        <div className="min-h-screen bg-slate-50/70 py-4 px-3 sm:px-6 space-y-4">
+            
+            {/* ─── Top Header & Primary Actions ─────────────────────────────── */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <span className="p-2 bg-rose-50 text-rose-600 rounded-xl border border-rose-200 shadow-sm">
+                            <FiAlertTriangle size={20} />
+                        </span>
                         <div>
-                            <p className="text-sm font-bold text-amber-800">Penalty period hasn't started yet</p>
-                            <p className="text-xs text-amber-700 mt-0.5">
-                                Penalties begin on the <strong>5th of each month</strong>. Today is the {dayOfMonth}{['st','nd','rd'][dayOfMonth-1]||'th'}.
-                                Tenants who don&apos;t pay by the 4th will be charged KES 100/day from the 5th.
+                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                                Rent Penalties Engine
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300">
+                                    KES 100 / Day
+                                </span>
+                            </h1>
+                            <p className="text-xs text-slate-500 font-medium">
+                                Auto-applied daily from the <strong>6th of each month</strong> to all tenants with unpaid rent.
                             </p>
                         </div>
                     </div>
-                )}
+                </div>
 
-                {/* ── Filter Bar ──────────────────────────────────────────── */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
-                    <div className="flex flex-wrap gap-2 items-end">
-                        {/* Search */}
-                        <div className="relative flex-1 min-w-[200px]">
+                <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                        onClick={handleExportCSV}
+                        className="px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 flex items-center gap-1.5 transition shadow-sm"
+                        title="Download Excel / CSV format"
+                    >
+                        <FiDownload size={14} /> Export CSV
+                    </button>
+                    <button
+                        onClick={handleRecalculate}
+                        disabled={syncing}
+                        className="px-4 py-2 text-xs font-black rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white flex items-center gap-1.5 shadow-sm shadow-rose-500/20 transition disabled:opacity-50"
+                    >
+                        <FiZap size={14} className={syncing ? 'animate-spin' : ''} />
+                        {syncing ? 'Scanning & Applying…' : 'Recalculate & Sync'}
+                    </button>
+                </div>
+            </div>
+
+            {/* ─── Grace Period Banner (if before 6th) ──────────────────────── */}
+            {dayOfMonth < 6 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 shadow-sm">
+                    <FiClock size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-sm font-bold text-amber-900">Payment Grace Period Active (Until 5th Midnight)</p>
+                        <p className="text-xs text-amber-700 mt-0.5">
+                            Today is Day {dayOfMonth}. In accordance with rental policies, rent is due on the 5th. 
+                            Automatic daily penalties of <strong>KES 100/day</strong> commence strictly on the <strong>6th of November</strong> for any uncleared balances.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* ─── Super Intelligent KPI Summary Cards ─────────────────────── */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
+                <KpiCard
+                    icon={<FiAlertTriangle size={18} />}
+                    label="Penalized Tenants"
+                    value={summary.total_tenants_penalized.toLocaleString()}
+                    sub="Unpaid rent past 5th"
+                    borderColor="border-rose-200"
+                    iconBg="bg-rose-50"
+                    textColor="text-rose-600"
+                />
+                <KpiCard
+                    icon={<FiClock size={18} />}
+                    label="Penalty Days Elapsed"
+                    value={`${summary.days_elapsed} Days`}
+                    sub="Since 6th Nov deadline"
+                    borderColor="border-amber-200"
+                    iconBg="bg-amber-50"
+                    textColor="text-amber-600"
+                />
+                <KpiCard
+                    icon={<FiZap size={18} />}
+                    label="Total Penalties"
+                    value={fmt(summary.total_penalty_accrued)}
+                    sub={`@ KES 100/day accrued`}
+                    borderColor="border-orange-200"
+                    iconBg="bg-orange-50"
+                    textColor="text-orange-600"
+                />
+                <KpiCard
+                    icon={<FiDollarSign size={18} />}
+                    label="Unpaid Rent (Nov)"
+                    value={fmt(summary.total_rent_owed)}
+                    sub="Base rent arrears"
+                    borderColor="border-blue-200"
+                    iconBg="bg-blue-50"
+                    textColor="text-blue-600"
+                />
+                <KpiCard
+                    icon={<FiTrendingUp size={18} />}
+                    label="Total Due (Rent+Penalty)"
+                    value={fmt(summary.grand_total_due)}
+                    sub="Total collectible"
+                    borderColor="border-emerald-200"
+                    iconBg="bg-emerald-50"
+                    textColor="text-emerald-700"
+                />
+                <KpiCard
+                    icon={<FiCheckCircle size={18} />}
+                    label="Waived Penalties"
+                    value={fmt(summary.total_waived_amount)}
+                    sub="Management waivers"
+                    borderColor="border-slate-200"
+                    iconBg="bg-slate-100"
+                    textColor="text-slate-600"
+                />
+            </div>
+
+            {/* ─── Control Bar: Search, Filters & Tabs ──────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 shadow-sm space-y-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    
+                    {/* Status Tabs */}
+                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl max-w-fit">
+                        <button
+                            onClick={() => { setStatusTab('all'); setPage(1); }}
+                            className={`px-3 py-1.5 text-xs font-black rounded-lg transition ${
+                                statusTab === 'all'
+                                    ? 'bg-white text-slate-800 shadow-xs'
+                                    : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            All Active Tenants ({tenants.length})
+                        </button>
+                        <button
+                            onClick={() => { setStatusTab('penalized'); setPage(1); }}
+                            className={`px-3 py-1.5 text-xs font-black rounded-lg transition flex items-center gap-1.5 ${
+                                statusTab === 'penalized'
+                                    ? 'bg-rose-600 text-white shadow-xs'
+                                    : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            <span>⚠️ Penalized Only</span>
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusTab === 'penalized' ? 'bg-white/20' : 'bg-rose-100 text-rose-700'}`}>
+                                {summary.total_tenants_penalized}
+                            </span>
+                        </button>
+                        <button
+                            onClick={() => { setStatusTab('waived'); setPage(1); }}
+                            className={`px-3 py-1.5 text-xs font-black rounded-lg transition ${
+                                statusTab === 'waived'
+                                    ? 'bg-white text-slate-800 shadow-xs'
+                                    : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            Waived
+                        </button>
+                    </div>
+
+                    {/* Quick Filters */}
+                    <div className="flex flex-wrap items-center gap-2">
+                        {/* Search Input */}
+                        <div className="relative min-w-[220px] flex-1 sm:flex-initial">
                             <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
                             <input
-                                type="text" value={search} onChange={e => setSearch(e.target.value)}
-                                placeholder="Search tenant, unit, location…"
-                                className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 bg-slate-50"
+                                type="text"
+                                value={search}
+                                onChange={e => { setSearch(e.target.value); setPage(1); }}
+                                placeholder="Search tenant, unit, phone…"
+                                className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400 bg-slate-50/50"
                             />
                         </div>
-                        {/* Month */}
-                        <div>
-                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Month</label>
-                            <select value={filterMonth} onChange={e => { setFilterMonth(e.target.value); setPage(1); }}
-                                className="text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-red-300 text-slate-700">
-                                <option value="">All Months</option>
-                                {monthOptions.map(m => <option key={m.val} value={m.val}>{m.label}</option>)}
-                            </select>
-                        </div>
-                        {/* Status */}
-                        <div>
-                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Status</label>
-                            <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
-                                className="text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-red-300 text-slate-700">
-                                <option value="">All Statuses</option>
-                                <option value="Active">Active</option>
-                                <option value="Waived">Waived</option>
-                                <option value="Paid">Paid</option>
-                            </select>
-                        </div>
-                        {/* Clear */}
-                        {(search || filterStatus || filterMonth !== currentMonth()) && (
-                            <button onClick={() => { setSearch(''); setFilterStatus(''); setFilterMonth(currentMonth()); setPage(1); }}
-                                className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600 transition font-medium px-2 py-2">
-                                <FiX size={12} /> Clear
-                            </button>
-                        )}
+
+                        {/* Location Select */}
+                        <select
+                            value={filterLocation}
+                            onChange={e => { setFilterLocation(e.target.value); setPage(1); }}
+                            className="text-xs border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                        >
+                            <option value="">All Estates ({locationList.length})</option>
+                            {locationList.map(l => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                            ))}
+                        </select>
+
+                        {/* Month Select */}
+                        <select
+                            value={filterMonth}
+                            onChange={e => { setFilterMonth(e.target.value); setPage(1); }}
+                            className="text-xs border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-400 font-bold"
+                        >
+                            {monthOptions.map(m => (
+                                <option key={m.val} value={m.val}>{m.label}</option>
+                            ))}
+                        </select>
+
+                        {/* Sort Select */}
+                        <select
+                            value={sortBy}
+                            onChange={e => setSortBy(e.target.value as any)}
+                            className="text-xs border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white text-slate-600 focus:outline-none"
+                        >
+                            <option value="due_desc">Highest Total Due</option>
+                            <option value="penalty_desc">Highest Penalty</option>
+                            <option value="name_asc">Tenant Name A-Z</option>
+                        </select>
+
                         {/* Refresh */}
-                        <button onClick={load} disabled={loading}
-                            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold border border-slate-200 rounded-lg bg-white hover:bg-slate-50 text-slate-600 transition ml-auto">
-                            <FiRefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+                        <button
+                            onClick={() => loadData()}
+                            disabled={loading}
+                            className="p-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50 text-slate-600 transition"
+                            title="Refresh Data"
+                        >
+                            <FiRefreshCw size={13} className={loading ? 'animate-spin' : ''} />
                         </button>
                     </div>
                 </div>
+            </div>
 
-                {/* ── Main Table ──────────────────────────────────────────── */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50/80">
-                        <p className="text-xs font-bold text-slate-600">
-                            {loading ? 'Loading…' : `${total.toLocaleString()} penalty record${total !== 1 ? 's' : ''}`}
-                            {filterMonth && <span className="text-slate-400 font-normal"> · {monthLabel(filterMonth)}</span>}
-                        </p>
-                        <p className="text-xs text-slate-400">Page {page} of {totalPages}</p>
+            {/* ─── The Main Intelligent Tenant Penalties Grid ───────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div>
+                        <span className="text-xs font-black text-slate-800">
+                            Showing {paginatedTenants.length} of {filteredTenants.length} Tenants with Rent / Penalties
+                        </span>
+                        <span className="text-[11px] text-slate-400 ml-2">
+                            · Billing Cycle: {monthLabel(filterMonth)}
+                        </span>
                     </div>
+                    <span className="text-xs text-slate-500 font-medium">
+                        Page {page} of {totalPages}
+                    </span>
+                </div>
 
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
-                            <thead>
-                                <tr className="border-b border-slate-100">
-                                    <th className="text-left px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Tenant</th>
-                                    <th className="text-left px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Unit / Location</th>
-                                    <th className="text-left px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Month</th>
-                                    <th className="text-left px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Penalty Date</th>
-                                    <th className="text-right px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Amount</th>
-                                    <th className="text-center px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Status</th>
-                                    <th className="text-left px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Waive Info</th>
-                                    <th className="text-center px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                                {loading ? (
-                                    <tr><td colSpan={8} className="text-center py-16 text-slate-400">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr className="border-b border-slate-100 bg-slate-100/60 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                <th className="py-3 px-3 text-center">#</th>
+                                <th className="py-3 px-3">Tenant Folio</th>
+                                <th className="py-3 px-3">Unit / Estate</th>
+                                <th className="py-3 px-3 text-right">Base Rent</th>
+                                <th className="py-3 px-3 text-right">Unpaid Rent</th>
+                                <th className="py-3 px-3 text-center">Penalty Days</th>
+                                <th className="py-3 px-3 text-right">Rate</th>
+                                <th className="py-3 px-3 text-right text-rose-600 font-black">Total Penalty</th>
+                                <th className="py-3 px-3 text-right text-emerald-700 font-black">Rent + Penalty (Total Due)</th>
+                                <th className="py-3 px-3 text-right">Total Debt</th>
+                                <th className="py-3 px-3 text-center">Status</th>
+                                <th className="py-3 px-3 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {loading ? (
+                                <tr>
+                                    <td colSpan={12} className="text-center py-16 text-slate-400">
                                         <FiRefreshCw className="animate-spin inline mr-2" size={16} />
-                                        {generating ? 'Auto-applying penalties for unpaid tenants…' : 'Loading…'}
-                                    </td></tr>
-                                ) : filtered.length === 0 ? (
-                                    <tr><td colSpan={8} className="text-center py-16 text-slate-400">
-                                        <FiShield className="inline mr-2 text-emerald-400" size={18} />
-                                        {total === 0
-                                            ? dayOfMonth < 5
-                                                ? 'No penalties — before the 5th of month'
-                                                : 'No unpaid tenants found for this month ✅'
-                                            : 'No results for this search'}
-                                    </td></tr>
-                                ) : filtered.map(row => {
-                                    const tenant   = row.arms_tenants;
-                                    const unit     = tenant?.arms_units;
-                                    const loc      = unit?.arms_locations;
-                                    const isActive = row.status === 'Active';
+                                        Loading intelligent penalties ledger…
+                                    </td>
+                                </tr>
+                            ) : paginatedTenants.length === 0 ? (
+                                <tr>
+                                    <td colSpan={12} className="text-center py-16 text-slate-400">
+                                        <FiCheckCircle className="inline text-emerald-500 mr-2" size={20} />
+                                        No penalties recorded for this selection. All tenants cleared on time! 🎉
+                                    </td>
+                                </tr>
+                            ) : (
+                                paginatedTenants.map((t, idx) => {
+                                    const hasPenalty = t.penalty_days > 0;
+                                    const rowNum = (page - 1) * pageSize + idx + 1;
+
                                     return (
-                                        <tr key={row.penalty_id} className={`hover:bg-slate-50/70 transition-colors ${isActive ? '' : 'opacity-60'}`}>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">
-                                                <p className="font-bold text-slate-800 text-xs">{tenant?.tenant_name || '—'}</p>
-                                                <p className="text-[10px] text-slate-400">{tenant?.phone || ''}</p>
+                                        <tr key={t.tenant_id} className="hover:bg-rose-50/20 transition group">
+                                            {/* Index */}
+                                            <td className="py-3 px-3 text-center text-slate-400 font-bold font-mono text-[11px]">
+                                                {rowNum}
                                             </td>
-                                            <td className="px-3 py-2.5 whitespace-nowrap">
-                                                <p className="font-semibold text-slate-700">{unit?.unit_name || '—'}</p>
-                                                <p className="text-[10px] text-slate-400 flex items-center gap-0.5">
-                                                    <FiMapPin size={9} /> {loc?.location_name || '—'}
-                                                </p>
+
+                                            {/* Tenant Folio */}
+                                            <td className="py-3 px-3">
+                                                <div className="font-bold text-slate-900 group-hover:text-rose-600 transition flex items-center gap-1.5">
+                                                    {t.tenant_name}
+                                                </div>
+                                                <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                                    <FiPhone size={10} />
+                                                    {t.phone || 'No phone'}
+                                                </div>
                                             </td>
-                                            <td className="px-3 py-2.5 whitespace-nowrap">
-                                                <span className="text-slate-600 font-medium">{monthLabel(row.billing_month)}</span>
+
+                                            {/* Unit & Location */}
+                                            <td className="py-3 px-3">
+                                                <div className="font-bold text-slate-800 flex items-center gap-1">
+                                                    <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono text-[10px] font-bold">
+                                                        {t.unit_name}
+                                                    </span>
+                                                </div>
+                                                <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                    <FiMapPin size={10} /> {t.location_name}
+                                                </div>
                                             </td>
-                                            <td className="px-3 py-2.5 whitespace-nowrap">
-                                                <span className="text-slate-600">{fmtDate(row.penalty_date)}</span>
+
+                                            {/* Base Rent */}
+                                            <td className="py-3 px-3 text-right font-mono font-medium text-slate-600">
+                                                {fmt(t.monthly_rent)}
                                             </td>
-                                            <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                                                <span className={`font-black ${isActive ? 'text-red-600' : 'text-slate-400 line-through'}`}>
-                                                    {fmt(row.amount)}
-                                                </span>
+
+                                            {/* Unpaid Rent */}
+                                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
+                                                {fmt(t.rent_balance)}
                                             </td>
-                                            <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                                                <StatusBadge status={row.status} />
+
+                                            {/* Penalty Days */}
+                                            <td className="py-3 px-3 text-center">
+                                                {t.penalty_days > 0 ? (
+                                                    <button
+                                                        onClick={() => setSelectedTenantDetails(t)}
+                                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] hover:bg-rose-100 transition cursor-pointer"
+                                                        title="Click to view dates breakdown"
+                                                    >
+                                                        <span>⚡ {t.penalty_days} Days</span>
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-slate-300 text-[11px]">—</span>
+                                                )}
                                             </td>
-                                            <td className="px-3 py-2.5">
-                                                {row.status === 'Waived' ? (
-                                                    <div>
-                                                        <p className="text-[10px] text-slate-500 font-medium">{row.waived_by || 'Admin'}</p>
-                                                        <p className="text-[9px] text-slate-400 truncate max-w-[140px]">{row.waive_reason || '—'}</p>
-                                                    </div>
-                                                ) : <span className="text-[10px] text-slate-300">—</span>}
+
+                                            {/* Daily Rate */}
+                                            <td className="py-3 px-3 text-right font-mono text-slate-400 text-[11px]">
+                                                {t.penalty_days > 0 ? 'KES 100/d' : '—'}
                                             </td>
-                                            <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                                                {isActive ? (
-                                                    <div className="flex items-center justify-center gap-1.5">
+
+                                            {/* Total Penalty */}
+                                            <td className="py-3 px-3 text-right font-mono font-black text-rose-600">
+                                                {t.total_penalty > 0 ? (
+                                                    <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
+                                                        +{fmt(t.total_penalty)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-slate-300 font-normal">KES 0</span>
+                                                )}
+                                            </td>
+
+                                            {/* Rent + Penalty (Total Due) */}
+                                            <td className="py-3 px-3 text-right font-mono font-black">
+                                                <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs text-[12px]">
+                                                    {fmt(t.total_rent_plus_penalty)}
+                                                </div>
+                                            </td>
+
+                                            {/* Total Cumulative Arrears */}
+                                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                                                {fmt(t.overall_arrears)}
+                                            </td>
+
+                                            {/* Status Badge */}
+                                            <td className="py-3 px-3 text-center">
+                                                {hasPenalty ? (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse" />
+                                                        Active Penalty
+                                                    </span>
+                                                ) : t.waived_amount > 0 ? (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-600 border border-slate-200">
+                                                        Waived
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-600 border border-emerald-200">
+                                                        Clear
+                                                    </span>
+                                                )}
+                                            </td>
+
+                                            {/* Actions */}
+                                            <td className="py-3 px-3 text-center">
+                                                <div className="flex items-center justify-center gap-1.5">
+                                                    {/* View breakdown */}
+                                                    <button
+                                                        onClick={() => setSelectedTenantDetails(t)}
+                                                        className="px-2 py-1 text-[10px] font-bold rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 transition"
+                                                        title="View Penalty Days Breakdown"
+                                                    >
+                                                        Details
+                                                    </button>
+
+                                                    {/* Waive Button */}
+                                                    {hasPenalty && (
                                                         <button
-                                                            onClick={() => setWaiveTarget({ penaltyId: row.penalty_id, tenantId: row.tenant_id, tenantName: tenant?.tenant_name, month: row.billing_month, isBulk: false })}
-                                                            className="px-2 py-1 text-[10px] font-bold rounded-lg border border-slate-200 bg-white hover:bg-red-50 hover:border-red-300 hover:text-red-600 text-slate-500 transition">
+                                                            onClick={() => setWaiveModalTenant(t)}
+                                                            className="px-2 py-1 text-[10px] font-bold rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 transition"
+                                                            title="Waive Active Penalties"
+                                                        >
                                                             Waive
                                                         </button>
-                                                        <button
-                                                            onClick={() => setWaiveTarget({ tenantId: row.tenant_id, tenantName: tenant?.tenant_name, month: row.billing_month, isBulk: true })}
-                                                            className="px-2 py-1 text-[10px] font-bold rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 text-orange-600 transition">
-                                                            Waive All
-                                                        </button>
-                                                    </div>
-                                                ) : <span className="text-[10px] text-slate-300">—</span>}
+                                                    )}
+
+                                                    {/* Pay redirect */}
+                                                    <button
+                                                        onClick={() => router.push(`/dashboard/payments?tenantId=${t.tenant_id}`)}
+                                                        className="px-2 py-1 text-[10px] font-black rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center gap-1"
+                                                        title="Collect / Record Payment"
+                                                    >
+                                                        Pay
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* Pagination */}
-                    {totalPages > 1 && (
-                        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/60">
-                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                                className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition">
-                                <FiChevronLeft size={12} /> Previous
-                            </button>
-                            <span className="text-xs text-slate-500">Page {page} of {totalPages} · {total} records</span>
-                            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                                className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 transition">
-                                Next <FiChevronRight size={12} />
-                            </button>
-                        </div>
-                    )}
+                                })
+                            )}
+                        </tbody>
+                    </table>
                 </div>
 
-                {/* ── Summary by Tenant ───────────────────────────────────── */}
-                {!loading && filtered.length > 0 && (
-                    <TenantPenaltySummary rows={filtered} onWaiveAll={(tenantId, tenantName, month) =>
-                        setWaiveTarget({ tenantId, tenantName, month, isBulk: true })} />
+                {/* ─── Pagination Controls ──────────────────────────────────── */}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/60">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition shadow-2xs"
+                        >
+                            <FiChevronLeft size={13} /> Previous
+                        </button>
+                        <span className="text-xs text-slate-500 font-semibold">
+                            Page {page} of {totalPages} ({filteredTenants.length} tenants total)
+                        </span>
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page === totalPages}
+                            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition shadow-2xs"
+                        >
+                            Next <FiChevronRight size={13} />
+                        </button>
+                    </div>
                 )}
             </div>
 
-            {/* ── Waive Modal ──────────────────────────────────────────────── */}
-            {waiveTarget && (
-                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setWaiveTarget(null)}>
-                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+            {/* ─── Modal 1: Individual Tenant Penalty Breakdown Ledger ──────── */}
+            {selectedTenantDetails && (
+                <div 
+                    className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+                    onClick={() => setSelectedTenantDetails(null)}
+                >
+                    <div 
+                        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-200 relative"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <button
+                            onClick={() => setSelectedTenantDetails(null)}
+                            className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1"
+                        >
+                            <FiX size={18} />
+                        </button>
+
                         <div className="flex items-start gap-3 mb-4">
-                            <div className="p-2 bg-red-100 rounded-xl"><FiAlertTriangle className="text-red-600" size={18} /></div>
+                            <div className="p-3 bg-rose-50 text-rose-600 rounded-xl border border-rose-200">
+                                <FiAlertTriangle size={20} />
+                            </div>
                             <div>
-                                <h3 className="font-black text-slate-800 text-sm">
-                                    {waiveTarget.isBulk ? 'Waive All Penalties' : 'Waive Penalty'}
+                                <h3 className="font-black text-slate-900 text-base leading-tight">
+                                    {selectedTenantDetails.tenant_name}
                                 </h3>
                                 <p className="text-xs text-slate-500 mt-0.5">
-                                    {waiveTarget.isBulk
-                                        ? `Waive ALL active penalties for ${waiveTarget.tenantName} in ${monthLabel(waiveTarget.month)}`
-                                        : `Waive KES 100 penalty for ${waiveTarget.tenantName}`}
+                                    {selectedTenantDetails.unit_name} · {selectedTenantDetails.location_name} · Phone: {selectedTenantDetails.phone}
                                 </p>
                             </div>
                         </div>
-                        <div className="mb-4">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 block mb-1.5">Reason for Waiving *</label>
-                            <textarea
-                                value={waiveReason} onChange={e => setWaiveReason(e.target.value)}
-                                rows={3} placeholder="e.g. Tenant paid before 5th, banking error, management decision…"
-                                className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-red-300 resize-none"
-                            />
+
+                        {/* Financial Snapshot */}
+                        <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200 mb-4 text-center">
+                            <div>
+                                <p className="text-[10px] font-black uppercase text-slate-400">Rent Balance</p>
+                                <p className="text-sm font-black text-slate-800">{fmt(selectedTenantDetails.rent_balance)}</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black uppercase text-slate-400">Total Penalty</p>
+                                <p className="text-sm font-black text-rose-600">+{fmt(selectedTenantDetails.total_penalty)}</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black uppercase text-slate-400">Total Collectible</p>
+                                <p className="text-sm font-black text-emerald-700">{fmt(selectedTenantDetails.total_rent_plus_penalty)}</p>
+                            </div>
                         </div>
+
+                        {/* Penalty Day Ledger */}
+                        <div className="space-y-2 mb-4">
+                            <p className="text-[11px] font-black uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                                <span>Day-by-Day Penalty Ledger (KES 100 / Day)</span>
+                                <span className="text-rose-600">{selectedTenantDetails.penalty_days} Days Charged</span>
+                            </p>
+                            
+                            <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white">
+                                {selectedTenantDetails.active_penalties && selectedTenantDetails.active_penalties.length > 0 ? (
+                                    selectedTenantDetails.active_penalties.map((p: any, i: number) => (
+                                        <div key={p.penalty_id} className="p-2.5 flex items-center justify-between text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 font-mono text-[10px] font-bold flex items-center justify-center">
+                                                    {i + 1}
+                                                </span>
+                                                <div>
+                                                    <p className="font-bold text-slate-800">{fmtDate(p.penalty_date)}</p>
+                                                    <p className="text-[10px] text-slate-400">Day {new Date(p.penalty_date).getDate()} Late Fee</p>
+                                                </div>
+                                            </div>
+                                            <span className="font-mono font-black text-rose-600">+KES 100.00</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="p-4 text-center text-xs text-slate-400">No active penalty dates</div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Modal Action Buttons */}
                         <div className="flex gap-2">
-                            <button onClick={() => { setWaiveTarget(null); setWaiveReason(''); }}
-                                className="flex-1 px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
-                                Cancel
+                            <button
+                                onClick={() => {
+                                    setWaiveModalTenant(selectedTenantDetails);
+                                    setSelectedTenantDetails(null);
+                                }}
+                                className="flex-1 py-2 text-xs font-bold rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 transition"
+                            >
+                                Waive All Penalties
                             </button>
-                            <button onClick={handleWaiveConfirm} disabled={waiving || !waiveReason.trim()}
-                                className="flex-1 px-4 py-2.5 text-xs font-black rounded-xl bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50">
-                                {waiving ? 'Waiving…' : 'Confirm Waive'}
+                            <button
+                                onClick={() => router.push(`/dashboard/payments?tenantId=${selectedTenantDetails.tenant_id}`)}
+                                className="flex-1 py-2 text-xs font-black rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center justify-center gap-1"
+                            >
+                                Collect Rent + Penalty <FiExternalLink size={12} />
                             </button>
                         </div>
                     </div>
                 </div>
             )}
-        </div>
-    );
-}
 
-/* ─── Grouped Summary by Tenant ─────────────────────────────────────────────── */
-function TenantPenaltySummary({ rows, onWaiveAll }: {
-    rows: any[];
-    onWaiveAll: (tenantId: number, tenantName: string, month: string) => void;
-}) {
-    const groups = useMemo(() => {
-        const map: Record<string, any> = {};
-        for (const r of rows) {
-            const key = `${r.tenant_id}-${r.billing_month}`;
-            if (!map[key]) map[key] = {
-                tenantId: r.tenant_id,
-                tenantName: r.arms_tenants?.tenant_name || '—',
-                unit: r.arms_tenants?.arms_units?.unit_name || '—',
-                location: r.arms_tenants?.arms_units?.arms_locations?.location_name || '—',
-                month: r.billing_month,
-                active: 0, activeAmt: 0, waived: 0, paid: 0,
-            };
-            const s = (r.status || '').toLowerCase();
-            if (s === 'active') { map[key].active++; map[key].activeAmt += Number(r.amount); }
-            if (s === 'waived') map[key].waived++;
-            if (s === 'paid')   map[key].paid++;
-        }
-        return Object.values(map).sort((a, b) => b.activeAmt - a.activeAmt);
-    }, [rows]);
+            {/* ─── Modal 2: Waive Penalty Confirmation ──────────────────────── */}
+            {waiveModalTenant && (
+                <div 
+                    className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4"
+                    onClick={() => setWaiveModalTenant(null)}
+                >
+                    <div 
+                        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-3 mb-4">
+                            <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl">
+                                <FiShield size={20} />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-slate-900 text-sm">
+                                    Waive Late Penalty Fee
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Forgive <strong>{fmt(waiveModalTenant.total_penalty)}</strong> ({waiveModalTenant.penalty_days} penalty days) for <strong>{waiveModalTenant.tenant_name}</strong>.
+                                </p>
+                            </div>
+                        </div>
 
-    if (groups.length === 0) return null;
+                        <div className="mb-4">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 block mb-1.5">
+                                Reason for Waiver *
+                            </label>
+                            <textarea
+                                value={waiveReason}
+                                onChange={e => setWaiveReason(e.target.value)}
+                                rows={3}
+                                placeholder="e.g. Bank settlement delay, landlord agreement, illness…"
+                                className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-rose-400 resize-none"
+                            />
+                        </div>
 
-    return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/80">
-                <p className="text-xs font-black text-slate-700 flex items-center gap-2">
-                    <FiTrendingUp size={13} className="text-red-500" /> Penalty Summary by Tenant
-                </p>
-            </div>
-            <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                    <thead>
-                        <tr className="border-b border-slate-100">
-                            <th className="text-left px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Tenant</th>
-                            <th className="text-left px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Unit / Location</th>
-                            <th className="text-left px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Month</th>
-                            <th className="text-right px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Days</th>
-                            <th className="text-right px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Total Penalty</th>
-                            <th className="text-right px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Waived</th>
-                            <th className="text-right px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Paid</th>
-                            <th className="text-center px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                        {groups.map(g => (
-                            <tr key={`${g.tenantId}-${g.month}`} className="hover:bg-slate-50/70 transition-colors">
-                                <td className="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">{g.tenantName}</td>
-                                <td className="px-3 py-2.5 whitespace-nowrap">
-                                    <span className="text-slate-700">{g.unit}</span>
-                                    <span className="text-slate-400 ml-1">· {g.location}</span>
-                                </td>
-                                <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{monthLabel(g.month)}</td>
-                                <td className="px-3 py-2.5 text-right font-bold text-red-600">{g.active}</td>
-                                <td className="px-3 py-2.5 text-right font-black text-red-600">{fmt(g.activeAmt)}</td>
-                                <td className="px-3 py-2.5 text-right text-slate-400">{g.waived}</td>
-                                <td className="px-3 py-2.5 text-right text-emerald-600 font-bold">{g.paid}</td>
-                                <td className="px-3 py-2.5 text-center">
-                                    {g.active > 0 && (
-                                        <button onClick={() => onWaiveAll(g.tenantId, g.tenantName, g.month)}
-                                            className="px-2.5 py-1 text-[10px] font-black rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition">
-                                            Waive All ({g.active})
-                                        </button>
-                                    )}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => { setWaiveModalTenant(null); setWaiveReason(''); }}
+                                className="flex-1 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleWaiveConfirm}
+                                disabled={waiving || !waiveReason.trim()}
+                                className="flex-1 py-2 text-xs font-black rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition disabled:opacity-50"
+                            >
+                                {waiving ? 'Waiving…' : 'Confirm Waiver'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }
