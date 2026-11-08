@@ -186,7 +186,7 @@ export async function GET(req: NextRequest) {
             const rentPaid = Number(b.amount_paid) || 0;
 
             const totalDue = rentBalance + activePenaltyAmt;
-            const overallArrears = Number(t.balance) || rentBalance;
+            const overallArrears = (Number(t.balance) || rentBalance) + activePenaltyAmt;
 
             if (activePens.length > 0) activePenalizedTenantsCount++;
             totalPenaltiesAccrued += activePenaltyAmt;
@@ -231,11 +231,14 @@ export async function GET(req: NextRequest) {
         const todayDay = today.getDate();
         const daysElapsed = todayDay >= 6 ? (todayDay - 6 + 1) : 0;
 
+        const totalDebtWithPenalties = tenantRows.reduce((sum, t) => sum + Number(t.overall_arrears || 0), 0);
+
         const summary = {
             total_tenants_penalized: activePenalizedTenantsCount,
             total_penalty_accrued: totalPenaltiesAccrued,
             total_rent_owed: totalRentOwed,
             grand_total_due: totalRentOwed + totalPenaltiesAccrued,
+            total_debt_accrued: totalDebtWithPenalties,
             days_elapsed: daysElapsed,
             total_waived_amount: totalWaived,
             total_paid_amount: totalPaid,

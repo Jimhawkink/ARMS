@@ -341,8 +341,8 @@ export default function PenaltiesPage() {
                     { label: 'Days Elapsed', value: `${summary.days_elapsed} Days`, icon: FiClock, color: '#f59e0b', bg: '#fffbeb', sub: 'Since 6th Nov' },
                     { label: 'Total Penalties', value: fmt(summary.total_penalty_accrued), icon: FiZap, color: '#c2410c', bg: '#fff7ed', sub: '@ KES 100/day' },
                     { label: 'Unpaid Rent (Nov)', value: fmt(summary.total_rent_owed), icon: FiDollarSign, color: '#2563eb', bg: '#eff6ff', sub: 'Base rent balance' },
-                    { label: 'Rent + Penalty', value: fmt(summary.grand_total_due), icon: FiTrendingUp, color: '#059669', bg: '#f0fdf4', sub: 'Total collectible' },
-                    { label: 'Waived Penalties', value: fmt(summary.total_waived_amount), icon: FiCheckCircle, color: '#64748b', bg: '#f8fafc', sub: 'Admin waived' },
+                    { label: 'Rent + Penalty', value: fmt(summary.grand_total_due), icon: FiTrendingUp, color: '#059669', bg: '#f0fdf4', sub: 'Nov total due' },
+                    { label: 'Total Debt (All-Time)', value: fmt(summary.total_debt_accrued || totals.overall_arrears), icon: FiShield, color: '#9333ea', bg: '#faf5ff', sub: 'Cumulative + Penalties' },
                 ].map((card, i) => (
                     <div key={i} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-2xs hover:shadow-xs transition-all relative overflow-hidden"
                         style={{ borderLeftWidth: 4, borderLeftColor: card.color }}>
