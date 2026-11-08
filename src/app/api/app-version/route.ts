@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 // ============================================================
 
 const LATEST_VERSION = 'v4.9';
-const MIN_VERSION    = 'v4.9'; // Any APK below this is BLOCKED
+const MIN_VERSION    = 'v4.8'; // Allow v4.8 so students are not locked on broken in-app updater
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
