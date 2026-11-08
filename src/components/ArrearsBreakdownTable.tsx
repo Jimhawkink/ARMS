@@ -29,11 +29,20 @@ export interface AccumulatedArrearsResult {
     virtualMonths?: string[];
 }
 
+export interface TenantPenaltyData {
+    tenant_id?: number;
+    penalty_days: number;
+    total_penalty: number;
+    penalty_dates?: string[];
+    daily_rate?: number;
+}
+
 interface ArrearsBreakdownTableProps {
     arrearsData: AccumulatedArrearsResult;
     selectedMonths: Set<string>;
     onSelectionChange: (months: Set<string>) => void;
     tenantIsOnVacation: boolean;
+    penaltyData?: TenantPenaltyData | null;
 }
 
 const fmt = (n: number) => `KES ${(n || 0).toLocaleString()}`;
@@ -68,6 +77,7 @@ export default function ArrearsBreakdownTable({
     selectedMonths,
     onSelectionChange,
     tenantIsOnVacation,
+    penaltyData,
 }: ArrearsBreakdownTableProps) {
     const nowLocal = new Date();
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
@@ -90,7 +100,7 @@ export default function ArrearsBreakdownTable({
         }
     };
 
-    if (bills.length === 0) {
+    if (bills.length === 0 && (!penaltyData || penaltyData.total_penalty <= 0)) {
         return (
             <div className="flex items-center gap-3 px-4 py-4 rounded-2xl bg-green-50 border border-green-200">
                 <span className="text-2xl">✅</span>
@@ -112,13 +122,27 @@ export default function ArrearsBreakdownTable({
                 <div className="flex items-center gap-2">
                     <span className="text-base">📋</span>
                     <div>
-                        <p className="text-xs font-extrabold text-purple-900">Monthly Arrears Breakdown</p>
-                        <p className="text-[10px] text-purple-600 mt-0.5">{bills.length} month{bills.length !== 1 ? 's' : ''} outstanding · Select months to pay</p>
+                        <p className="text-xs font-extrabold text-purple-900">
+                            {penaltyData && penaltyData.total_penalty > 0 ? 'Monthly Arrears & Penalties Breakdown' : 'Monthly Arrears Breakdown'}
+                        </p>
+                        <p className="text-[10px] text-purple-600 mt-0.5">
+                            {bills.length} month{bills.length !== 1 ? 's' : ''} outstanding
+                            {penaltyData && penaltyData.total_penalty > 0 ? ` · ⚡ ${penaltyData.penalty_days} Days penalty active` : ' · Select months to pay'}
+                        </p>
                     </div>
                 </div>
                 <div className="text-right">
-                    <p className="text-[10px] text-purple-500 font-semibold uppercase tracking-wider">Total Due</p>
-                    <p className="text-sm font-extrabold text-purple-900">{fmt(footerTotal)}</p>
+                    <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider">
+                        {penaltyData && penaltyData.total_penalty > 0 ? 'Total Due (Rent + Penalty)' : 'Total Due'}
+                    </p>
+                    <p className="text-sm font-black text-purple-950">
+                        {fmt(footerTotal + (penaltyData?.total_penalty || 0))}
+                    </p>
+                    {penaltyData && penaltyData.total_penalty > 0 && (
+                        <p className="text-[9px] text-purple-600 font-semibold">
+                            Rent: {fmt(footerTotal)} · Pen: +{fmt(penaltyData.total_penalty)}
+                        </p>
+                    )}
                 </div>
             </div>
 
@@ -239,26 +263,113 @@ export default function ArrearsBreakdownTable({
                                 </tr>
                             );
                         })}
+
+                        {/* Active Penalty Row */}
+                        {penaltyData && penaltyData.total_penalty > 0 && (
+                            <tr
+                                style={{
+                                    background: '#fff1f2',
+                                    borderBottom: '1px solid #fecdd3',
+                                    borderLeft: '3px solid #f43f5e',
+                                }}
+                            >
+                                <td className="px-3 py-2.5 text-center">
+                                    <span className="text-xs" title="Daily late rent penalty">⚡</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black bg-rose-100 text-rose-800">
+                                            ⚡ Late Rent Penalty
+                                        </span>
+                                        <span className="text-[10px] font-bold text-rose-700">
+                                            {penaltyData.penalty_days} Days elapsed (@ KES {penaltyData.daily_rate || 100}/d)
+                                        </span>
+                                    </div>
+                                    {penaltyData.penalty_dates && penaltyData.penalty_dates.length > 0 && (
+                                        <p className="text-[9px] text-rose-500 font-mono mt-0.5">
+                                            Accrued dates: {penaltyData.penalty_dates.join(', ')}
+                                        </p>
+                                    )}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    <span className="text-xs text-slate-400 font-medium">—</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    <span className="text-xs text-slate-400 font-medium">—</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-rose-200 text-rose-900">
+                                        +{fmt(penaltyData.total_penalty)}
+                                    </span>
+                                    <span className="ml-1 text-[9px] text-rose-600 font-bold uppercase">Active</span>
+                                </td>
+                                <td />
+                            </tr>
+                        )}
                     </tbody>
 
                     {/* Footer total */}
                     <tfoot>
-                        <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0' }}>
-                            <td colSpan={4} className="px-3 py-2.5 text-right text-xs font-bold text-gray-600">
-                                {selectedMonths.size > 0
-                                    ? `Selected (${selectedMonths.size} month${selectedMonths.size !== 1 ? 's' : ''}):`
-                                    : 'Total outstanding:'}
-                            </td>
-                            <td className="px-3 py-2.5">
-                                <span className="text-sm font-extrabold text-purple-800">
+                        {penaltyData && penaltyData.total_penalty > 0 ? (
+                            <>
+                                <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0' }}>
+                                    <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-bold text-gray-500">
+                                        {selectedMonths.size > 0
+                                            ? `Selected Rent (${selectedMonths.size} mo):`
+                                            : 'Base Rent Arrears:'}
+                                    </td>
+                                    <td className="px-3 py-1.5">
+                                        <span className="text-xs font-extrabold text-gray-800">
+                                            {fmt(selectedMonths.size > 0
+                                                ? bills.filter(b => selectedMonths.has(b.billing_month)).reduce((s, b) => s + b.balance, 0)
+                                                : footerTotal)}
+                                        </span>
+                                    </td>
+                                    <td />
+                                </tr>
+                                <tr style={{ background: '#fff1f2', borderTop: '1px solid #fecdd3' }}>
+                                    <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-extrabold text-rose-700">
+                                        ⚡ Active Late Penalty ({penaltyData.penalty_days} Days @ KES {penaltyData.daily_rate || 100}/d):
+                                    </td>
+                                    <td className="px-3 py-1.5">
+                                        <span className="text-xs font-extrabold text-rose-700">
+                                            +{fmt(penaltyData.total_penalty)}
+                                        </span>
+                                    </td>
+                                    <td />
+                                </tr>
+                                <tr style={{ background: '#ecfdf5', borderTop: '2px solid #a7f3d0' }}>
+                                    <td colSpan={4} className="px-3 py-2 text-right text-xs font-black text-emerald-900 uppercase tracking-wider">
+                                        Total To Be Paid (Rent + Penalty):
+                                    </td>
+                                    <td className="px-3 py-2">
+                                        <span className="text-sm font-black text-emerald-800 bg-white px-2 py-0.5 rounded-lg border border-emerald-300 shadow-xs">
+                                            {fmt((selectedMonths.size > 0
+                                                ? bills.filter(b => selectedMonths.has(b.billing_month)).reduce((s, b) => s + b.balance, 0)
+                                                : footerTotal) + penaltyData.total_penalty)}
+                                        </span>
+                                    </td>
+                                    <td />
+                                </tr>
+                            </>
+                        ) : (
+                            <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0' }}>
+                                <td colSpan={4} className="px-3 py-2.5 text-right text-xs font-bold text-gray-600">
                                     {selectedMonths.size > 0
-                                        ? fmt(bills.filter(b => selectedMonths.has(b.billing_month)).reduce((s, b) => s + b.balance, 0))
-                                        : fmt(footerTotal)
-                                    }
-                                </span>
-                            </td>
-                            <td />
-                        </tr>
+                                        ? `Selected (${selectedMonths.size} month${selectedMonths.size !== 1 ? 's' : ''}):`
+                                        : 'Total outstanding:'}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    <span className="text-sm font-extrabold text-purple-800">
+                                        {selectedMonths.size > 0
+                                            ? fmt(bills.filter(b => selectedMonths.has(b.billing_month)).reduce((s, b) => s + b.balance, 0))
+                                            : fmt(footerTotal)
+                                        }
+                                    </span>
+                                </td>
+                                <td />
+                            </tr>
+                        )}
                     </tfoot>
                 </table>
             </div>

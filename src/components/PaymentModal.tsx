@@ -54,6 +54,7 @@ const PAYMENT_METHODS = [
 export default function PaymentModal({ isOpen, onClose, tenants, locationId, onPaymentRecorded }: PaymentModalProps) {
     const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
     const [tenantArrearData, setTenantArrearData] = useState<any>(null);
+    const [tenantPenalty, setTenantPenalty] = useState<{ total_penalty: number; penalty_days: number; penalty_dates: string[]; daily_rate?: number } | null>(null);
     const [loadingArrears, setLoadingArrears] = useState(false);
     const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
     // Cash is default on web app
@@ -80,12 +81,17 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const effectiveRent = selectedTenant?.monthly_rent || 0;
     const monthOptions = useMemo(() => getMonthOptions(), []);
 
-    const totalTenantDebt = useMemo(() => {
+    const rentArrearsBalance = useMemo(() => {
         if (tenantArrearData && typeof tenantArrearData.totalDue === 'number') {
             return tenantArrearData.totalDue;
         }
         return selectedTenant?.balance || 0;
     }, [tenantArrearData, selectedTenant]);
+
+    const penaltyAmount = tenantPenalty?.total_penalty || 0;
+    const penaltyDaysCount = tenantPenalty?.penalty_days || 0;
+    const totalToPayWithPenalty = rentArrearsBalance + penaltyAmount;
+    const totalTenantDebt = totalToPayWithPenalty;
 
     // KCB STK Push integration
     const { status: stkStatus, error: stkError, send: stkSend, retry: stkRetry, reset: stkReset } = useStkPush({
@@ -101,6 +107,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         if (isOpen) {
             setSelectedTenantId(null);
             setTenantArrearData(null);
+            setTenantPenalty(null);
             setSelectedMonths(new Set());
             setPaymentMethod('Cash');
             setAmount('');
@@ -119,11 +126,29 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     // Fetch arrears & billing history when tenant changes
     useEffect(() => {
-        if (!selectedTenantId) { setTenantArrearData(null); setSelectedMonths(new Set()); return; }
+        if (!selectedTenantId) {
+            setTenantArrearData(null);
+            setTenantPenalty(null);
+            setSelectedMonths(new Set());
+            return;
+        }
         setLoadingArrears(true);
-        getAccumulatedArrearsForTenant(selectedTenantId)
-            .then(d => setTenantArrearData(d))
-            .catch(() => setTenantArrearData(null))
+        Promise.all([
+            getAccumulatedArrearsForTenant(selectedTenantId),
+            fetch(`/api/penalties?tenantId=${selectedTenantId}`).then(r => r.json()).catch(() => null)
+        ])
+            .then(([arrears, pen]) => {
+                setTenantArrearData(arrears);
+                if (pen && typeof pen.total_penalty === 'number') {
+                    setTenantPenalty(pen);
+                } else {
+                    setTenantPenalty(null);
+                }
+            })
+            .catch(() => {
+                setTenantArrearData(null);
+                setTenantPenalty(null);
+            })
             .finally(() => setLoadingArrears(false));
     }, [selectedTenantId]);
 
@@ -215,7 +240,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 mpesa_receipt: mpesaReceipt || undefined,
                 mpesa_phone: mpesaPhone || undefined,
                 reference_no: referenceNo || undefined,
-                notes: `[Month: ${paymentMonth}] [Time: ${timeStr}] ${notes || ''}`.trim(),
+                notes: `[Month: ${paymentMonth}] [Time: ${timeStr}] ${penaltyAmount > 0 ? `[PenaltyCleared:${Math.min(parsedAmount, penaltyAmount)}]` : ''} ${notes || ''}`.trim(),
                 recorded_by: user.name || 'Admin',
                 location_id: tenant.location_id,
             });
@@ -225,7 +250,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
             triggerFireworks();
 
             toast.success('Payment recorded successfully!');
-            const balanceBefore = tenantArrearData?.totalDue ?? (tenant.balance || 0);
+            const balanceBefore = totalToPayWithPenalty;
             setShowReceipt({
                 tenant_name: tenant.tenant_name,
                 phone: tenant.phone || '',
@@ -243,6 +268,8 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 recorded_by: user.name || 'Admin',
                 arrears_paid: (result as any).arrearsPaid ?? 0,
                 current_rent_paid: (result as any).currentRentPaid ?? 0,
+                penalty_amount: penaltyAmount,
+                penalty_days: penaltyDaysCount,
             });
             // Update table non-blockingly so celebration animations remain silky smooth
             setTimeout(() => {
@@ -321,7 +348,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                         {/* Selected Tenant Quick Folio Strip */}
                         {selectedTenant && (
                             <div className="mt-2 rounded-xl p-2.5 bg-white border border-slate-200 shadow-xs">
-                                <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center justify-between text-xs gap-2">
                                     <div className="min-w-0">
                                         <p className="font-extrabold text-slate-900 truncate">
                                             {selectedTenant.tenant_name}
@@ -330,8 +357,22 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             Unit: <b className="text-indigo-700">{selectedTenant.arms_units?.unit_name || '—'}</b> · Rent: <b>{fmt(effectiveRent)}</b>
                                         </p>
                                     </div>
-                                    <div className="text-right flex-shrink-0">
-                                        {totalTenantDebt > 0 ? (
+                                    <div className="text-right flex-shrink-0 flex items-center gap-1.5 flex-wrap justify-end">
+                                        {penaltyAmount > 0 ? (
+                                            <>
+                                                {rentArrearsBalance > 0 && (
+                                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                                                        Rent: {fmt(rentArrearsBalance)}
+                                                    </span>
+                                                )}
+                                                <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
+                                                    ⚡ {penaltyDaysCount}d Penalty: +{fmt(penaltyAmount)}
+                                                </span>
+                                                <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">
+                                                    Total Due: {fmt(totalToPayWithPenalty)}
+                                                </span>
+                                            </>
+                                        ) : totalTenantDebt > 0 ? (
                                             <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
                                                 Arrears: {fmt(totalTenantDebt)}
                                             </span>
@@ -348,7 +389,34 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                     <span className="text-[9px] font-black uppercase text-slate-400 flex items-center gap-0.5">
                                         <FiZap size={10} className="text-amber-500" /> Quick:
                                     </span>
-                                    {totalTenantDebt > 0 && (
+                                    {penaltyAmount > 0 ? (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAmount(totalToPayWithPenalty.toString())}
+                                                className="px-2.5 py-0.5 rounded-md text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 transition shadow-xs flex items-center gap-1"
+                                                title="Clear combined Rent and Late Penalties"
+                                            >
+                                                <span>⚡ Clear Rent + Penalty ({fmt(totalToPayWithPenalty)})</span>
+                                            </button>
+                                            {rentArrearsBalance > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAmount(rentArrearsBalance.toString())}
+                                                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition"
+                                                >
+                                                    Rent Only ({fmt(rentArrearsBalance)})
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => setAmount(penaltyAmount.toString())}
+                                                className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
+                                            >
+                                                Penalty Only ({fmt(penaltyAmount)})
+                                            </button>
+                                        </>
+                                    ) : totalTenantDebt > 0 ? (
                                         <button
                                             type="button"
                                             onClick={() => setAmount(totalTenantDebt.toString())}
@@ -356,7 +424,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         >
                                             Clear Debt ({fmt(totalTenantDebt)})
                                         </button>
-                                    )}
+                                    ) : null}
                                     {effectiveRent > 0 && (
                                         <button
                                             type="button"
@@ -367,6 +435,46 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         </button>
                                     )}
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Late Rent Penalty Highlight Alert Box */}
+                        {selectedTenant && penaltyAmount > 0 && (
+                            <div className="mt-2.5 rounded-xl border border-rose-200/90 bg-rose-50/70 p-2.5">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="w-5 h-5 rounded-md bg-rose-600 text-white flex items-center justify-center text-[10px] font-black">
+                                            ⚡
+                                        </span>
+                                        <span className="text-[11px] font-black text-rose-900">
+                                            Late Rent Penalty Accrued ({penaltyDaysCount} Days Overdue)
+                                        </span>
+                                    </div>
+                                    <span className="text-[11px] font-black text-rose-700 bg-white px-2 py-0.5 rounded-md border border-rose-200">
+                                        +{fmt(penaltyAmount)}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1.5 mt-2 text-center text-[10px]">
+                                    <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Penalty Days</p>
+                                        <p className="font-black text-rose-700">⚡ {penaltyDaysCount} Days</p>
+                                    </div>
+                                    <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Daily Rate</p>
+                                        <p className="font-extrabold text-slate-700">KES 100/d</p>
+                                    </div>
+                                    <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Unpaid Rent</p>
+                                        <p className="font-extrabold text-amber-800">{fmt(rentArrearsBalance)}</p>
+                                    </div>
+                                    <div className="bg-white/90 p-1.5 rounded-lg border border-emerald-200">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Total Due</p>
+                                        <p className="font-black text-emerald-700">{fmt(totalToPayWithPenalty)}</p>
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-slate-600 mt-1.5 leading-tight">
+                                    Auto-applied from the 6th onwards. Total required to fully clear rent & penalty: <b className="text-emerald-700">{fmt(totalToPayWithPenalty)}</b>.
+                                </p>
                             </div>
                         )}
                     </div>
@@ -385,6 +493,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                     selectedMonths={selectedMonths}
                                     onSelectionChange={handleMonthsSelectionChange}
                                     tenantIsOnVacation={false}
+                                    penaltyData={tenantPenalty}
                                 />
                             ) : null}
                         </div>
@@ -435,6 +544,8 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                             amount={numAmount}
                             arrearsData={tenantArrearData}
                             selectedMonths={selectedMonths}
+                            penaltyAmount={penaltyAmount}
+                            penaltyDays={penaltyDaysCount}
                         />
                     )}
 

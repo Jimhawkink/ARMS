@@ -23,6 +23,8 @@ interface ReceiptProps {
         // Explicit FIFO breakdown (preferred over computed)
         arrears_paid?: number;
         current_rent_paid?: number;
+        penalty_amount?: number;
+        penalty_days?: number;
     };
     onClose: () => void;
 }
@@ -101,7 +103,8 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
             `For Month: ${monthLabel}`,
             `Monthly Rent: ${fmt(rent)}`,
             arrears > 0 ? `Previous Arrears: ${fmt(arrears)}` : '',
-            arrears > 0 ? `Total Due: ${fmt(totalDue)}` : '',
+            payment.penalty_amount && payment.penalty_amount > 0 ? `⚡ Late Penalty (${payment.penalty_days || 3}d): ${fmt(payment.penalty_amount)}` : '',
+            arrears > 0 || (payment.penalty_amount && payment.penalty_amount > 0) ? `Total Due: ${fmt(totalDue)}` : '',
             ``,
             `✅ *AMOUNT PAID: ${fmt(amountPaid)}*`,
             arrears > 0 ? `  → Arrears Cleared: ${fmt(arrearsPaid)}` : '',
@@ -184,6 +187,12 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
                         {arrears > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}><span style={{ color: '#000', fontWeight: 600 }}>⚠️ Previous Arrears:</span><span style={{ fontWeight: 700, color: '#000' }}>{fmt(arrears)}</span></div>
                         )}
+                        {payment.penalty_amount && payment.penalty_amount > 0 ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: 11 }}>
+                                <span style={{ color: '#b91c1c', fontWeight: 700 }}>⚡ Late Penalty ({payment.penalty_days || 3}d):</span>
+                                <span style={{ fontWeight: 700, color: '#b91c1c' }}>+{fmt(payment.penalty_amount)}</span>
+                            </div>
+                        ) : null}
                         <div style={{ borderTop: '1px solid #e5e7eb', margin: '4px 0' }}></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12, fontWeight: 700 }}><span>Total Due:</span><span>{fmt(totalDue)}</span></div>
                     </div>

@@ -98,9 +98,77 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
+        const tenantId = searchParams.get('tenantId') ? Number(searchParams.get('tenantId')) : undefined;
+
+        // ── Single Tenant Mode (e.g. for Payment Modal) ────────────────────────
+        if (tenantId) {
+            const today = new Date();
+            const todayDay = today.getDate();
+            const currentMonth = localMonthStr(today);
+
+            // Auto-generate penalty for tenant if today >= 6th and tenant has unpaid bill for current month
+            if (todayDay >= 6) {
+                try {
+                    const { data: curBill } = await supabaseAdmin
+                        .from('arms_billing')
+                        .select('billing_id, balance, status')
+                        .eq('tenant_id', tenantId)
+                        .eq('billing_month', currentMonth)
+                        .in('status', ['Unpaid', 'Partial'])
+                        .gt('balance', 0)
+                        .maybeSingle();
+
+                    if (curBill) {
+                        const neededRows = [];
+                        for (let d = 6; d <= todayDay; d++) {
+                            const dateStr = localDateStr(new Date(today.getFullYear(), today.getMonth(), d));
+                            neededRows.push({
+                                tenant_id: tenantId,
+                                billing_id: curBill.billing_id,
+                                billing_month: currentMonth,
+                                penalty_date: dateStr,
+                                amount: 100,
+                                status: 'Active',
+                                reason: `Late rent penalty — ${currentMonth} (after 5th grace period)`,
+                            });
+                        }
+                        if (neededRows.length > 0) {
+                            await supabaseAdmin
+                                .from('arms_penalties')
+                                .upsert(neededRows, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: true });
+                        }
+                    }
+                } catch {
+                    // non-fatal, proceed with reading existing
+                }
+            }
+
+            const { data: tenantPens, error: penErr } = await supabaseAdmin
+                .from('arms_penalties')
+                .select('*')
+                .eq('tenant_id', tenantId)
+                .eq('status', 'Active')
+                .order('penalty_date', { ascending: true });
+
+            if (penErr) return NextResponse.json({ error: penErr.message }, { status: 500 });
+
+            const activePens = tenantPens || [];
+            const penTotal = activePens.reduce((s, p) => s + Number(p.amount), 0);
+            const penDays = activePens.length;
+            const penDates = activePens.map(p => p.penalty_date);
+
+            return NextResponse.json({
+                tenant_id: tenantId,
+                penalty_days: penDays,
+                total_penalty: penTotal,
+                penalty_dates: penDates,
+                active_penalties: activePens,
+                daily_rate: 100
+            });
+        }
+
         const month = searchParams.get('month') || localMonthStr(new Date());
         const locationId = searchParams.get('locationId') ? Number(searchParams.get('locationId')) : undefined;
-        const tenantId = searchParams.get('tenantId') ? Number(searchParams.get('tenantId')) : undefined;
 
         // 1. Fetch bills for the month
         let billQ = supabaseAdmin
