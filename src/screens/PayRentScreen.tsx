@@ -9,6 +9,7 @@ import {
     initiateSTKPush, pollSTKResult,
     initiateKCBPush, pollKCBResult,
     refreshTenantBalance, getUnpaidBilling, getLatestPayment,
+    getTenantActivePenalties, markTenantPenaltiesPaid, TenantPenaltyInfo,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount, updateSessionBalance } from '../lib/security';
 
@@ -35,6 +36,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [amount, setAmount] = useState('');
     const [payerPhone, setPayerPhone] = useState('');
     const [balance, setBalance] = useState(session.balance);
+    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 });
     const [processing, setProcessing] = useState(false);
     const [statusMsg, setStatusMsg] = useState('');
     const [error, setError] = useState('');
@@ -51,6 +53,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const cleanupRef  = useRef<(() => void) | null>(null);
     const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
     const checkoutRef = useRef<string | null>(null);
+    const paymentDoneRef = useRef(false); // ← guard: prevents double-record when auto + manual both fire
 
     useEffect(() => {
         loadBalance();
@@ -59,8 +62,16 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     }, []);
 
     const loadBalance = async () => {
-        const b = await refreshTenantBalance(session.tenant_id);
+        const [b, pen] = await Promise.all([
+            refreshTenantBalance(session.tenant_id),
+            getTenantActivePenalties(session.tenant_id),
+        ]);
         setBalance(b);
+        setPenaltyInfo(pen);
+        const total = b + (pen?.totalPenalty || 0);
+        if (total > 0) {
+            setAmount(String(total));
+        }
     };
 
     // ── Check which payment methods are configured for this tenant's unit ──
@@ -169,10 +180,13 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     timeoutMs: 90000,  // KCB allows up to 90s
                     onConfirmed: async (kcbReceipt, confirmedAmount) => {
                         if (timerRef.current) clearInterval(timerRef.current);
+                        if (paymentDoneRef.current) return; // ← already handled, ignore
+                        paymentDoneRef.current = true;
                         const finalAmt = confirmedAmount || amtVal;
                         // Callback already recorded payment on server — just refresh balance
                         setReceipt(kcbReceipt || 'KCB');
                         setPaidAmount(finalAmt);
+                        await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
                         const newBal = await refreshTenantBalance(session.tenant_id);
                         setBalance(newBal);
                         await updateSessionBalance(newBal);
@@ -258,6 +272,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     setPaidAmount(finalAmt);
 
                     // Just refresh the balance from DB (already updated by callback)
+                    await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
                     const newBal = await refreshTenantBalance(session.tenant_id);
                     setBalance(newBal);
                     await updateSessionBalance(newBal);
@@ -311,9 +326,14 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     // Manual "Check Status" — calls the right endpoint based on payment method
     const handleManualCheck = async () => {
         if (manualChecking) return;
+        // ── Guard: if auto-poll already succeeded, don't record again ──
+        if (paymentDoneRef.current) {
+            setStep('success');
+            return;
+        }
         setManualChecking(true);
         try {
-            // ── KCB: force-confirm records payment even if callback never arrived ──
+            // ── KCB: check if payment actually went through ──
             if (payMethod === 'KCB' && checkoutRef.current) {
                 const res = await fetch('https://arms-opal.vercel.app/api/kcb/confirm', {
                     method: 'POST',
@@ -324,22 +344,40 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         amount:            Math.round(parseFloat(amount)),
                     }),
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data?.success && data?.status === 'Completed') {
-                        if (timerRef.current) clearInterval(timerRef.current);
-                        const newBal = await refreshTenantBalance(session.tenant_id);
-                        setBalance(newBal);
-                        await updateSessionBalance(newBal);
-                        setReceipt(data.receipt || 'KCB');
-                        setPaidAmount(data.amount || Math.round(parseFloat(amount)));
-                        setStep('success');
-                        setProcessing(false);
-                        setManualChecking(false);
-                        return;
-                    }
+                const data = await res.json();
+
+                // ── Payment SUCCEEDED ──
+                if (res.ok && data?.success && data?.status === 'Completed') {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    paymentDoneRef.current = true;
+                    await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
+                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    setBalance(newBal);
+                    await updateSessionBalance(newBal);
+                    setReceipt(data.receipt || 'KCB');
+                    setPaidAmount(data.amount || Math.round(parseFloat(amount)));
+                    setStep('success');
+                    setProcessing(false);
+                    setManualChecking(false);
+                    return;
                 }
-                Alert.alert('Still Processing', 'KCB payment not yet confirmed. Wait a few seconds and try again.');
+
+                // ── Payment FAILED (insufficient balance, wrong PIN, cancelled, etc.) ──
+                if (!data?.success && data?.status === 'Failed') {
+                    const reason = data?.reason || 'Payment did not go through';
+                    Alert.alert(
+                        '❌ Payment Failed',
+                        reason + '\n\nNo money was deducted. Please try again.',
+                        [{ text: 'OK' }]
+                    );
+                    setError(reason);
+                    setStep('failed');
+                    setManualChecking(false);
+                    return;
+                }
+
+                // ── Payment still PENDING ──
+                Alert.alert('⏳ Still Processing', 'KCB payment not yet confirmed. Wait a few seconds and try again.');
                 setManualChecking(false);
                 return;
             }
@@ -402,7 +440,8 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         setPaidAmount(0);
         setCheckingSeconds(0);
         setManualChecking(false);
-        setPayMethod('MPesa'); // reset to default on new flow
+        setPayMethod('MPesa');
+        paymentDoneRef.current = false; // ← reset guard for next payment
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
     };
@@ -417,11 +456,50 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 <Header title="💳 Pay Rent" sub="Choose payment method" onBack={onBack} />
                 <ScrollView contentContainerStyle={s.content}>
                     <View style={s.balanceCard}>
-                        <Text style={s.balLabel}>Outstanding Balance</Text>
-                        <Text style={[s.balValue, { color: balance > 0 ? C.danger : C.accent }]}>
-                            {formatKES(balance)}
+                        <Text style={s.balLabel}>
+                            {penaltyInfo.totalPenalty > 0 ? 'Total Due (Rent + Late Penalty)' : 'Outstanding Balance'}
                         </Text>
+                        <Text style={[s.balValue, { color: (balance + penaltyInfo.totalPenalty) > 0 ? C.danger : C.accent }]}>
+                            {formatKES(balance + penaltyInfo.totalPenalty)}
+                        </Text>
+                        {penaltyInfo.totalPenalty > 0 && (
+                            <Text style={{ fontSize: 11, color: '#fca5a5', marginTop: 4 }}>
+                                Rent: {formatKES(balance)} • ⚡ Penalty: +{formatKES(penaltyInfo.totalPenalty)} ({penaltyInfo.penaltyDays}d)
+                            </Text>
+                        )}
                     </View>
+
+                    {/* ⚡ Penalty Alert Card if penalty exists */}
+                    {penaltyInfo.totalPenalty > 0 && (
+                        <View style={s.penaltyCard}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Text style={{ fontSize: 14 }}>⚡</Text>
+                                    <Text style={s.penaltyTitle}>Late Rent Penalty Applied</Text>
+                                </View>
+                                <View style={s.penaltyDaysBadge}>
+                                    <Text style={s.penaltyDaysText}>{penaltyInfo.penaltyDays} Days Overdue</Text>
+                                </View>
+                            </View>
+                            <Text style={s.penaltyDesc}>
+                                KES 100/day penalty applied after the 5th grace period.
+                            </Text>
+                            <View style={s.penaltyRow}>
+                                <Text style={s.penaltyLabel}>Unpaid Rent:</Text>
+                                <Text style={s.penaltyVal}>{formatKES(balance)}</Text>
+                            </View>
+                            <View style={s.penaltyRow}>
+                                <Text style={s.penaltyLabel}>⚡ Accrued Penalty:</Text>
+                                <Text style={[s.penaltyVal, { color: '#f87171' }]}>+{formatKES(penaltyInfo.totalPenalty)}</Text>
+                            </View>
+                            <View style={[s.penaltyRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.15)', paddingTop: 4, marginTop: 4 }]}>
+                                <Text style={[s.penaltyLabel, { color: '#f8fafc', fontWeight: '800' }]}>Total to Settle:</Text>
+                                <Text style={[s.penaltyVal, { color: '#fbbf24', fontSize: 14, fontWeight: '900' }]}>
+                                    {formatKES(balance + penaltyInfo.totalPenalty)}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
 
                     {/* ── Payment Method Toggle: M-Pesa vs KCB Buni ── */}
                     <Text style={s.sectionLabel}>💳 Payment Network</Text>
@@ -550,8 +628,17 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
                     <ScrollView contentContainerStyle={s.content}>
                         <View style={s.balanceCard}>
-                            <Text style={s.balLabel}>Balance Due</Text>
-                            <Text style={[s.balValue, { color: C.danger }]}>{formatKES(balance)}</Text>
+                            <Text style={s.balLabel}>
+                                {penaltyInfo.totalPenalty > 0 ? 'Total Due (Rent + Late Penalty)' : 'Balance Due'}
+                            </Text>
+                            <Text style={[s.balValue, { color: C.danger }]}>
+                                {formatKES(balance + penaltyInfo.totalPenalty)}
+                            </Text>
+                            {penaltyInfo.totalPenalty > 0 && (
+                                <Text style={{ fontSize: 11, color: '#fca5a5', marginTop: 4 }}>
+                                    Rent: {formatKES(balance)} • ⚡ Penalty: +{formatKES(penaltyInfo.totalPenalty)} ({penaltyInfo.penaltyDays}d)
+                                </Text>
+                            )}
                         </View>
 
                         {mode === 'payForMe' && (
@@ -583,9 +670,32 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                 keyboardType="numeric"
                                 maxLength={7}
                             />
-                            <TouchableOpacity onPress={() => setAmount(String(Math.round(balance)))} style={s.quickBtn}>
-                                <Text style={s.quickBtnText}>💡 Pay full balance: {formatKES(balance)}</Text>
-                            </TouchableOpacity>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                                {penaltyInfo.totalPenalty > 0 && (
+                                    <TouchableOpacity
+                                        onPress={() => setAmount(String(Math.round(balance + penaltyInfo.totalPenalty)))}
+                                        style={[s.quickBtn, { flex: 1, minWidth: '45%', backgroundColor: 'rgba(245,158,11,0.15)', borderColor: '#f59e0b' }]}
+                                    >
+                                        <Text style={[s.quickBtnText, { color: '#fbbf24' }]}>
+                                            ⚡ Full Due: {formatKES(balance + penaltyInfo.totalPenalty)}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
+                                {balance > 0 && (
+                                    <TouchableOpacity
+                                        onPress={() => setAmount(String(Math.round(balance)))}
+                                        style={[s.quickBtn, { flex: 1, minWidth: '45%' }]}
+                                    >
+                                        <Text style={s.quickBtnText}>Rent Only: {formatKES(balance)}</Text>
+                                    </TouchableOpacity>
+                                )}
+                                <TouchableOpacity
+                                    onPress={() => setAmount(String(Math.round(session.monthly_rent)))}
+                                    style={[s.quickBtn, { flex: 1, minWidth: '45%' }]}
+                                >
+                                    <Text style={s.quickBtnText}>1 Mo: {formatKES(session.monthly_rent)}</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
 
                         {error ? (
@@ -615,6 +725,9 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <ConfirmRow label="Tenant" value={session.tenant_name} emoji="👤" />
                         <ConfirmRow label="Room" value={`${session.unit_name} • ${session.location_name}`} emoji="🏠" />
                         <ConfirmRow label="Amount" value={formatKES(parseFloat(amount))} emoji="💰" highlight />
+                        {penaltyInfo.totalPenalty > 0 && (
+                            <ConfirmRow label="Late Penalty Cleared" value={`+${formatKES(penaltyInfo.totalPenalty)} (${penaltyInfo.penaltyDays}d)`} emoji="⚡" />
+                        )}
                         <ConfirmRow label="STK Push To" value={maskPhone(phone)} emoji="📱" />
                         {mode === 'payForMe' && (
                             <View style={s.creditNote}>
@@ -841,4 +954,28 @@ const s = StyleSheet.create({
     methodBadgeOn:     { fontSize: 9, color: C.accent, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
     methodBadgeOnKCB:  { fontSize: 9, color: '#3b82f6', fontWeight: '700', backgroundColor: 'rgba(59,130,246,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
     methodHint: { fontSize: 11, color: C.dim, marginBottom: 4, textAlign: 'center' },
+
+    // Penalty Card in Payment
+    penaltyCard: {
+        backgroundColor: '#261214',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 16,
+        borderWidth: 1.5,
+        borderColor: '#f43f5e',
+    },
+    penaltyTitle: { fontSize: 13, fontWeight: '900', color: '#f87171' },
+    penaltyDaysBadge: {
+        backgroundColor: 'rgba(239,68,68,0.2)',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.4)',
+    },
+    penaltyDaysText: { fontSize: 10, fontWeight: '800', color: '#fca5a5' },
+    penaltyDesc: { fontSize: 11, color: '#cbd5e1', marginTop: 4, marginBottom: 8 },
+    penaltyRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 },
+    penaltyLabel: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
+    penaltyVal: { fontSize: 12, color: '#f8fafc', fontWeight: '700' },
 });

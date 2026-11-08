@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
     TenantSession, BillingRecord, formatKES, formatMonth,
     getTenantBilling, getUnpaidBilling, refreshTenantBalance, getTrueTotalBalance,
+    getTenantActivePenalties, TenantPenaltyInfo,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
 
@@ -63,6 +64,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const [allBills, setAllBills] = useState<BillingRecord[]>([]);
     const [balance, setBalance] = useState(session.balance);
     const [effectiveRent, setEffectiveRent] = useState(session.monthly_rent);
+    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 });
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [showAll, setShowAll] = useState(false);
@@ -70,15 +72,17 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const loadData = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const [unpaid, all, trueBalance] = await Promise.all([
+            const [unpaid, all, trueBalance, pen] = await Promise.all([
                 getUnpaidBilling(session.tenant_id),
                 getTenantBilling(session.tenant_id),
                 getTrueTotalBalance(session.tenant_id),
+                getTenantActivePenalties(session.tenant_id),
             ]);
             setUnpaidBills(unpaid);
             setAllBills(all);
             setBalance(trueBalance.total);
             setEffectiveRent(trueBalance.effectiveRent);
+            setPenaltyInfo(pen);
             await updateSessionBalance(trueBalance.total);
         } catch (err: any) {
             console.error('Dashboard load error:', err.message);
@@ -159,6 +163,43 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                     </View>
                 </LinearGradient>
 
+                {/* ── ⚡ Late Penalty Alert ── */}
+                {penaltyInfo.totalPenalty > 0 && (
+                    <View style={styles.penaltyAlertCard}>
+                        <View style={styles.penaltyHeaderRow}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={{ fontSize: 16 }}>⚡</Text>
+                                <Text style={styles.penaltyTitle}>Late Rent Penalty Applied</Text>
+                            </View>
+                            <View style={styles.penaltyDaysBadge}>
+                                <Text style={styles.penaltyDaysText}>{penaltyInfo.penaltyDays} Days Overdue</Text>
+                            </View>
+                        </View>
+                        <Text style={styles.penaltySub}>
+                            Daily penalty of KES 100/day applied starting from 6th of the month.
+                        </Text>
+                        <View style={styles.penaltyDivider} />
+                        <View style={styles.penaltyDetailsRow}>
+                            <Text style={styles.penaltyDetailLabel}>Unpaid Rent:</Text>
+                            <Text style={styles.penaltyDetailVal}>{formatKES(balance)}</Text>
+                        </View>
+                        <View style={styles.penaltyDetailsRow}>
+                            <Text style={styles.penaltyDetailLabel}>⚡ Accrued Penalty:</Text>
+                            <Text style={[styles.penaltyDetailVal, { color: '#f87171', fontWeight: '800' }]}>
+                                +{formatKES(penaltyInfo.totalPenalty)}
+                            </Text>
+                        </View>
+                        <View style={[styles.penaltyDetailsRow, { marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.15)' }]}>
+                            <Text style={[styles.penaltyDetailLabel, { color: '#f8fafc', fontWeight: '800' }]}>
+                                Total Outstanding Due:
+                            </Text>
+                            <Text style={[styles.penaltyDetailVal, { color: '#fbbf24', fontSize: 15, fontWeight: '900' }]}>
+                                {formatKES(balance + penaltyInfo.totalPenalty)}
+                            </Text>
+                        </View>
+                    </View>
+                )}
+
                 {/* ── KPI Cards ── */}
                 <View style={styles.kpiGrid}>
                     <KPICard
@@ -167,10 +208,10 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                         color={COLORS.accent} bg={COLORS.successBg}
                     />
                     <KPICard
-                        emoji="⚠️" label="Total Balance"
-                        value={formatKES(balance)}
-                        color={balance > 0 ? COLORS.danger : COLORS.accent}
-                        bg={balance > 0 ? '#fef2f2' : '#ecfdf5'}
+                        emoji="⚠️" label={penaltyInfo.totalPenalty > 0 ? "Total Due (Rent+Pen)" : "Total Balance"}
+                        value={formatKES(balance + penaltyInfo.totalPenalty)}
+                        color={(balance + penaltyInfo.totalPenalty) > 0 ? COLORS.danger : COLORS.accent}
+                        bg={(balance + penaltyInfo.totalPenalty) > 0 ? '#fef2f2' : '#ecfdf5'}
                     />
                     <KPICard
                         emoji="🕐" label="Past Arrears"
@@ -186,7 +227,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                 </View>
 
                 {/* ── Pay Rent CTA ── */}
-                {balance > 0 && (
+                {(balance + penaltyInfo.totalPenalty) > 0 && (
                     <TouchableOpacity onPress={onPayRent} activeOpacity={0.85} style={{ marginBottom: 16 }}>
                         <LinearGradient
                             colors={['#10b981', '#059669', '#047857']}
@@ -196,8 +237,11 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                             <View style={styles.payCtaDecor} />
                             <Text style={styles.payCtaEmoji}>💳</Text>
                             <View>
-                                <Text style={styles.payCtaText}>Pay Rent Now</Text>
-                                <Text style={styles.payCtaSub}>Balance: {formatKES(balance)} outstanding</Text>
+                                <Text style={styles.payCtaText}>Pay Rent & Penalty Now</Text>
+                                <Text style={styles.payCtaSub}>
+                                    Total Due: {formatKES(balance + penaltyInfo.totalPenalty)}
+                                    {penaltyInfo.totalPenalty > 0 ? ` (Rent: ${formatKES(balance)} + Penalty: ${formatKES(penaltyInfo.totalPenalty)})` : ' outstanding'}
+                                </Text>
                             </View>
                             <Text style={styles.payCtaArrow}>→</Text>
                         </LinearGradient>
@@ -413,4 +457,65 @@ const styles = StyleSheet.create({
     totalLabel: { fontSize: 11, fontWeight: '900', color: COLORS.text, textTransform: 'uppercase', letterSpacing: 0.5 },
     totalValue: { fontSize: 11, fontWeight: '800', color: COLORS.accent },
     totalValueRed: { fontSize: 11, fontWeight: '900', color: COLORS.danger },
+
+    // Penalty Alert Card
+    penaltyAlertCard: {
+        backgroundColor: '#261214',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 16,
+        borderWidth: 1.5,
+        borderColor: '#f43f5e',
+    },
+    penaltyHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 6,
+    },
+    penaltyTitle: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: '#f87171',
+    },
+    penaltyDaysBadge: {
+        backgroundColor: 'rgba(239,68,68,0.2)',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.4)',
+    },
+    penaltyDaysText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#fca5a5',
+    },
+    penaltySub: {
+        fontSize: 11,
+        color: '#cbd5e1',
+        marginBottom: 8,
+        lineHeight: 15,
+    },
+    penaltyDivider: {
+        height: 1,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        marginBottom: 8,
+    },
+    penaltyDetailsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 2,
+    },
+    penaltyDetailLabel: {
+        fontSize: 11,
+        color: '#94a3b8',
+        fontWeight: '600',
+    },
+    penaltyDetailVal: {
+        fontSize: 12,
+        color: '#f8fafc',
+        fontWeight: '700',
+    },
 });

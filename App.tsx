@@ -1,15 +1,15 @@
-import React, { useState, useEffect, Component, ErrorInfo } from 'react';
+import React, { useState, useEffect, useRef, Component, ErrorInfo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, ScrollView, LogBox, TouchableOpacity, Modal, AppState, AppStateStatus } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
+import { setupNotifications, pushNotification } from './src/lib/notifications';
+import { APP_VERSION } from './src/lib/version';
 
-// 🚀 THIS APK'S VERSION - bump on every release 🚀
-const APP_VERSION = 'v2.3';
 
 // ─── CRASH DEBUGGER ──────────────────────────────────────────
 // This will catch ANY error and show it on screen
@@ -54,6 +54,7 @@ import StaffProfileScreen from './src/screens/StaffProfileScreen';
 import ForceUpdateScreen from './src/screens/ForceUpdateScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import AgreementScreen from './src/screens/AgreementScreen';
+import StaffChatScreen from './src/screens/StaffChatScreen';
 import { TenantSession, StaffSession, TenantSearchResult, TenantAgreement, AgreementTemplate, getPendingAgreement, getAgreementTemplate } from './src/lib/supabase';
 import { getSession, clearSession, updateSessionActivity, getStaffSession, clearStaffSession, updateStaffSessionActivity } from './src/lib/security';
 
@@ -68,14 +69,64 @@ type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 // ── Staff Shell — Caretaker or Landlord ──────────────────────────────
-// Caretaker: Search (read-only) + Profile
-// Landlord:  Search + Collect Rent (STK) + Profile
+// Caretaker: Tenants + Chat + Profile
+// Landlord:  Tenants + Chat + Collect Rent (STK) + Profile
 function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => void }) {
-    type StaffTab = 'search' | 'profile';
+    type StaffTab = 'search' | 'chat' | 'profile';
     const [activeTab, setActiveTab] = useState<StaffTab>('search');
     const [collectTenant, setCollectTenant] = useState<TenantSearchResult | null>(null);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [staffNotif, setStaffNotif] = useState<{
+        tenant_name: string; message: string; created_at: string; tenant_id: number;
+    } | null>(null);
+    const lastSeenMsgRef = useRef<number>(0);
 
     useEffect(() => { updateStaffSessionActivity(); }, [activeTab]);
+
+    // ── CARETAKER: Poll every 10s for new TENANT messages ──────
+    // Fires OS notification + in-app overlay when any tenant messages
+    useEffect(() => {
+        const check = async () => {
+            try {
+                const res = await fetch('https://arms-opal.vercel.app/api/chats?inbox=1');
+                const data = await res.json();
+                const inbox = data.inbox || [];
+                const total = inbox.reduce((s: number, t: any) => s + (t.unread_count || 0), 0);
+                setUnreadCount(total);
+
+                // Find the newest unread tenant message across ALL threads
+                const unreadThreads = inbox.filter((t: any) => t.unread_count > 0 && t.last_message_sender === 'tenant');
+                if (unreadThreads.length > 0) {
+                    const newest = unreadThreads[0];
+                    // Use a composite key: tenantId + message snippet
+                    const msgKey = newest.tenant_id * 1000 + newest.last_message?.length;
+                    if (msgKey !== lastSeenMsgRef.current) {
+                        lastSeenMsgRef.current = msgKey;
+                        if (activeTab !== 'chat') {
+                            // OS notification
+                            pushNotification(
+                                `💬 ${newest.tenant_name}`,
+                                newest.last_message || 'New message',
+                                'arms_messages',
+                                { tenantId: newest.tenant_id, screen: 'staff_chat' },
+                            );
+                            // In-app overlay
+                            setStaffNotif({
+                                tenant_name: newest.tenant_name,
+                                message: newest.last_message || 'New message',
+                                created_at: newest.last_message_at,
+                                tenant_id: newest.tenant_id,
+                            });
+                            setTimeout(() => setStaffNotif(null), 10000);
+                        }
+                    }
+                }
+            } catch { /* silent */ }
+        };
+        check();
+        const iv = setInterval(check, 10000);
+        return () => clearInterval(iv);
+    }, [activeTab]);
 
     const isLandlord = staff.role === 'landlord';
 
@@ -91,33 +142,121 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
         );
     }
 
+    const renderTab = () => {
+        switch (activeTab) {
+            case 'search':
+                return (
+                    <TenantSearchScreen
+                        staff={staff}
+                        onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
+                    />
+                );
+            case 'chat':
+                return <StaffChatScreen staff={staff} />;
+            case 'profile':
+                return <StaffProfileScreen staff={staff} onLogout={onLogout} />;
+        }
+    };
+
+    const tabs: { key: StaffTab; emoji: string; label: string; badge?: number }[] = [
+        { key: 'search',  emoji: '🔍', label: 'Tenants' },
+        { key: 'chat',    emoji: '💬', label: 'Messages', badge: unreadCount },
+        { key: 'profile', emoji: '👤', label: 'Profile' },
+    ];
+
     return (
         <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
-            {activeTab === 'search' ? (
-                <TenantSearchScreen
-                    staff={staff}
-                    onCollectRent={isLandlord ? (t) => setCollectTenant(t) : undefined}
-                />
-            ) : (
-                <StaffProfileScreen staff={staff} onLogout={onLogout} />
-            )}
+            {renderTab()}
+
+            {/* ════ CARETAKER NOTIFICATION OVERLAY ════
+                Fires when any tenant sends a message
+                while caretaker is on any tab except chat */}
+            <Modal
+                visible={!!staffNotif}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setStaffNotif(null)}
+            >
+                <View style={notifStyles.backdrop}>
+                    <View style={notifStyles.card}>
+                        <LinearGradient
+                            colors={['#065f46','#059669','#10b981']}
+                            style={notifStyles.cardHeader}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        >
+                            <View style={notifStyles.avatarRing}>
+                                <View style={notifStyles.avatar}>
+                                    <Text style={notifStyles.avatarText}>👤</Text>
+                                </View>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={notifStyles.headerTitle}>
+                                    {staffNotif?.tenant_name || 'Tenant'}
+                                </Text>
+                                <Text style={notifStyles.headerSub}>
+                                    {staffNotif?.created_at
+                                        ? new Date(staffNotif.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                                        : 'Just now'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setStaffNotif(null)} style={notifStyles.closeBtn}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>×</Text>
+                            </TouchableOpacity>
+                        </LinearGradient>
+                        <View style={notifStyles.cardBody}>
+                            <Text style={[notifStyles.msgLabel, { color: '#6ee7b7' }]}>📨 TENANT MESSAGE</Text>
+                            <View style={[notifStyles.msgBox, { backgroundColor: 'rgba(16,185,129,0.12)', borderColor: 'rgba(110,231,183,0.3)' }]}>
+                                <Text style={notifStyles.msgText} numberOfLines={6}>
+                                    {staffNotif?.message || ''}
+                                </Text>
+                            </View>
+                            <View style={notifStyles.progressTrack}>
+                                <View style={[notifStyles.progressBar, { backgroundColor: '#34d399' }]} />
+                            </View>
+                            <View style={notifStyles.btnRow}>
+                                <TouchableOpacity
+                                    style={[notifStyles.btnReply, { backgroundColor: '#059669' }]}
+                                    onPress={() => { setStaffNotif(null); setActiveTab('chat'); }}
+                                >
+                                    <Text style={notifStyles.btnReplyText}>💬 Reply Now</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[notifStyles.btnLater, { borderColor: 'rgba(110,231,183,0.3)' }]}
+                                    onPress={() => setStaffNotif(null)}
+                                >
+                                    <Text style={[notifStyles.btnLaterText, { color: '#6ee7b7' }]}>Later</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Bottom tab bar */}
             <View style={styles.bottomBar}>
-                {[
-                    { key: 'search' as StaffTab, emoji: '🔍', label: 'Tenants' },
-                    { key: 'profile' as StaffTab, emoji: '👤', label: 'Profile' },
-                ].map(tab => {
+                {tabs.map(tab => {
                     const isActive = activeTab === tab.key;
                     return (
                         <View key={tab.key} style={styles.tabWrap}>
                             <View
                                 style={[styles.tab, isActive && styles.tabActive]}
-                                onTouchEnd={() => setActiveTab(tab.key)}
+                                onTouchEnd={() => {
+                                    setActiveTab(tab.key);
+                                    if (tab.key === 'chat') setUnreadCount(0);
+                                }}
                             >
-                                <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
-                                    {tab.emoji}
-                                </Text>
+                                <View style={{ position: 'relative' }}>
+                                    <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
+                                        {tab.emoji}
+                                    </Text>
+                                    {(tab.badge || 0) > 0 && (
+                                        <View style={styles.tabBadge}>
+                                            <Text style={styles.tabBadgeText}>
+                                                {(tab.badge || 0) > 9 ? '9+' : tab.badge}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                                     {tab.label}
                                 </Text>
@@ -140,6 +279,14 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     const [agreementTemplate, setAgreementTemplate] = useState<AgreementTemplate | null>(null);
     const [checkingAgreement, setCheckingAgreement] = useState(true);
 
+    // ── NEW MESSAGE notification overlay ─────────────────────
+    const [chatNotif, setChatNotif] = useState<{
+        message: string;
+        sender_name: string;
+        created_at: string;
+    } | null>(null);
+    const lastMsgIdRef = useRef<number>(0);
+
     // Check for pending agreement on mount
     useEffect(() => {
         (async () => {
@@ -155,19 +302,56 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         })();
     }, [session.tenant_id, session.location_id]);
 
-    // Poll unread admin messages every 20s
+    // ── TENANT: Poll for new admin messages every 10s ──────────
+    // Updates badge count + in-app overlay + OS notification shade
     useEffect(() => {
-        const check = async () => {
+        const checkNewMessages = async () => {
             try {
-                const { getUnreadAdminMessages } = await import('./src/lib/supabase');
-                const count = await getUnreadAdminMessages(session.tenant_id);
-                setUnreadAdmin(count);
+                const { supabase } = await import('./src/lib/supabase');
+                const { data } = await supabase
+                    .from('arms_chats')
+                    .select('chat_id, message, created_at')
+                    .eq('tenant_id', session.tenant_id)
+                    .eq('sender', 'admin')
+                    .eq('is_read', false)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                // Update badge count
+                setUnreadAdmin(data?.length || 0);
+
+                if (data && data.length > 0) {
+                    const newest = data[0];
+                    if (newest.chat_id !== lastMsgIdRef.current) {
+                        lastMsgIdRef.current = newest.chat_id;
+
+                        // 1. OS notification — appears in phone shade like WhatsApp
+                        pushNotification(
+                            '🏠 ARMS Property Management',
+                            newest.message,
+                            'arms_messages',
+                            { tenantId: session.tenant_id, screen: 'chat' },
+                        );
+
+                        // 2. In-app overlay — if not already on chat tab
+                        if (activeTab !== 'chat') {
+                            setChatNotif({
+                                message: newest.message,
+                                sender_name: 'Management',
+                                created_at: newest.created_at,
+                            });
+                            setTimeout(() => setChatNotif(null), 10000);
+                        }
+                    }
+                }
             } catch { /* silent */ }
         };
-        check();
-        const interval = setInterval(check, 20000);
+
+        checkNewMessages();
+        const interval = setInterval(checkNewMessages, 10000); // 10s — faster than before
         return () => clearInterval(interval);
-    }, [session.tenant_id]);
+    }, [session.tenant_id, activeTab]);
+
 
     // Update activity timestamp on tab switches
     useEffect(() => { updateSessionActivity(); }, [activeTab]);
@@ -191,6 +375,7 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                 agreement={pendingAgreement}
                 template={agreementTemplate}
                 tenantName={currentSession.tenant_name}
+                locationName={currentSession.location_name}
                 onAccepted={() => setPendingAgreement(null)}
             />
         );
@@ -234,6 +419,77 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     return (
         <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
             {renderScreen()}
+
+            {/* ════ GLOBAL NOTIFICATION OVERLAY ════
+                Appears on TOP OF EVERYTHING when admin
+                sends a new message — any tab, any screen */}
+            <Modal
+                visible={!!chatNotif}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setChatNotif(null)}
+            >
+                <View style={notifStyles.backdrop}>
+                    <View style={notifStyles.card}>
+                        {/* Header strip */}
+                        <LinearGradient
+                            colors={['#4f46e5', '#7c3aed', '#a855f7']}
+                            style={notifStyles.cardHeader}
+                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        >
+                            <View style={notifStyles.avatarRing}>
+                                <View style={notifStyles.avatar}>
+                                    <Text style={notifStyles.avatarText}>🏠</Text>
+                                </View>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={notifStyles.headerTitle}>Management Message</Text>
+                                <Text style={notifStyles.headerSub}>
+                                    {chatNotif?.created_at
+                                        ? new Date(chatNotif.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                                        : 'Just now'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setChatNotif(null)} style={notifStyles.closeBtn}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>×</Text>
+                            </TouchableOpacity>
+                        </LinearGradient>
+
+                        {/* Message body */}
+                        <View style={notifStyles.cardBody}>
+                            <Text style={notifStyles.msgLabel}>📨 NEW MESSAGE</Text>
+                            <View style={notifStyles.msgBox}>
+                                <Text style={notifStyles.msgText} numberOfLines={6}>
+                                    {chatNotif?.message || ''}
+                                </Text>
+                            </View>
+
+                            {/* Progress bar — auto dismiss in 10s */}
+                            <View style={notifStyles.progressTrack}>
+                                <View style={notifStyles.progressBar} />
+                            </View>
+
+                            <View style={notifStyles.btnRow}>
+                                <TouchableOpacity
+                                    style={notifStyles.btnReply}
+                                    onPress={() => {
+                                        setChatNotif(null);
+                                        setActiveTab('chat');
+                                    }}
+                                >
+                                    <Text style={notifStyles.btnReplyText}>💬 Reply Now</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={notifStyles.btnLater}
+                                    onPress={() => setChatNotif(null)}
+                                >
+                                    <Text style={notifStyles.btnLaterText}>Later</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Bottom Tab Bar */}
             <View style={styles.bottomBar}>
@@ -286,13 +542,57 @@ function AppInner() {
         initApp();
     }, []);
 
+    // ── FOREGROUND VERSION CHECK ──────────────────────────────────────────────
+    // Re-check version every time app comes back to foreground.
+    // Catches tenants who are already logged in and never log out.
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const lastVersionCheckRef = useRef<number>(0);
+
+    useEffect(() => {
+        const checkVersionOnForeground = async () => {
+            try {
+                const now = Date.now();
+                // Throttle: max once every 60 seconds
+                if (now - lastVersionCheckRef.current < 60_000) return;
+                lastVersionCheckRef.current = now;
+
+                const vRes = await fetch(
+                    `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
+                    { signal: (AbortSignal as any).timeout ? (AbortSignal as any).timeout(6000) : undefined }
+                );
+                if (vRes.ok) {
+                    const vData = await vRes.json();
+                    if (vData.forceUpdate) {
+                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
+                    }
+                }
+            } catch {
+                // Network error — fail-open, don't block
+            }
+        };
+
+        const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            const prev = appStateRef.current;
+            appStateRef.current = nextState;
+            // Trigger when app comes to foreground from background/inactive
+            if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+                checkVersionOnForeground();
+            }
+        });
+
+        return () => subscription.remove();
+    }, []);
+
     const initApp = async () => {
         try {
+            // 0. Setup OS notifications (request permission, create Android channel)
+            setupNotifications().catch(() => {});
+
             // 1. VERSION CHECK — block outdated APKs immediately
             try {
                 const vRes = await fetch(
                     `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
-                    { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined }
+                    { signal: (AbortSignal as any).timeout ? (AbortSignal as any).timeout(6000) : undefined }
                 );
                 if (vRes.ok) {
                     const vData = await vRes.json();
@@ -347,7 +647,7 @@ function AppInner() {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-App-Version': 'v2.3' 
+                    'X-App-Version': APP_VERSION
                 },
                 body: JSON.stringify({ licenseKey: lic.licenseKey, machineId: deviceHash }),
             });
@@ -456,6 +756,94 @@ export default function App() {
     );
 }
 
+// ── Notification overlay styles ───────────────────────────────
+const { width: SW } = require('react-native').Dimensions.get('window');
+const notifStyles = require('react-native').StyleSheet.create({
+    backdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(10,8,30,0.82)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    card: {
+        width: SW - 40,
+        borderRadius: 24,
+        overflow: 'hidden',
+        backgroundColor: '#1e1b4b',
+        borderWidth: 1.5,
+        borderColor: 'rgba(167,139,250,0.5)',
+        shadowColor: '#6366f1',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.5,
+        shadowRadius: 24,
+        elevation: 20,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 12,
+    },
+    avatarRing: {
+        width: 46, height: 46, borderRadius: 23,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    avatar: {
+        width: 38, height: 38, borderRadius: 19,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    avatarText:  { fontSize: 20 },
+    headerTitle: { color: '#fff', fontSize: 14, fontWeight: '800' },
+    headerSub:   { color: 'rgba(196,181,253,0.85)', fontSize: 11, marginTop: 2 },
+    closeBtn: {
+        width: 32, height: 32, borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    cardBody: { padding: 18 },
+    msgLabel: {
+        fontSize: 10, fontWeight: '800', color: '#a5b4fc',
+        letterSpacing: 1.5, marginBottom: 10,
+    },
+    msgBox: {
+        backgroundColor: 'rgba(99,102,241,0.18)',
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
+        borderRadius: 14, padding: 14, marginBottom: 14,
+    },
+    msgText: { color: '#e2e8f0', fontSize: 14, lineHeight: 22 },
+    progressTrack: {
+        height: 3, backgroundColor: 'rgba(99,102,241,0.2)',
+        borderRadius: 2, marginBottom: 16, overflow: 'hidden',
+    },
+    progressBar: {
+        height: 3,
+        backgroundColor: '#818cf8',
+        borderRadius: 2,
+        width: '100%',
+    },
+    btnRow:      { flexDirection: 'row', gap: 10 },
+    btnReply: {
+        flex: 1, backgroundColor: '#6366f1',
+        borderRadius: 14, paddingVertical: 13,
+        alignItems: 'center',
+        shadowColor: '#6366f1', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4, shadowRadius: 8, elevation: 6,
+    },
+    btnReplyText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+    btnLater: {
+        paddingHorizontal: 18, paddingVertical: 13,
+        borderRadius: 14,
+        backgroundColor: 'rgba(99,102,241,0.15)',
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
+        alignItems: 'center',
+    },
+    btnLaterText: { color: '#c4b5fd', fontSize: 13, fontWeight: '700' },
+});
+
 const styles = StyleSheet.create({
     splash: {
         flex: 1, justifyContent: 'center', alignItems: 'center',
@@ -504,3 +892,5 @@ const styles = StyleSheet.create({
     },
     tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 });
+
+

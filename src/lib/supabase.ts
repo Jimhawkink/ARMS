@@ -272,6 +272,69 @@ export async function getTrueTotalBalance(tenantId: number): Promise<{ total: nu
     }
 }
 
+// ============================================================
+// PENALTIES — Fetch & update late penalties
+// ============================================================
+
+export interface TenantPenaltyInfo {
+    totalPenalty: number;
+    penaltyDays: number;
+    penaltyDates: string[];
+    dailyRate: number;
+}
+
+export async function getTenantActivePenalties(tenantId: number): Promise<TenantPenaltyInfo> {
+    try {
+        const res = await fetch(`https://arms-opal.vercel.app/api/penalties?tenantId=${tenantId}`);
+        if (!res.ok) throw new Error('Failed to fetch penalties');
+        const data = await res.json();
+        return {
+            totalPenalty: Number(data.total_penalty) || 0,
+            penaltyDays: Number(data.penalty_days) || 0,
+            penaltyDates: Array.isArray(data.penalty_dates) ? data.penalty_dates : [],
+            dailyRate: Number(data.daily_rate) || 100,
+        };
+    } catch (e: any) {
+        console.log('[ARMS APK] getTenantActivePenalties error:', e.message);
+        return { totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 };
+    }
+}
+
+export async function markTenantPenaltiesPaid(tenantId: number, month?: string): Promise<boolean> {
+    try {
+        const res = await fetch(`https://arms-opal.vercel.app/api/penalties`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'mark_paid', tenantId, month }),
+        });
+        const data = await res.json();
+        return !!data?.ok;
+    } catch (e: any) {
+        console.log('[ARMS APK] markTenantPenaltiesPaid error:', e.message);
+        return false;
+    }
+}
+
+export async function getTenantTotalDebt(tenantId: number): Promise<{
+    rentBalance: number;
+    penaltyTotal: number;
+    totalDue: number;
+    penaltyDays: number;
+    effectiveRent: number;
+}> {
+    const [{ total, effectiveRent }, penInfo] = await Promise.all([
+        getTrueTotalBalance(tenantId),
+        getTenantActivePenalties(tenantId),
+    ]);
+    return {
+        rentBalance: total,
+        penaltyTotal: penInfo.totalPenalty,
+        totalDue: total + penInfo.totalPenalty,
+        penaltyDays: penInfo.penaltyDays,
+        effectiveRent,
+    };
+}
+
 
 
 // ============================================================
@@ -1349,17 +1412,38 @@ export async function getPendingAgreement(tenantId: number): Promise<TenantAgree
         .order('created_at', { ascending: false }).limit(1);
     return (data && data.length > 0) ? data[0] as TenantAgreement : null;
 }
+
 export async function getAgreementTemplate(locationId?: number): Promise<AgreementTemplate | null> {
-    let query = supabase.from('arms_agreement_templates').select('*').eq('is_active', true)
-        .order('created_at', { ascending: false }).limit(1);
-    if (locationId) query = (query as any).eq('location_id', locationId);
-    const { data } = await query;
+    // FIXED: Don't filter by location_id — just get the first active template
+    // (locationId filter caused "no content" when template had no location set)
+    const { data } = await supabase
+        .from('arms_agreement_templates')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1);
     return (data && data.length > 0) ? data[0] as AgreementTemplate : null;
 }
-export async function signAgreement(agreementId: number, signatureText: string, deviceInfo: string, snapshot: string): Promise<void> {
+
+export async function signAgreement(
+    agreementId: number,
+    signatureText: string,
+    deviceInfo: string,
+    snapshot: string,
+    signatureImageBase64?: string,
+): Promise<void> {
     const { error } = await supabase.from('arms_tenant_agreements').update({
-        accepted: true, signed_at: new Date().toISOString(),
-        signature_text: signatureText, device_info: deviceInfo, agreement_snapshot: snapshot,
+        accepted: true,
+        signed_at: new Date().toISOString(),
+        signature_text: signatureText,
+        device_info: deviceInfo,
+        agreement_snapshot: snapshot,
+        // Store base64 signature image in the snapshot if provided
+        ...(signatureImageBase64 ? { signature_text: signatureImageBase64 } : {}),
     }).eq('agreement_id', agreementId);
     if (error) throw new Error(error.message);
 }
+
+
+
+
