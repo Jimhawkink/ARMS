@@ -219,12 +219,12 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
     const fmtK = (n: number) => `KES ${n.toLocaleString('en-KE')}`;
     const inputCls = 'text-[11px] border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition w-full';
 
-    // Gradient palette cycles per till index
+    // Gradient palette — VIVID electric colors, NOT dull
     const GRADIENTS = [
-        { bg: 'linear-gradient(135deg,#047857 0%,#059669 55%,#10b981 100%)', shadow: 'rgba(4,120,87,0.45)',   sub: 'text-emerald-100' },
-        { bg: 'linear-gradient(135deg,#1d4ed8 0%,#2563eb 55%,#3b82f6 100%)', shadow: 'rgba(29,78,216,0.45)',  sub: 'text-blue-100'    },
-        { bg: 'linear-gradient(135deg,#7c3aed 0%,#8b5cf6 55%,#a78bfa 100%)', shadow: 'rgba(124,58,237,0.45)', sub: 'text-violet-100'  },
-        { bg: 'linear-gradient(135deg,#b45309 0%,#d97706 55%,#f59e0b 100%)', shadow: 'rgba(180,83,9,0.45)',   sub: 'text-amber-100'   },
+        { bg: 'linear-gradient(135deg,#059669 0%,#10b981 40%,#34d399 100%)', shadow: 'rgba(5,150,105,0.55)',   sub: 'text-emerald-50' },
+        { bg: 'linear-gradient(135deg,#2563eb 0%,#3b82f6 40%,#60a5fa 100%)', shadow: 'rgba(37,99,235,0.55)',   sub: 'text-blue-50'    },
+        { bg: 'linear-gradient(135deg,#c026d3 0%,#e879f9 40%,#f0abfc 100%)', shadow: 'rgba(192,38,211,0.55)',  sub: 'text-fuchsia-50' },
+        { bg: 'linear-gradient(135deg,#d97706 0%,#f59e0b 40%,#fcd34d 100%)', shadow: 'rgba(217,119,6,0.55)',   sub: 'text-amber-50'   },
     ];
 
     return (
@@ -280,10 +280,10 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
                 )}
             </div>
 
-            {/* Dynamic Till Cards — one per configured till in DB */}
-            <div className={`p-4 grid gap-3 ${tills.length === 1 ? 'grid-cols-1 max-w-sm' : tills.length >= 3 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
+            {/* Dynamic Till Cards — compact, vivid */}
+            <div className={`px-3 pb-3 pt-1 grid gap-2 ${tills.length === 1 ? 'grid-cols-1 max-w-xs' : tills.length >= 3 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
                 {tills.length === 0 && !loading && (
-                    <p className="text-slate-400 text-xs text-center py-6 col-span-full">
+                    <p className="text-slate-400 text-xs text-center py-4 col-span-full">
                         No KCB tills configured yet. Go to <strong>Settings → KCB Buni Tills</strong> to set up.
                     </p>
                 )}
@@ -292,41 +292,41 @@ function KcbTillsDashPanel({ allTenants }: { allTenants: any[] }) {
                     return (
                         <div key={till.accountNumber}
                             onClick={() => router.push(`/dashboard/kcb-transactions?till=${till.accountNumber}`)}
-                            className="relative overflow-hidden rounded-2xl p-4 cursor-pointer hover:-translate-y-0.5 transition-all duration-200 group"
-                            style={{ background: g.bg, boxShadow: `0 8px 24px -6px ${g.shadow}` }}>
-                            {/* Glass orbs */}
-                            <div className="absolute -right-4 -bottom-4 w-20 h-20 rounded-full bg-white/10 group-hover:scale-125 transition-transform duration-500" />
-                            <div className="absolute right-2 top-2 w-10 h-10 rounded-full border border-white/15" />
+                            className="relative overflow-hidden rounded-xl p-3 cursor-pointer hover:-translate-y-0.5 transition-all duration-200 group"
+                            style={{ background: g.bg, boxShadow: `0 6px 18px -4px ${g.shadow}` }}>
+                            {/* Glass orb */}
+                            <div className="absolute -right-3 -bottom-3 w-14 h-14 rounded-full bg-white/15 group-hover:scale-125 transition-transform duration-500" />
 
                             <div className="relative z-10">
                                 {/* Title row */}
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className="text-xl">🏦</span>
-                                    <div>
-                                        <p className="text-white font-black text-xs tracking-widest uppercase">
-                                            KCB Till {idx + 1}
-                                        </p>
-                                        <p className={`${g.sub} text-[9px] font-medium`}>
-                                            Account · {till.accountNumber}
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-base">🏦</span>
+                                        <div>
+                                            <p className="text-white font-black text-[11px] tracking-widest uppercase leading-none">
+                                                KCB Till {idx + 1}
+                                            </p>
+                                            <p className={`${g.sub} text-[8px] font-semibold opacity-90`}>
+                                                {till.accountNumber}
                                         </p>
                                     </div>
                                 </div>
 
                                 {/* Amount */}
-                                <p className={`text-white font-black text-xl sm:text-2xl tracking-tight leading-none ${loading ? 'opacity-40' : ''}`}>
+                                <p className={`text-white font-black text-base sm:text-lg tracking-tight leading-none ${loading ? 'opacity-40' : ''}`}>
                                     {fmtK(till.totalAmount)}
                                 </p>
-                                <p className={`${g.sub} text-[10px] mt-1 font-medium`}>
-                                    {till.txnCount} completed transaction{till.txnCount !== 1 ? 's' : ''}
+                                <p className={`${g.sub} text-[9px] mt-0.5 font-semibold opacity-90`}>
+                                    {till.txnCount} txn{till.txnCount !== 1 ? 's' : ''}
                                 </p>
                             </div>
 
-                            {/* Footer: show linked locations from DB config */}
-                            <div className="relative z-10 mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between gap-2">
-                                <span className="text-[9px] text-white/80 font-bold uppercase tracking-wider truncate">
+                            {/* Footer: linked locations from DB config */}
+                            <div className="relative z-10 mt-2 pt-2 border-t border-white/25 flex items-center justify-between gap-1">
+                                <span className="text-[8px] text-white/85 font-bold uppercase tracking-wider truncate">
                                     {till.locations.join(' · ')}
                                 </span>
-                                <span className="text-[9px] text-white/70 font-bold flex-shrink-0">View →</span>
+                                <span className="text-[8px] text-white/70 font-bold flex-shrink-0">View →</span>
                             </div>
                         </div>
                     );
