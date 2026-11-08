@@ -14,18 +14,10 @@ export const dynamic = 'force-dynamic';
 // ── Firebase Admin (singleton) ───────────────────────────────
 function getFirebaseMessaging() {
     if (!admin.apps.length) {
-        // Fix private key: Vercel stores \n as literal \\n — fix both cases
-        const rawKey = process.env.FIREBASE_PRIVATE_KEY || '';
-        const privateKey = rawKey.includes('\\n')
-            ? rawKey.replace(/\\n/g, '\n')
-            : rawKey;
-
+        // Parse entire service account JSON from one env var
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
         admin.initializeApp({
-            credential: admin.credential.cert({
-                projectId:   process.env.FIREBASE_PROJECT_ID!,
-                clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
-                privateKey,
-            }),
+            credential: admin.credential.cert(serviceAccount),
         });
     }
     return admin.messaging();
