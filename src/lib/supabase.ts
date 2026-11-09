@@ -5,9 +5,9 @@ import { createClient } from '@supabase/supabase-js';
 // Same Supabase instance as the ARMS web app
 // ============================================================
 
-const SUPABASE_URL = 'https://zkamuhvrmazozhudbtuw.supabase.co';
+const SUPABASE_URL = 'https://gcebwzpcyeltzhyqefxo.supabase.co';
 const SUPABASE_ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprYW11aHZybWF6b3podWRidHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyNDE3OTYsImV4cCI6MjA5OTgxNzc5Nn0.Y6gkKQDWuLxcmhlYTZvKase7MzDO_Ehymitef6OE5JU';
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdjZWJ3enBjeWVsdHpoeXFlZnhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQyMzgwMzEsImV4cCI6MjEwOTgxNDAzMX0.P00UQaQW9KvKKQ5dlG1O8Ciqg4M2E8_SbQOGe9tqP6Q';
 
 // M-Pesa STK Push — uses the ARMS web app API (Vercel-hosted Next.js)
 // Credentials are resolved per-unit from arms_unit_mpesa_config on the server
