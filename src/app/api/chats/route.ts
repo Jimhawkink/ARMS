@@ -121,14 +121,35 @@ async function buildInboxResponse(tenants: any[]) {
 // POST — save message + send FCM push to tenant's phone
 export async function POST(req: NextRequest) {
     try {
-        const { tenant_id, sender, message } = await req.json();
+        const { tenant_id, sender, message, idempotency_key } = await req.json();
         if (!tenant_id || !sender || !message?.trim())
             return NextResponse.json({ error: 'tenant_id, sender, message required' }, { status: 400 });
+
+        // ── IDEMPOTENCY: prevent duplicate inserts from Vercel retries ──
+        // If an idempotency_key is provided, check if we already inserted this message
+        if (idempotency_key) {
+            const { data: existing } = await supabase
+                .from('arms_chats')
+                .select('chat_id, tenant_id, sender, message')
+                .eq('idempotency_key', idempotency_key)
+                .maybeSingle();
+            if (existing) {
+                // Already inserted — return the existing record (no duplicate FCM)
+                return NextResponse.json({ message: existing, deduplicated: true });
+            }
+        }
 
         // Save message
         const { data, error } = await supabase
             .from('arms_chats')
-            .insert([{ tenant_id, sender, message: message.trim(), is_read: sender === 'admin', created_at: new Date().toISOString() }])
+            .insert([{
+                tenant_id,
+                sender,
+                message: message.trim(),
+                is_read: sender === 'admin',
+                created_at: new Date().toISOString(),
+                ...(idempotency_key ? { idempotency_key } : {}),
+            }])
             .select().single();
 
         if (error) throw error;
@@ -153,9 +174,11 @@ export async function POST(req: NextRequest) {
                         },
                         android: {
                             priority: 'high',
+                            collapseKey: `arms_chat_${tenant_id}`, // ← dedup: replaces previous unread notif for same tenant
                             notification: {
                                 channelId: 'arms_messages',
                                 sound: 'default',
+                                tag: `arms_chat_${tenant_id}`, // ← dedup: Android replaces notification with same tag
                             },
                         },
                         data: {
