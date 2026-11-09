@@ -245,8 +245,6 @@ export default function ChatThreadPage() {
         setShowCanned(false);
 
         const tempId = Date.now();
-        // Idempotency key — unique per send attempt, prevents duplicate FCM if Vercel retries
-        const idempotency_key = `${tenantId}_${tempId}_${Math.random().toString(36).slice(2, 8)}`;
         const optimistic: ChatMessage = {
             chat_id: tempId,
             tenant_id: tenantId,
@@ -263,7 +261,7 @@ export default function ChatThreadPage() {
             const res = await fetch('/api/chats', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tenant_id: tenantId, sender: 'admin', message: text, idempotency_key }),
+                body: JSON.stringify({ tenant_id: tenantId, sender: 'admin', message: text }),
             });
             if (!res.ok) throw new Error('Failed to send');
             inputRef.current?.focus();
