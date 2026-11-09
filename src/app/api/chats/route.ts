@@ -7,20 +7,22 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 
 export const dynamic = 'force-dynamic';
 
 // ── Firebase Admin (singleton) ───────────────────────────────
 function getFirebaseMessaging() {
-    if (!admin.apps.length) {
+    if (!getApps().length) {
         // Parse entire service account JSON from one env var
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+        const raw = process.env.FIREBASE_SERVICE_ACCOUNT || '{}';
+        const serviceAccount = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        initializeApp({
+            credential: cert(serviceAccount),
         });
     }
-    return admin.messaging();
+    return getMessaging();
 }
 
 export async function GET(req: NextRequest) {
