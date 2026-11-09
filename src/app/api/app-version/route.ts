@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 // ============================================================
 
 const LATEST_VERSION = 'v4.18';
-const MIN_VERSION    = 'v4.18'; // v4.18 â€” FCM notification tap opens Chat + premium icon
+const MIN_VERSION    = 'v4.14'; // Don't block — tenants update via QR code scan
 const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
 
