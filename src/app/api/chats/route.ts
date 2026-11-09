@@ -1,9 +1,9 @@
 // ============================================================
-// ARMS — Chat API v4 (FCM Push via Firebase Admin SDK)
-// GET  /api/chats?tenantId=X   → messages + tenant info
-// GET  /api/chats?inbox=1      → ALL tenants + chat data
-// POST /api/chats              → send message + FCM push
-// PATCH /api/chats?tenantId=X → mark tenant messages as read
+// ARMS Chat API v4 (FCM Push via Firebase Admin SDK)
+// GET  /api/chats?tenantId=X   - messages + tenant info
+// GET  /api/chats?inbox=1      - ALL tenants + chat data
+// POST /api/chats              - send message + FCM push
+// PATCH /api/chats?tenantId=X - mark tenant messages as read
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
@@ -12,7 +12,7 @@ import { getMessaging } from 'firebase-admin/messaging';
 
 export const dynamic = 'force-dynamic';
 
-// ── Firebase Admin (singleton) ───────────────────────────────
+// Firebase Admin (singleton)
 function getFirebaseMessaging() {
     if (!getApps().length) {
         // Parse entire service account JSON from one env var
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
         const tenantId = searchParams.get('tenantId');
         const inbox    = searchParams.get('inbox');
 
-        // ── INBOX ──────────────────────────────────────────────
+        // INBOX
         if (inbox) {
             const { data: tenants, error: tErr } = await supabase
                 .from('arms_tenants')
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
             return buildInboxResponse(tenants || []);
         }
 
-        // ── THREAD ─────────────────────────────────────────────
+        // THREAD
         if (tenantId) {
             const tid = parseInt(tenantId);
             const [{ data: messages }, { data: tenant }] = await Promise.all([
@@ -58,13 +58,13 @@ export async function GET(req: NextRequest) {
                     tenant_id:     tenant.tenant_id,
                     tenant_name:   tenant.tenant_name,
                     phone:         tenant.phone || '',
-                    unit_name:     (tenant as any).arms_units?.unit_name || '—',
-                    location_name: (tenant as any).arms_locations?.location_name || '—',
+                    unit_name:     (tenant as any).arms_units?.unit_name || '-',
+                    location_name: (tenant as any).arms_locations?.location_name || '-',
                 } : null,
             });
         }
 
-        // ── UNREAD COUNT ────────────────────────────────────────
+        // UNREAD COUNT
         const { count } = await supabase
             .from('arms_chats').select('*', { count: 'exact', head: true })
             .eq('is_read', false).eq('sender', 'tenant');
@@ -97,8 +97,8 @@ async function buildInboxResponse(tenants: any[]) {
             tenant_id:           t.tenant_id,
             tenant_name:         t.tenant_name || 'Unknown',
             phone:               t.phone || '',
-            unit_name:           t.arms_units?.unit_name || '—',
-            location_name:       t.arms_locations?.location_name || '—',
+            unit_name:           t.arms_units?.unit_name || '-',
+            location_name:       t.arms_locations?.location_name || '-',
             last_message:        chat?.last_message || null,
             last_message_sender: chat?.last_message_sender || null,
             last_message_at:     chat?.last_message_at || null,
@@ -118,7 +118,7 @@ async function buildInboxResponse(tenants: any[]) {
     return NextResponse.json({ inbox: merged });
 }
 
-// POST — save message + send FCM push to tenant's phone
+// POST - save message + send FCM push to tenant's phone
 export async function POST(req: NextRequest) {
     try {
         const { tenant_id, sender, message } = await req.json();
@@ -154,16 +154,16 @@ export async function POST(req: NextRequest) {
                     await fcm.send({
                         token: fcmToken,
                         notification: {
-                            title: '💬 ARMS — New Message',
+                            title: 'ARMS - New Message',
                             body: message.trim(),
                         },
                         android: {
                             priority: 'high',
-                            collapseKey: `arms_chat_${tenant_id}`, // ← dedup: replaces previous unread notif for same tenant
+                            collapseKey: `arms_chat_${tenant_id}`,
                             notification: {
                                 channelId: 'arms_messages',
                                 sound: 'default',
-                                tag: `arms_chat_${tenant_id}`, // ← dedup: Android replaces notification with same tag
+                                tag: `arms_chat_${tenant_id}`,
                             },
                         },
                         data: {
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
     }
 }
 
-// PATCH — mark as read
+// PATCH - mark as read
 export async function PATCH(req: NextRequest) {
     try {
         const tenantId = new URL(req.url).searchParams.get('tenantId');
