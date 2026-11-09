@@ -6,9 +6,9 @@ import { NextResponse } from 'next/server';
 // ============================================================
 
 const LATEST_VERSION = 'v4.18';
-const MIN_VERSION    = 'v4.14'; // Don't block � tenants update via QR code scan
-const DOWNLOAD_URL    = 'https://arms-opal.vercel.app/api/dl';
-const QR_PRINT_URL    = 'https://arms-opal.vercel.app/qr-print';
+const MIN_VERSION    = 'v4.14'; // Soft gate - tenants update via QR code scan
+const DOWNLOAD_URL   = 'https://arms-opal.vercel.app/api/dl';
+const QR_PRINT_URL   = 'https://arms-opal.vercel.app/qr-print';
 
 function parseVersion(v: string): number[] {
     return v.replace(/^v/, '').split('.').map(n => parseInt(n) || 0);
@@ -23,7 +23,7 @@ function isVersionOutdated(appVersion: string, minVersion: string): boolean {
         if (a < m) return true;
         if (a > m) return false;
     }
-    return false; // equal → not outdated
+    return false;
 }
 
 export async function GET(req: Request) {
@@ -33,13 +33,13 @@ export async function GET(req: Request) {
     const outdated = isVersionOutdated(appVersion, MIN_VERSION);
 
     return NextResponse.json({
-        latestVersion:  LATEST_VERSION,
-        minVersion:     MIN_VERSION,
-        forceUpdate:    outdated,
-        downloadUrl:    DOWNLOAD_URL,
-        qrPrintUrl:     QR_PRINT_URL,
+        latestVersion: LATEST_VERSION,
+        minVersion:    MIN_VERSION,
+        forceUpdate:   outdated,
+        downloadUrl:   DOWNLOAD_URL,
+        qrPrintUrl:    QR_PRINT_URL,
         message: outdated
-            ? `⚠️ Your app (${appVersion}) is outdated. Please scan the QR code on your door to download the latest version (${LATEST_VERSION}).`
-            : `✅ App is up to date (${appVersion})`,
+            ? `Your app (${appVersion}) is outdated. Please download the latest version (${LATEST_VERSION}).`
+            : `App is up to date (${appVersion})`,
     });
 }

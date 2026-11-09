@@ -6,7 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 import {
     FiMessageSquare, FiSearch, FiX, FiPlus, FiRefreshCw, FiSend,
     FiCheck, FiPhone, FiHome, FiMapPin, FiClock, FiCornerDownRight,
-    FiUserCheck, FiFilter, FiCheckCircle, FiChevronRight, FiAlertCircle
+    FiUserCheck, FiFilter, FiCheckCircle, FiChevronRight, FiAlertCircle,
+    FiRadio, FiUsers, FiZap,
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
@@ -35,7 +36,350 @@ interface AllTenant {
     location_name: string;
 }
 
+interface Location {
+    location_id: number;
+    location_name: string;
+}
+
 type FilterTab = 'all' | 'unread' | 'admin';
+type BroadcastMode = 'all' | 'location' | 'select';
+
+// ── BROADCAST MODAL ──────────────────────────────────────────────────────────
+function BroadcastModal({ onClose, inbox }: { onClose: () => void; inbox: ChatThread[] }) {
+    const [mode, setMode] = useState<BroadcastMode>('all');
+    const [message, setMessage] = useState('');
+    const [locations, setLocations] = useState<Location[]>([]);
+    const [selectedLocation, setSelectedLocation] = useState<number | null>(null);
+    const [selectedTenants, setSelectedTenants] = useState<Set<number>>(new Set());
+    const [tenantSearch, setTenantSearch] = useState('');
+    const [sending, setSending] = useState(false);
+    const [result, setResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+    const textRef = useRef<HTMLTextAreaElement>(null);
+
+    // All tenants from inbox (every tenant that has ever chatted or exists)
+    const allTenants: AllTenant[] = useMemo(() =>
+        inbox.map(t => ({
+            tenant_id: t.tenant_id,
+            tenant_name: t.tenant_name,
+            phone: t.phone,
+            unit_name: t.unit_name,
+            location_name: t.location_name,
+        })), [inbox]);
+
+    // Unique locations from inbox
+    const locationList = useMemo(() => {
+        const seen = new Map<string, Location>();
+        inbox.forEach(t => {
+            if (t.location_name && !seen.has(t.location_name)) {
+                // Use location_name as key — we pass it to filter on server
+                seen.set(t.location_name, { location_id: 0, location_name: t.location_name });
+            }
+        });
+        return Array.from(seen.values());
+    }, [inbox]);
+
+    const filteredTenants = useMemo(() => {
+        const q = tenantSearch.toLowerCase();
+        return allTenants.filter(t =>
+            !q ||
+            t.tenant_name.toLowerCase().includes(q) ||
+            t.unit_name.toLowerCase().includes(q) ||
+            t.location_name.toLowerCase().includes(q)
+        );
+    }, [allTenants, tenantSearch]);
+
+    const toggleTenant = (id: number) => {
+        setSelectedTenants(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAll = () => {
+        if (selectedTenants.size === filteredTenants.length) {
+            setSelectedTenants(new Set());
+        } else {
+            setSelectedTenants(new Set(filteredTenants.map(t => t.tenant_id)));
+        }
+    };
+
+    const targetCount = useMemo(() => {
+        if (mode === 'all') return inbox.length;
+        if (mode === 'location') {
+            const loc = locationList.find(l => l.location_id === selectedLocation || l.location_name === locationList.find(x => x.location_id === selectedLocation)?.location_name);
+            return inbox.filter(t => t.location_name === loc?.location_name).length;
+        }
+        return selectedTenants.size;
+    }, [mode, inbox, locationList, selectedLocation, selectedTenants]);
+
+    const canSend = message.trim().length > 0 && (
+        mode === 'all' ||
+        (mode === 'location' && selectedLocation !== null) ||
+        (mode === 'select' && selectedTenants.size > 0)
+    );
+
+    const send = async () => {
+        if (!canSend || sending) return;
+        setSending(true);
+        setResult(null);
+        try {
+            let body: any = { message: message.trim() };
+            if (mode === 'all') {
+                body.all = true;
+            } else if (mode === 'location') {
+                // Pass tenant_ids for the selected location (derived from inbox)
+                const locName = locationList.find(l => l.location_id === selectedLocation)?.location_name;
+                const ids = inbox.filter(t => t.location_name === locName).map(t => t.tenant_id);
+                body.tenant_ids = ids;
+            } else {
+                body.tenant_ids = Array.from(selectedTenants);
+            }
+
+            const res = await fetch('/api/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Broadcast failed');
+            setResult(data);
+            toast.success(`📣 Sent to ${data.sent} tenant${data.sent !== 1 ? 's' : ''}!`);
+        } catch (e: any) {
+            toast.error(e.message || 'Broadcast failed');
+        } finally {
+            setSending(false);
+        }
+    };
+
+    // Assign numeric IDs to location entries for selection
+    const locationsWithId = useMemo(() =>
+        locationList.map((l, i) => ({ ...l, location_id: i + 1 })),
+        [locationList]
+    );
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backdropFilter: 'blur(12px)', background: 'rgba(15,23,42,0.6)' }}>
+            <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+
+                {/* Header */}
+                <div className="bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center">
+                            <FiRadio className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                            <h2 className="text-white font-extrabold text-lg leading-tight">Broadcast Message</h2>
+                            <p className="text-white/70 text-xs font-medium">Send to multiple tenants at once · FCM push included</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="w-9 h-9 rounded-xl bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition text-lg font-bold">×</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-5">
+
+                    {/* Mode Selector */}
+                    <div>
+                        <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Send To</p>
+                        <div className="grid grid-cols-3 gap-2">
+                            {([
+                                { key: 'all', icon: '👥', label: 'All Tenants', sub: `${inbox.length} total` },
+                                { key: 'location', icon: '📍', label: 'By Property', sub: `${locationsWithId.length} locations` },
+                                { key: 'select', icon: '☑️', label: 'Pick Tenants', sub: 'Choose manually' },
+                            ] as const).map(opt => (
+                                <button
+                                    key={opt.key}
+                                    onClick={() => { setMode(opt.key); setSelectedLocation(null); setSelectedTenants(new Set()); }}
+                                    className={`flex flex-col items-center gap-1.5 p-4 rounded-2xl border-2 transition-all text-center ${
+                                        mode === opt.key
+                                            ? 'border-violet-500 bg-violet-50 shadow-sm shadow-violet-100'
+                                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                                    }`}
+                                >
+                                    <span className="text-2xl">{opt.icon}</span>
+                                    <span className={`text-xs font-extrabold ${mode === opt.key ? 'text-violet-700' : 'text-slate-700'}`}>{opt.label}</span>
+                                    <span className="text-[10px] text-slate-400 font-medium">{opt.sub}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Location Picker */}
+                    {mode === 'location' && (
+                        <div>
+                            <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Select Property / Location</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {locationsWithId.map(loc => (
+                                    <button
+                                        key={loc.location_id}
+                                        onClick={() => setSelectedLocation(loc.location_id)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                                            selectedLocation === loc.location_id
+                                                ? 'border-violet-500 bg-violet-50'
+                                                : 'border-slate-200 hover:border-slate-300 bg-white'
+                                        }`}
+                                    >
+                                        <span className="text-lg">🏢</span>
+                                        <div>
+                                            <p className={`text-sm font-bold ${selectedLocation === loc.location_id ? 'text-violet-700' : 'text-slate-800'}`}>{loc.location_name}</p>
+                                            <p className="text-[11px] text-slate-400">{inbox.filter(t => t.location_name === loc.location_name).length} tenants</p>
+                                        </div>
+                                        {selectedLocation === loc.location_id && (
+                                            <FiCheckCircle className="ml-auto w-4 h-4 text-violet-600 flex-shrink-0" />
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tenant Picker */}
+                    {mode === 'select' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Select Tenants</p>
+                                <button onClick={toggleAll} className="text-xs font-bold text-violet-600 hover:text-violet-800 transition">
+                                    {selectedTenants.size === filteredTenants.length ? 'Deselect All' : 'Select All'}
+                                </button>
+                            </div>
+                            <div className="relative mb-2">
+                                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
+                                <input
+                                    type="text"
+                                    value={tenantSearch}
+                                    onChange={e => setTenantSearch(e.target.value)}
+                                    placeholder="Search tenant, room, location..."
+                                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 bg-slate-50"
+                                />
+                            </div>
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-52 overflow-y-auto">
+                                {filteredTenants.map((t, i) => (
+                                    <label
+                                        key={t.tenant_id}
+                                        className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-violet-50 ${i > 0 ? 'border-t border-slate-100' : ''} ${selectedTenants.has(t.tenant_id) ? 'bg-violet-50/60' : 'bg-white'}`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedTenants.has(t.tenant_id)}
+                                            onChange={() => toggleTenant(t.tenant_id)}
+                                            className="w-4 h-4 rounded accent-violet-600 cursor-pointer"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-bold text-slate-800 truncate">{t.tenant_name}</p>
+                                            <p className="text-[11px] text-slate-400 font-medium">{t.unit_name} · {t.location_name}</p>
+                                        </div>
+                                        {selectedTenants.has(t.tenant_id) && <FiCheck className="w-3.5 h-3.5 text-violet-600 flex-shrink-0" />}
+                                    </label>
+                                ))}
+                                {filteredTenants.length === 0 && (
+                                    <div className="py-8 text-center text-sm text-slate-400">No tenants found</div>
+                                )}
+                            </div>
+                            {selectedTenants.size > 0 && (
+                                <p className="text-xs text-violet-700 font-bold mt-2 flex items-center gap-1">
+                                    <FiCheckCircle className="w-3 h-3" /> {selectedTenants.size} tenant{selectedTenants.size !== 1 ? 's' : ''} selected
+                                </p>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Message Box */}
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Message</p>
+                            <span className="text-[11px] text-slate-400">{message.length}/500</span>
+                        </div>
+                        <textarea
+                            ref={textRef}
+                            value={message}
+                            onChange={e => setMessage(e.target.value.slice(0, 500))}
+                            placeholder="Type your broadcast message here... (e.g. Rent reminder, maintenance notice, event announcement)"
+                            rows={4}
+                            className="w-full p-4 rounded-2xl border border-slate-200 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100 transition resize-none bg-slate-50 focus:bg-white"
+                        />
+
+                        {/* Quick templates */}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                            {[
+                                'Reminder: Rent is due on the 1st of every month.',
+                                'Maintenance work scheduled tomorrow 9AM–5PM. Expect brief water disruption.',
+                                'Please ensure your room is kept clean. Inspection on Friday.',
+                                'WiFi will be down for maintenance tonight 10PM–12AM.',
+                            ].map((tpl, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => setMessage(tpl)}
+                                    className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-violet-100 hover:text-violet-700 text-slate-600 border border-slate-200 hover:border-violet-300 transition font-medium"
+                                >
+                                    {tpl.slice(0, 30)}…
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Result */}
+                    {result && (
+                        <div className={`rounded-2xl p-4 flex items-center gap-3 ${result.failed === 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'}`}>
+                            <span className="text-2xl">{result.failed === 0 ? '✅' : '⚠️'}</span>
+                            <div>
+                                <p className={`text-sm font-extrabold ${result.failed === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                    Sent to {result.sent} of {result.total} tenants
+                                </p>
+                                {result.failed > 0 && (
+                                    <p className="text-xs text-amber-600">{result.failed} failed (no FCM token or network error)</p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+                    <div className="text-xs text-slate-500 font-medium">
+                        {canSend ? (
+                            <span className="text-violet-700 font-bold flex items-center gap-1.5">
+                                <FiUsers className="w-3.5 h-3.5" />
+                                Will send to {targetCount} tenant{targetCount !== 1 ? 's' : ''}
+                            </span>
+                        ) : (
+                            <span className="text-slate-400">Fill in the message {mode !== 'all' ? '& select recipients' : ''}</span>
+                        )}
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition">
+                            {result ? 'Close' : 'Cancel'}
+                        </button>
+                        <button
+                            onClick={send}
+                            disabled={!canSend || sending}
+                            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-extrabold text-white transition-all shadow-md ${
+                                canSend && !sending
+                                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 shadow-violet-500/25 hover:scale-[1.02] active:scale-95'
+                                    : 'bg-slate-300 cursor-not-allowed shadow-none'
+                            }`}
+                        >
+                            {sending ? (
+                                <>
+                                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                    </svg>
+                                    <span>Sending...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <FiRadio className="w-4 h-4" />
+                                    <span>Broadcast Now</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 function formatTime(dt: string) {
     if (!dt) return '';
@@ -243,6 +587,7 @@ export default function ChatsPage() {
     const [quickMsg, setQuickMsg] = useState('');
     const [sendingQuick, setSendingQuick] = useState(false);
     const [showNewChat, setShowNewChat] = useState(false);
+    const [showBroadcast, setShowBroadcast] = useState(false);
     const router = useRouter();
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -318,6 +663,11 @@ export default function ChatsPage() {
 
     return (
         <div className="flex flex-col h-full min-h-screen bg-slate-50 font-sans animate-fadeIn">
+            {/* Broadcast Modal */}
+            {showBroadcast && (
+                <BroadcastModal onClose={() => setShowBroadcast(false)} inbox={inbox} />
+            )}
+
             {/* New Chat Modal */}
             {showNewChat && (
                 <NewChatModal
@@ -370,6 +720,13 @@ export default function ChatsPage() {
 
                         {/* Top Action Buttons */}
                         <div className="flex items-center gap-2.5">
+                            <button
+                                onClick={() => setShowBroadcast(true)}
+                                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-xs font-extrabold shadow-md shadow-violet-500/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                                <FiRadio className="w-4 h-4" />
+                                <span>Broadcast</span>
+                            </button>
                             <button
                                 onClick={() => setShowNewChat(true)}
                                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-extrabold shadow-md shadow-indigo-500/20 hover:scale-[1.02] active:scale-95 transition-all"
