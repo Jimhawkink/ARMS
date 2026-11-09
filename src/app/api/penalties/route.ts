@@ -3,11 +3,17 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-function localDateStr(d: Date = new Date()) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Always compute dates in Nairobi time (EAT = UTC+3)
+function getNairobiNow(): Date {
+    const now = new Date();
+    // Shift by +3 hours to get Nairobi local time
+    return new Date(now.getTime() + 3 * 60 * 60 * 1000);
 }
-function localMonthStr(d: Date = new Date()) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function localDateStr(d: Date = getNairobiNow()) {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+function localMonthStr(d: Date = getNairobiNow()) {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
 // ─── POST /api/penalties  → generate penalties starting from 6th ────────────────
@@ -16,8 +22,8 @@ export async function POST(req: NextRequest) {
         const body = await req.json().catch(() => ({}));
         const locationId: number | undefined = body.locationId ? Number(body.locationId) : undefined;
 
-        const today = new Date();
-        const todayDay = today.getDate();
+        const today = getNairobiNow();
+        const todayDay = today.getUTCDate();
         const currentMonth = localMonthStr(today);
 
         // Rent is due by 5th. Daily penalties of KES 100 begin strictly on 6th!
@@ -36,10 +42,11 @@ export async function POST(req: NextRequest) {
             .eq('billing_month', currentMonth)
             .eq('penalty_date', `${currentMonth}-05`);
 
-        // Build penalty dates starting from 6th of this month through today
+        // Build penalty dates starting from 6th of this month through today (Nairobi time)
         const penaltyDates: string[] = [];
         for (let d = 6; d <= todayDay; d++) {
-            penaltyDates.push(localDateStr(new Date(today.getFullYear(), today.getMonth(), d)));
+            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
+            penaltyDates.push(`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
         }
 
         // Fetch unpaid/partial bills for CURRENT month only (November 2026 onwards)
@@ -102,8 +109,8 @@ export async function GET(req: NextRequest) {
 
         // ── Single Tenant Mode (e.g. for Payment Modal) ────────────────────────
         if (tenantId) {
-            const today = new Date();
-            const todayDay = today.getDate();
+            const today = getNairobiNow();
+            const todayDay = today.getUTCDate();
             const currentMonth = localMonthStr(today);
 
             // Auto-generate penalty for tenant if today >= 6th and tenant has unpaid bill for current month
@@ -121,7 +128,8 @@ export async function GET(req: NextRequest) {
                     if (curBill) {
                         const neededRows = [];
                         for (let d = 6; d <= todayDay; d++) {
-                            const dateStr = localDateStr(new Date(today.getFullYear(), today.getMonth(), d));
+                            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
+                            const dateStr = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                             neededRows.push({
                                 tenant_id: tenantId,
                                 billing_id: curBill.billing_id,
@@ -183,8 +191,8 @@ export async function GET(req: NextRequest) {
         if (billErr) return NextResponse.json({ error: billErr.message }, { status: 500 });
 
         // 1.5 Auto-sync penalties for current month if date >= 6th
-        const today = new Date();
-        const todayDay = today.getDate();
+        const today = getNairobiNow();
+        const todayDay = today.getUTCDate();
         const currentMonth = localMonthStr(today);
 
         if (todayDay >= 6 && month === currentMonth && bills && bills.length > 0) {
@@ -194,7 +202,8 @@ export async function GET(req: NextRequest) {
                     const syncRows: any[] = [];
                     for (const b of unpaidBills) {
                         for (let d = 6; d <= todayDay; d++) {
-                            const dateStr = localDateStr(new Date(today.getFullYear(), today.getMonth(), d));
+                            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
+                            const dateStr = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                             syncRows.push({
                                 tenant_id: b.tenant_id,
                                 billing_id: b.billing_id,
