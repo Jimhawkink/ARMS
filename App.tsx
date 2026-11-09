@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
 import { setupNotifications, pushNotification } from './src/lib/notifications';
+import messaging from '@react-native-firebase/messaging';
 import { APP_VERSION } from './src/lib/version';
 
 
@@ -286,6 +287,31 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
         created_at: string;
     } | null>(null);
     const lastMsgIdRef = useRef<number>(0);
+
+    // ── FCM NOTIFICATION TAP HANDLER ─────────────────────────
+    // Opens the Chat tab when user taps an ARMS push notification
+    useEffect(() => {
+        // Case 1: App is in BACKGROUND — user taps notification
+        const unsubBg = messaging().onNotificationOpenedApp(remoteMessage => {
+            const screen = remoteMessage?.data?.screen;
+            if (screen === 'Chat' || screen === 'chat') {
+                setActiveTab('chat');
+                setChatNotif(null);
+            }
+        });
+
+        // Case 2: App was CLOSED — user taps notification to open app
+        messaging().getInitialNotification().then(remoteMessage => {
+            if (remoteMessage) {
+                const screen = remoteMessage?.data?.screen;
+                if (screen === 'Chat' || screen === 'chat') {
+                    setActiveTab('chat');
+                }
+            }
+        });
+
+        return () => { unsubBg(); };
+    }, []);
 
     // Check for pending agreement on mount
     useEffect(() => {
