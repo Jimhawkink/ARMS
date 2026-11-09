@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 // ============================================================
 
 const LATEST_VERSION = 'v4.19';
-const MIN_VERSION    = 'v4.14'; // Soft gate - tenants update via QR code scan
+const MIN_VERSION    = 'v4.19'; // Force all tenants to update to latest
 const DOWNLOAD_URL   = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL   = 'https://arms-opal.vercel.app/qr-print';
 
