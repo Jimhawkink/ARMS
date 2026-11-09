@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
             const batch = rows.slice(i, i + 200);
             const { data, error } = await supabaseAdmin
                 .from('arms_penalties')
-                .upsert(batch, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: true })
+                .upsert(batch, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: false })
                 .select('penalty_id');
             if (!error) generated += (data?.length || 0);
             else skipped += batch.length;
@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
                         if (neededRows.length > 0) {
                             await supabaseAdmin
                                 .from('arms_penalties')
-                                .upsert(neededRows, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: true });
+                                .upsert(neededRows, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: false });
                         }
                     }
                 } catch {
@@ -221,7 +221,7 @@ export async function GET(req: NextRequest) {
                                 .from('arms_penalties')
                                 .upsert(syncRows.slice(i, i + 200), {
                                     onConflict: 'tenant_id,billing_month,penalty_date',
-                                    ignoreDuplicates: true,
+                                    ignoreDuplicates: false,
                                 });
                         }
                     }
