@@ -10,6 +10,7 @@ import {
     getTenantActivePenalties, TenantPenaltyInfo,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
+import { setupNotifications, registerPushToken } from '../lib/notifications';
 
 interface Props {
     session: TenantSession;
@@ -93,6 +94,15 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     }, [session.tenant_id]);
 
     useEffect(() => { loadData(); }, [loadData]);
+
+    // Request notification permission + start Realtime listener every time dashboard loads
+    useEffect(() => {
+        setupNotifications()
+            .then(granted => {
+                if (granted) registerPushToken(session.tenant_id);
+            })
+            .catch(() => {});
+    }, [session.tenant_id]);
 
     const onRefresh = () => { setRefreshing(true); loadData(true); };
 

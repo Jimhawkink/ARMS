@@ -12,6 +12,7 @@ import {
     clearRateLimit, saveSession, saveStaffSession,
 } from '../lib/security';
 import { MobileLicense } from './LicenseScreen';
+import { setupNotifications, registerPushToken } from '../lib/notifications';
 
 interface Props {
     onLoginSuccess: (session: TenantSession | StaffSession) => void;
@@ -142,6 +143,8 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
             if (tenant) {
                 await clearRateLimit();
                 await saveSession(tenant);
+                // Register push token — web app can now ring this phone like WhatsApp
+                setupNotifications().then(() => registerPushToken(tenant.tenant_id)).catch(() => {});
                 setIsLoading(false);
                 setCheckingLicense(true);
                 try {

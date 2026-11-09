@@ -169,8 +169,8 @@ function ChatThread({
             })
             .subscribe();
 
-        // 15s poll fallback
-        const iv = setInterval(loadMessages, 15000);
+        // 60s poll fallback (reduced from 15s to cut Supabase egress)
+        const iv = setInterval(loadMessages, 60000);
         return () => { sb.removeChannel(channel); clearInterval(iv); };
     }, [tenantId]);
 
@@ -407,8 +407,8 @@ export default function StaffChatScreen({ staff }: StaffChatScreenProps) {
             .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'arms_chats' },
                 () => loadInbox(true))
             .subscribe();
-        // Poll every 15s
-        const iv = setInterval(() => loadInbox(true), 15000);
+        // Poll every 60s (reduced from 15s to cut Supabase egress)
+        const iv = setInterval(() => loadInbox(true), 60000);
         return () => { sb.removeChannel(channel); clearInterval(iv); };
     }, []);
 
