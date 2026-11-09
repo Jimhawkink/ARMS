@@ -185,16 +185,31 @@ export default function ChatThreadPage() {
                 },
                 (payload: any) => {
                     const newMsg = payload.new as ChatMessage;
-                    setMessages(prev => {
-                        if (prev.find(m => m.chat_id === newMsg.chat_id)) return prev;
-                        return [...prev, newMsg];
-                    });
-                    // Show alert for NEW tenant message
-                    if (newMsg.sender === 'tenant') {
+
+                    if (newMsg.sender === 'admin') {
+                        // Replace the optimistic bubble (tempId > 1e12) with the real DB record
+                        setMessages(prev => {
+                            const hasReal = prev.find(m => m.chat_id === newMsg.chat_id);
+                            if (hasReal) return prev;
+                            // Swap out the pending optimistic entry for this message text
+                            const optimisticIdx = prev.findIndex(
+                                m => m.chat_id > 1_000_000_000_000 && m.message === newMsg.message && m.sender === 'admin'
+                            );
+                            if (optimisticIdx !== -1) {
+                                const next = [...prev];
+                                next[optimisticIdx] = newMsg;
+                                return next;
+                            }
+                            return [...prev, newMsg];
+                        });
+                    } else {
+                        // Tenant message — always add if not already present
+                        setMessages(prev => {
+                            if (prev.find(m => m.chat_id === newMsg.chat_id)) return prev;
+                            return [...prev, newMsg];
+                        });
                         setNewMsgAlert(newMsg);
                         setTimeout(() => setNewMsgAlert(null), 8000);
-                    } else {
-                        markRead();
                     }
                     setTimeout(() => scrollToBottom(), 120);
                 }
