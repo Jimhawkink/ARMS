@@ -272,7 +272,12 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
 }
 
 // ─── Main App Shell with bottom tabs ─────────────────────────
-function AppShell({ session, onLogout, pendingChatRef }: { session: TenantSession; onLogout: () => void; pendingChatRef: React.MutableRefObject<boolean> }) {
+function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
+    session: TenantSession;
+    onLogout: () => void;
+    pendingChat: boolean;
+    onChatHandled: () => void;
+}) {
     const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
     const [unreadAdmin, setUnreadAdmin] = useState(0);
@@ -288,14 +293,15 @@ function AppShell({ session, onLogout, pendingChatRef }: { session: TenantSessio
     } | null>(null);
     const lastMsgIdRef = useRef<number>(0);
 
-    // ── FCM NOTIFICATION TAP — check ref set by AppInner on mount ──
-    // AppInner captures the tap before AppShell mounts (cold-start safe)
+    // ── FCM NOTIFICATION TAP — fires for BOTH cold-start AND background taps ──
+    // pendingChat is STATE from AppInner — changes trigger this effect every time
     useEffect(() => {
-        if (pendingChatRef.current) {
-            pendingChatRef.current = false;
+        if (pendingChat) {
             setActiveTab('chat');
+            setChatNotif(null);
+            onChatHandled(); // reset state so next tap works too
         }
-    }, []); // runs once when AppShell first mounts
+    }, [pendingChat]); // re-runs whenever AppInner sets pendingChat=true
 
     // Check for pending agreement on mount
     useEffect(() => {
@@ -545,24 +551,23 @@ function AppInner() {
     const [forceUpdate, setForceUpdate] = useState<{ required: boolean; latestVersion: string }>({ required: false, latestVersion: APP_VERSION });
 
     // ── FCM NOTIFICATION TAP — must live here (AppInner) for cold-start ──
-    // AppShell doesn't mount until after NavigationContainer, so cold-start
-    // notifications would be missed if handlers lived there.
-    const pendingChatRef = useRef<boolean>(false);
+    // Uses STATE (not ref) so AppShell re-renders on background taps too.
+    const [pendingChat, setPendingChat] = useState(false);
 
     useEffect(() => {
-        // Case 1: App in BACKGROUND — user taps notification
+        // Case 1: App in BACKGROUND — user taps notification → AppShell already mounted
         const unsubBg = messaging().onNotificationOpenedApp(remoteMessage => {
             const screen = remoteMessage?.data?.screen;
             if (screen === 'Chat' || screen === 'chat') {
-                pendingChatRef.current = true;
+                setPendingChat(true); // triggers re-render → AppShell useEffect fires
             }
         });
-        // Case 2: App was CLOSED (cold start) — user taps notification
+        // Case 2: App was CLOSED (cold start) — AppShell not yet mounted
         messaging().getInitialNotification().then(remoteMessage => {
             if (remoteMessage) {
                 const screen = remoteMessage?.data?.screen;
                 if (screen === 'Chat' || screen === 'chat') {
-                    pendingChatRef.current = true;
+                    setPendingChat(true);
                 }
             }
         });
@@ -769,7 +774,7 @@ function AppInner() {
                     <Stack.Screen name="Main">
                         {() => staffSession
                             ? <StaffShell staff={staffSession} onLogout={handleLogout} />
-                            : <AppShell session={session!} onLogout={handleLogout} pendingChatRef={pendingChatRef} />
+                            : <AppShell session={session!} onLogout={handleLogout} pendingChat={pendingChat} onChatHandled={() => setPendingChat(false)} />
                         }
                     </Stack.Screen>
                 )}
