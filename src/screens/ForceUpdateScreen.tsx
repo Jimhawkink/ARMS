@@ -1,21 +1,21 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, Platform, Linking,
+    StatusBar, TouchableOpacity, BackHandler, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 
 const { width, height } = Dimensions.get('window');
 
-const APK_BASE_URL  = 'https://arms-opal.vercel.app/ARMSTenantApp-';
+const APK_DOWNLOAD_URL = 'https://arms-opal.vercel.app/api/dl';
+
 const CONFETTI_COLORS = [
     '#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#ff6bb5',
     '#c77dff','#f9844a','#00b4d8','#f72585','#4cc9f0',
 ];
 
-// ── Simple confetti piece ──────────────────────────────────────────────────
 function ConfettiPiece({ color, delay, startX }: { color: string; delay: number; startX: number }) {
     const translateY = useRef(new Animated.Value(-30)).current;
     const translateX = useRef(new Animated.Value(0)).current;
@@ -57,7 +57,6 @@ function ConfettiPiece({ color, delay, startX }: { color: string; delay: number;
     );
 }
 
-// ── Confetti burst (60 pieces) ─────────────────────────────────────────────
 function Confetti() {
     const pieces = Array.from({ length: 60 }, (_, i) => ({
         id: i,
@@ -72,137 +71,123 @@ function Confetti() {
     );
 }
 
-// ── Main screen ────────────────────────────────────────────────────────────
 interface Props { currentVersion: string; latestVersion: string; }
 
 type Phase = 'idle' | 'downloading' | 'installing' | 'done' | 'error';
 
 export default function ForceUpdateScreen({ currentVersion, latestVersion }: Props) {
-    const slideUp = useRef(new Animated.Value(60)).current;
-    const fadeIn  = useRef(new Animated.Value(0)).current;
-    const pulse   = useRef(new Animated.Value(1)).current;
-    const checkScale = useRef(new Animated.Value(0)).current;
-    const successFade = useRef(new Animated.Value(0)).current;
+    const slideUp  = useRef(new Animated.Value(60)).current;
+    const fadeIn   = useRef(new Animated.Value(0)).current;
+    const pulse    = useRef(new Animated.Value(1)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
 
-    const [phase,    setPhase]    = useState<Phase>('idle');
-    const [progress, setProgress] = useState(0);   // 0–1
-    const [errMsg,   setErrMsg]   = useState('');
-    const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
+    const [phase, setPhase]       = useState<Phase>('idle');
+    const [progress, setProgress] = useState(0);
+    const [errorMsg, setErrorMsg] = useState('');
 
-    // Entrance animation
+    // Disable Android back button — cannot skip update
+    useEffect(() => {
+        const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+        return () => sub.remove();
+    }, []);
+
+    // Entrance animation + auto-trigger download after 1s
     useEffect(() => {
         Animated.parallel([
             Animated.timing(slideUp, { toValue: 0, duration: 600, useNativeDriver: true }),
             Animated.timing(fadeIn,  { toValue: 1, duration: 600, useNativeDriver: true }),
         ]).start();
 
-        // Pulse button
         Animated.loop(Animated.sequence([
-            Animated.timing(pulse, { toValue: 1.04, duration: 900, useNativeDriver: true }),
-            Animated.timing(pulse, { toValue: 1,    duration: 900, useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 1.05, duration: 800, useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 1,    duration: 800, useNativeDriver: true }),
         ])).start();
 
-        // Auto-start download immediately upon opening
-        const t = setTimeout(() => startDownload(), 300);
+        // Auto-start download after 1s
+        const t = setTimeout(() => startDownload(), 1000);
         return () => clearTimeout(t);
     }, []);
 
-    const startDownload = useCallback(async () => {
-        if (phase === 'downloading' || phase === 'done') return;
-        setPhase('downloading');
-        setProgress(0);
-        setErrMsg('');
+    // Animate progress bar
+    useEffect(() => {
+        Animated.timing(progressAnim, {
+            toValue: progress,
+            duration: 200,
+            useNativeDriver: false,
+        }).start();
+    }, [progress]);
 
-        const apkUrl      = `${APK_BASE_URL}${latestVersion}.apk`;
-        const localPath   = `${FileSystem.cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
-
-        // Delete any previous partial download
-        try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch (_) {}
-
-        const downloadResumable = FileSystem.createDownloadResumable(
-            apkUrl,
-            localPath,
-            {},
-            (downloadProgress) => {
-                const pct = downloadProgress.totalBytesWritten /
-                            downloadProgress.totalBytesExpectedToWrite;
-                setProgress(isNaN(pct) ? 0 : Math.min(pct, 1));
-            }
-        );
-
+    const startDownload = async () => {
         try {
+            setPhase('downloading');
+            setProgress(0);
+            setErrorMsg('');
+
+            const apkPath = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + 'ARMSTenantApp-latest.apk';
+
+            // Delete old cached APK if exists
+            const fileInfo = await FileSystem.getInfoAsync(apkPath);
+            if (fileInfo.exists) await FileSystem.deleteAsync(apkPath, { idempotent: true });
+
+            // Download with progress tracking
+            const downloadResumable = FileSystem.createDownloadResumable(
+                APK_DOWNLOAD_URL,
+                apkPath,
+                {},
+                (data) => {
+                    if (data.totalBytesExpectedToWrite > 0) {
+                        const pct = data.totalBytesWritten / data.totalBytesExpectedToWrite;
+                        setProgress(Math.min(pct, 1));
+                    }
+                }
+            );
+
             const result = await downloadResumable.downloadAsync();
-            if (!result?.uri) throw new Error('Download failed — no file saved');
+
+            if (!result?.uri) throw new Error('Download failed — no file received');
 
             setProgress(1);
-            setDownloadedUri(result.uri);
             setPhase('installing');
 
-            // Small pause to show 100%, then trigger install
-            await new Promise(r => setTimeout(r, 800));
-            await launchInstall(result.uri);
+            // Get a content URI Android can use for install intent
+            const contentUri = await FileSystem.getContentUriAsync(result.uri);
 
-            // Show celebration
+            // Trigger Android install prompt — "Do you want to install?"
+            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: contentUri,
+                flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+                type: 'application/vnd.android.package-archive',
+            });
+
             setPhase('done');
-            Animated.sequence([
-                Animated.spring(checkScale,  { toValue: 1, useNativeDriver: true, bounciness: 15 }),
-                Animated.timing(successFade, { toValue: 1, duration: 400, useNativeDriver: true }),
-            ]).start();
-
-        } catch (e: any) {
-            setErrMsg(e?.message || 'Download failed. Please try again.');
+        } catch (err: any) {
+            console.warn('[ForceUpdate download error]', err);
+            setErrorMsg(err?.message || 'Download failed. Please try again.');
             setPhase('error');
         }
-    }, [phase, latestVersion]);
-
-    const launchInstall = async (fileUri: string) => {
-        if (Platform.OS !== 'android') return;
-        // Convert file:// URI to content:// via IntentLauncher
-        const contentUri = await FileSystem.getContentUriAsync(fileUri);
-        await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
-            data: contentUri,
-            flags: 1,   // FLAG_GRANT_READ_URI_PERMISSION
-            type: 'application/vnd.android.package-archive',
-        });
     };
 
-    // ── PHASE: SUCCESS / CELEBRATION ──────────────────────────────────────
     if (phase === 'done') {
         return (
             <View style={styles.root}>
                 <StatusBar barStyle="light-content" backgroundColor="#0a2e1a" />
                 <LinearGradient colors={['#0a2e1a','#0d4a28','#0a2e1a']} style={StyleSheet.absoluteFillObject} />
                 <Confetti />
-                <Animated.View style={[styles.card, styles.successCard, { opacity: successFade }]}>
-                    {/* Big animated check */}
-                    <Animated.View style={[styles.checkWrap, { transform: [{ scale: checkScale }] }]}>
-                        <LinearGradient colors={['#22c55e','#16a34a']} style={styles.checkCircle}>
-                            <Text style={styles.checkMark}>✓</Text>
-                        </LinearGradient>
-                        {/* Orbit ring */}
-                        <View style={styles.orbitRing} />
-                    </Animated.View>
-
-                    <Text style={styles.successTitle}>Update Successful! 🎉</Text>
+                <View style={[styles.card, styles.successCard]}>
+                    <LinearGradient colors={['#22c55e','#16a34a']} style={styles.checkCircle}>
+                        <Text style={styles.checkMark}>✓</Text>
+                    </LinearGradient>
+                    <Text style={styles.successTitle}>All Done! 🎉</Text>
                     <Text style={styles.successSub}>
-                        ARMS {latestVersion} is ready.{'\n'}Complete the installation to enjoy the new version!
+                        ARMS {latestVersion} is installing.{'\n'}Follow the install prompt, then re-open the app!
                     </Text>
-
-                    <View style={styles.confettiRow}>
-                        {['🎊','✨','🎆','🌟','🎉','🎇','⭐','💫'].map((e, i) => (
-                            <Text key={i} style={styles.confettiEmoji}>{e}</Text>
-                        ))}
-                    </View>
-
-                    <TouchableOpacity onPress={() => downloadedUri ? launchInstall(downloadedUri) : startDownload()} style={styles.reinstallBtn}>
-                        <Text style={styles.reinstallBtnText}>📲 Complete Installation Now</Text>
-                    </TouchableOpacity>
-                </Animated.View>
+                </View>
             </View>
         );
     }
 
-    // ── PHASE: IDLE / DOWNLOADING / INSTALLING / ERROR ────────────────────
+    const progressPercent = Math.round(progress * 100);
+
     return (
         <View style={styles.root}>
             <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
@@ -218,117 +203,106 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                     </LinearGradient>
                 </View>
 
-                <Text style={styles.title}>⚡ Updating ARMS App</Text>
-                <Text style={styles.subtitle}>
-                    {phase === 'downloading'
-                        ? `Downloading ${latestVersion} update… ${Math.round(progress * 100)}%\nPlease wait for update to finish!`
-                        : phase === 'installing'
-                        ? `Installing ${latestVersion}… Please wait for update to finish!`
-                        : phase === 'error'
-                        ? '⚠️ Update download paused. Tap below to retry.'
-                        : 'A new update is available. Please wait while updates finish!'}
-                </Text>
+                <Text style={styles.title}>Update Required</Text>
 
                 {/* Version pills */}
                 <View style={styles.versionRow}>
                     <View style={styles.versionPill}>
-                        <Text style={styles.versionLabel}>Your Version</Text>
+                        <Text style={styles.versionLabel}>YOUR VERSION</Text>
                         <Text style={styles.versionBad}>{currentVersion}</Text>
                     </View>
                     <Text style={styles.arrow}>→</Text>
                     <View style={[styles.versionPill, styles.versionPillGood]}>
-                        <Text style={styles.versionLabel}>New Version</Text>
+                        <Text style={styles.versionLabel}>NEW VERSION</Text>
                         <Text style={styles.versionGood}>{latestVersion}</Text>
                     </View>
                 </View>
 
                 <View style={styles.divider} />
 
-                {/* ── PROGRESS BAR (shown while downloading / installing) ── */}
-                {(phase === 'downloading' || phase === 'installing') && (
-                    <View style={styles.progressWrap}>
+                {/* DOWNLOADING PHASE — progress bar */}
+                {phase === 'downloading' && (
+                    <View style={styles.progressSection}>
+                        <View style={styles.progressHeader}>
+                            <Text style={styles.progressLabel}>⬇️  Downloading update...</Text>
+                            <Text style={styles.progressPct}>{progressPercent}%</Text>
+                        </View>
                         <View style={styles.progressTrack}>
-                            <Animated.View style={[
-                                styles.progressFill,
-                                { width: `${Math.round(progress * 100)}%` as any },
-                                phase === 'installing' && styles.progressFillGreen,
-                            ]} />
+                            <Animated.View style={[styles.progressFill, {
+                                width: progressAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: ['0%', '100%'],
+                                }),
+                            }]} />
                         </View>
-                        <View style={styles.progressRow}>
-                            <Text style={styles.progressPct}>
-                                {phase === 'installing' ? '✅ Installing…' : `${Math.round(progress * 100)}%`}
-                            </Text>
-                            <Text style={styles.progressSize}>
-                                {phase === 'installing' ? '' : `${Math.round(progress * 67.3)} / 67.3 MB`}
-                            </Text>
-                        </View>
+                        <Text style={styles.progressSub}>
+                            Please wait — do not close the app
+                        </Text>
                     </View>
                 )}
 
-                {/* ── DOWNLOAD BUTTON (shown when idle or error) ── */}
-                {(phase === 'idle' || phase === 'error') && (
+                {/* INSTALLING PHASE */}
+                {phase === 'installing' && (
+                    <View style={styles.statusBox}>
+                        <Text style={styles.statusEmoji}>📲</Text>
+                        <Text style={styles.statusBig}>Install prompt opening...</Text>
+                        <Text style={styles.statusSub}>
+                            Tap <Text style={styles.bold}>Install</Text> when Android asks you to confirm.
+                        </Text>
+                    </View>
+                )}
+
+                {/* ERROR PHASE */}
+                {phase === 'error' && (
+                    <View style={[styles.statusBox, styles.errorBox]}>
+                        <Text style={styles.statusEmoji}>⚠️</Text>
+                        <Text style={[styles.statusBig, { color: '#fca5a5' }]}>Download failed</Text>
+                        <Text style={[styles.statusSub, { color: '#fca5a5' }]}>{errorMsg}</Text>
+                    </View>
+                )}
+
+                {/* How-to steps — only show when idle */}
+                {phase === 'idle' && (
+                    <View style={styles.steps}>
+                        {[
+                            { emoji: '⬇️', text: 'APK downloads inside the app' },
+                            { emoji: '📲', text: 'Install prompt appears automatically' },
+                            { emoji: '✅', text: 'Tap Install → re-open ARMS' },
+                        ].map((s, i) => (
+                            <View key={i} style={styles.step}>
+                                <View style={styles.stepNum}>
+                                    <Text style={styles.stepNumText}>{i + 1}</Text>
+                                </View>
+                                <Text style={styles.stepText}>{s.emoji}  {s.text}</Text>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
+                <View style={styles.divider} />
+
+                {/* Primary button */}
+                {(phase === 'idle') && (
                     <Animated.View style={{ width: '100%', transform: [{ scale: pulse }] }}>
                         <TouchableOpacity onPress={startDownload} activeOpacity={0.85}>
-                            <LinearGradient colors={['#6366f1','#4f46e5','#3730a3']} style={styles.downloadBtn}>
-                                <Text style={styles.downloadBtnEmoji}>⬇️</Text>
-                                <Text style={styles.downloadBtnText}>
-                                    {phase === 'error' ? 'Retry Download' : `Download ${latestVersion} Now`}
-                                </Text>
+                            <LinearGradient colors={['#6366f1','#4f46e5','#3730a3']} style={styles.btn}>
+                                <Text style={styles.btnEmoji}>⬇️</Text>
+                                <Text style={styles.btnText}>Download & Install Now</Text>
                             </LinearGradient>
                         </TouchableOpacity>
                     </Animated.View>
                 )}
 
+                {/* Retry button on error */}
                 {phase === 'error' && (
-                    <Text style={styles.errMsg}>{errMsg}</Text>
+                    <TouchableOpacity onPress={startDownload} style={styles.retryBtn}>
+                        <Text style={styles.retryBtnText}>🔄 Retry Download</Text>
+                    </TouchableOpacity>
                 )}
 
                 <Text style={styles.hint}>
-                    {phase === 'downloading' || phase === 'installing'
-                        ? '⚡ Please wait for updates to finish! Your account, login, and data remain safe.'
-                        : 'After installing, re-open ARMS to continue.'}
+                    🔒 Your account, rent history & data are safe.
                 </Text>
-
-                {/* Steps */}
-                <View style={styles.steps}>
-                    {[
-                        ['⬇️', 'Download starts automatically'],
-                        ['📲', 'Install prompt appears automatically'],
-                        ['✅', 'Re-open ARMS — you\'re done!'],
-                    ].map(([emoji, text], i) => (
-                        <View key={i} style={styles.step}>
-                            <View style={[
-                                styles.stepNum,
-                                phase === 'downloading' && i === 0 && styles.stepNumActive,
-                                phase === 'installing'  && i === 1 && styles.stepNumActive,
-                            ]}>
-                                <Text style={styles.stepNumText}>{i + 1}</Text>
-                            </View>
-                            <Text style={styles.stepText}>{emoji}  {text}</Text>
-                        </View>
-                    ))}
-                </View>
-
-                {/* Direct Browser Download Fallback */}
-                <TouchableOpacity
-                    onPress={() => Linking.openURL('https://arms-opal.vercel.app/api/dl')}
-                    activeOpacity={0.8}
-                    style={{
-                        marginTop: 14,
-                        paddingVertical: 10,
-                        paddingHorizontal: 16,
-                        borderRadius: 14,
-                        backgroundColor: 'rgba(99,102,241,0.15)',
-                        borderWidth: 1,
-                        borderColor: 'rgba(99,102,241,0.3)',
-                        width: '100%',
-                        alignItems: 'center',
-                    }}
-                >
-                    <Text style={{ color: '#a5b4fc', fontSize: 12, fontWeight: 'bold' }}>
-                        🌐 Alternative: Download via Browser (Fast)
-                    </Text>
-                </TouchableOpacity>
             </Animated.View>
         </View>
     );
@@ -347,12 +321,11 @@ const styles = StyleSheet.create({
     },
     successCard: { borderColor:'rgba(34,197,94,0.4)', shadowColor:'#22c55e' },
 
-    iconWrap: { marginBottom:16 },
-    iconGrad: { width:72, height:72, borderRadius:22, alignItems:'center', justifyContent:'center', elevation:8 },
+    iconWrap:  { marginBottom:16 },
+    iconGrad:  { width:72, height:72, borderRadius:22, alignItems:'center', justifyContent:'center', elevation:8 },
     iconEmoji: { fontSize:36 },
 
-    title:    { fontSize:24, fontWeight:'900', color:'#f8fafc', marginBottom:8, textAlign:'center' },
-    subtitle: { fontSize:13, color:'#94a3b8', textAlign:'center', lineHeight:20, marginBottom:20 },
+    title: { fontSize:24, fontWeight:'900', color:'#f8fafc', marginBottom:16, textAlign:'center' },
 
     versionRow: { flexDirection:'row', alignItems:'center', gap:12, marginBottom:20 },
     versionPill: { backgroundColor:'rgba(239,68,68,0.12)', borderRadius:12, paddingHorizontal:14, paddingVertical:8, alignItems:'center', borderWidth:1, borderColor:'rgba(239,68,68,0.3)' },
@@ -362,44 +335,42 @@ const styles = StyleSheet.create({
     versionGood:  { fontSize:15, fontWeight:'900', color:'#10b981' },
     arrow: { fontSize:20, color:'#475569' },
 
-    divider: { width:'100%', height:1, backgroundColor:'#334155', marginBottom:20 },
+    divider: { width:'100%', height:1, backgroundColor:'#334155', marginVertical:16 },
 
     // Progress bar
-    progressWrap:  { width:'100%', marginBottom:20 },
-    progressTrack: { width:'100%', height:16, backgroundColor:'rgba(255,255,255,0.08)', borderRadius:8, overflow:'hidden', marginBottom:8 },
-    progressFill:  { height:'100%', backgroundColor:'#6366f1', borderRadius:8 },
-    progressFillGreen: { backgroundColor:'#22c55e' },
-    progressRow:   { flexDirection:'row', justifyContent:'space-between' },
-    progressPct:   { fontSize:13, fontWeight:'700', color:'#a5b4fc' },
-    progressSize:  { fontSize:11, color:'#64748b' },
+    progressSection: { width:'100%', marginBottom:16 },
+    progressHeader:  { flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:10 },
+    progressLabel:   { fontSize:14, fontWeight:'700', color:'#a5b4fc' },
+    progressPct:     { fontSize:14, fontWeight:'900', color:'#6366f1' },
+    progressTrack:   { width:'100%', height:10, backgroundColor:'rgba(99,102,241,0.15)', borderRadius:5, overflow:'hidden', borderWidth:1, borderColor:'rgba(99,102,241,0.2)' },
+    progressFill:    { height:'100%', backgroundColor:'#6366f1', borderRadius:5 },
+    progressSub:     { fontSize:11, color:'#64748b', textAlign:'center', marginTop:8 },
 
-    // Download button
-    downloadBtn: { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:10, paddingVertical:18, borderRadius:18, width:'100%', marginBottom:12, elevation:12 },
-    downloadBtnEmoji: { fontSize:22 },
-    downloadBtnText:  { fontSize:17, fontWeight:'900', color:'#fff', letterSpacing:0.5 },
+    statusBox:   { width:'100%', backgroundColor:'rgba(99,102,241,0.1)', borderRadius:16, padding:16, alignItems:'center', marginBottom:16, borderWidth:1, borderColor:'rgba(99,102,241,0.2)' },
+    errorBox:    { backgroundColor:'rgba(239,68,68,0.1)', borderColor:'rgba(239,68,68,0.3)' },
+    statusEmoji: { fontSize:32, marginBottom:8 },
+    statusBig:   { fontSize:16, fontWeight:'800', color:'#c7d2fe', textAlign:'center', marginBottom:8 },
+    statusText:  { fontSize:14, fontWeight:'700', color:'#a5b4fc', textAlign:'center' },
+    statusSub:   { fontSize:13, color:'#94a3b8', textAlign:'center', lineHeight:20 },
+    bold:        { fontWeight:'900', color:'#c7d2fe' },
 
-    errMsg: { fontSize:12, color:'#f87171', textAlign:'center', marginBottom:8 },
-    hint:   { fontSize:11, color:'#64748b', textAlign:'center', marginBottom:16, lineHeight:16 },
+    steps:    { width:'100%', gap:10 },
+    step:     { flexDirection:'row', alignItems:'center', gap:10 },
+    stepNum:  { width:28, height:28, borderRadius:9, backgroundColor:'rgba(99,102,241,0.15)', borderWidth:1, borderColor:'rgba(99,102,241,0.3)', alignItems:'center', justifyContent:'center' },
+    stepNumText:   { fontSize:11, fontWeight:'900', color:'#a5b4fc' },
+    stepText:      { fontSize:12, color:'#cbd5e1', fontWeight:'500', flex:1 },
 
-    steps:      { width:'100%', gap:8 },
-    step:       { flexDirection:'row', alignItems:'center', gap:10 },
-    stepNum:    { width:26, height:26, borderRadius:8, backgroundColor:'rgba(99,102,241,0.2)', borderWidth:1, borderColor:'rgba(99,102,241,0.4)', alignItems:'center', justifyContent:'center' },
-    stepNumActive: { backgroundColor:'rgba(99,102,241,0.5)', borderColor:'#6366f1' },
-    stepNumText: { fontSize:11, fontWeight:'900', color:'#a5b4fc' },
-    stepText:    { fontSize:12, color:'#cbd5e1', fontWeight:'500', flex:1 },
+    btn:      { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:10, paddingVertical:18, borderRadius:18, width:'100%', elevation:12 },
+    btnEmoji: { fontSize:22 },
+    btnText:  { fontSize:17, fontWeight:'900', color:'#fff', letterSpacing:0.5 },
 
-    // Success screen
-    checkWrap:   { marginBottom:20, alignItems:'center', justifyContent:'center' },
-    checkCircle: { width:100, height:100, borderRadius:50, alignItems:'center', justifyContent:'center', elevation:12 },
+    retryBtn:     { width:'100%', paddingVertical:12, borderRadius:14, backgroundColor:'rgba(99,102,241,0.15)', borderWidth:1, borderColor:'rgba(99,102,241,0.3)', alignItems:'center', marginTop:8 },
+    retryBtnText: { color:'#a5b4fc', fontWeight:'700', fontSize:14 },
+
+    hint: { fontSize:11, color:'#475569', textAlign:'center', marginTop:14 },
+
+    checkCircle: { width:100, height:100, borderRadius:50, alignItems:'center', justifyContent:'center', elevation:12, marginBottom:20 },
     checkMark:   { fontSize:52, color:'white', fontWeight:'900', lineHeight:60 },
-    orbitRing:   { position:'absolute', width:120, height:120, borderRadius:60, borderWidth:2, borderColor:'rgba(34,197,94,0.3)', borderStyle:'dashed' },
-
     successTitle: { fontSize:26, fontWeight:'900', color:'#f0fdf4', textAlign:'center', marginBottom:10 },
-    successSub:   { fontSize:14, color:'#86efac', textAlign:'center', lineHeight:22, marginBottom:20 },
-
-    confettiRow: { flexDirection:'row', flexWrap:'wrap', justifyContent:'center', gap:6, marginBottom:20 },
-    confettiEmoji: { fontSize:24 },
-
-    reinstallBtn: { backgroundColor:'rgba(34,197,94,0.15)', borderWidth:1, borderColor:'rgba(34,197,94,0.4)', paddingVertical:14, paddingHorizontal:24, borderRadius:14 },
-    reinstallBtnText: { color:'#4ade80', fontWeight:'700', fontSize:14 },
+    successSub:   { fontSize:14, color:'#86efac', textAlign:'center', lineHeight:22 },
 });
