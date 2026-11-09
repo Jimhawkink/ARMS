@@ -55,7 +55,8 @@ export async function POST(req: NextRequest) {
             .select('billing_id, tenant_id, location_id, balance, status, billing_month')
             .eq('billing_month', currentMonth)
             .in('status', ['Unpaid', 'Partial'])
-            .gt('balance', 0);
+            .gt('balance', 0)
+            .limit(10000);
         if (locationId) q = (q as any).eq('location_id', locationId);
 
         const { data: bills, error: billErr } = await q;
@@ -183,7 +184,8 @@ export async function GET(req: NextRequest) {
         let billQ = supabaseAdmin
             .from('arms_billing')
             .select('billing_id, tenant_id, location_id, unit_id, rent_amount, amount_paid, balance, status, billing_month')
-            .eq('billing_month', month);
+            .eq('billing_month', month)
+            .limit(10000);
         if (locationId) billQ = (billQ as any).eq('location_id', locationId);
         if (tenantId) billQ = (billQ as any).eq('tenant_id', tenantId);
 
@@ -235,7 +237,8 @@ export async function GET(req: NextRequest) {
         let penQ = supabaseAdmin
             .from('arms_penalties')
             .select('penalty_id, tenant_id, billing_month, penalty_date, amount, status, reason, waived_by, waived_at, waive_reason')
-            .eq('billing_month', month);
+            .eq('billing_month', month)
+            .limit(10000);
         if (tenantId) penQ = (penQ as any).eq('tenant_id', tenantId);
 
         const { data: penalties, error: penErr } = await penQ;

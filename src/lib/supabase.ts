@@ -1809,7 +1809,8 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
                 const { data: pData } = await supabaseAdmin
                     .from('arms_penalties')
                     .select('tenant_id, amount')
-                    .eq('status', 'Active');
+                    .eq('status', 'Active')
+                    .limit(10000);
                 (pData || []).forEach(p => {
                     penMap[p.tenant_id] = (penMap[p.tenant_id] || 0) + Number(p.amount);
                 });
@@ -2990,7 +2991,7 @@ export async function getPenalties(opts: {
     if (error) { console.error('[getPenalties]', error.message); return { rows: [], total: 0, summary: { active: 0, waived: 0, paid: 0, totalActive: 0 } }; }
 
     // Compute summary from ALL (not just page) — separate lightweight query
-    let sq = supabaseAdmin.from('arms_penalties').select('status, amount');
+    let sq = supabaseAdmin.from('arms_penalties').select('status, amount').limit(10000);
     if (tenantId) sq = (sq as any).eq('tenant_id', tenantId);
     if (month)    sq = (sq as any).eq('billing_month', month);
     const { data: all } = await sq;
