@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, BackHandler, Alert,
+    StatusBar, TouchableOpacity, BackHandler, Alert, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system';
@@ -149,15 +149,42 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             setProgress(1);
             setPhase('installing');
 
-            // Get a content URI Android can use for install intent
-            const contentUri = await FileSystem.getContentUriAsync(result.uri);
+            let installed = false;
 
-            // Trigger Android install prompt — "Do you want to install?"
-            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                data: contentUri,
-                flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-                type: 'application/vnd.android.package-archive',
-            });
+            // Try 1: IntentLauncher with content URI (preferred — shows system install dialog)
+            try {
+                const contentUri = await FileSystem.getContentUriAsync(result.uri);
+                await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                    data: contentUri,
+                    flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+                    type: 'application/vnd.android.package-archive',
+                });
+                installed = true;
+            } catch (e1) {
+                console.warn('[ForceUpdate] IntentLauncher failed, trying Linking with contentUri:', e1);
+                // Try 2: Linking with content URI
+                try {
+                    const contentUri = await FileSystem.getContentUriAsync(result.uri);
+                    const supported = await Linking.canOpenURL(contentUri);
+                    if (supported) {
+                        await Linking.openURL(contentUri);
+                        installed = true;
+                    }
+                } catch (e2) {
+                    console.warn('[ForceUpdate] Linking contentUri failed, trying file URI:', e2);
+                    // Try 3: Linking with file URI directly
+                    try {
+                        await Linking.openURL(result.uri);
+                        installed = true;
+                    } catch (e3) {
+                        console.warn('[ForceUpdate] All install methods failed:', e3);
+                    }
+                }
+            }
+
+            if (!installed) {
+                throw new Error('Could not open installer. Please install the APK manually from your Downloads folder.');
+            }
 
             setPhase('done');
         } catch (err: any) {

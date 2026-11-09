@@ -272,7 +272,7 @@ function StaffShell({ staff, onLogout }: { staff: StaffSession; onLogout: () => 
 }
 
 // ─── Main App Shell with bottom tabs ─────────────────────────
-function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () => void }) {
+function AppShell({ session, onLogout, pendingChatRef }: { session: TenantSession; onLogout: () => void; pendingChatRef: React.MutableRefObject<boolean> }) {
     const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
     const [unreadAdmin, setUnreadAdmin] = useState(0);
@@ -288,30 +288,14 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     } | null>(null);
     const lastMsgIdRef = useRef<number>(0);
 
-    // ── FCM NOTIFICATION TAP HANDLER ─────────────────────────
-    // Opens the Chat tab when user taps an ARMS push notification
+    // ── FCM NOTIFICATION TAP — check ref set by AppInner on mount ──
+    // AppInner captures the tap before AppShell mounts (cold-start safe)
     useEffect(() => {
-        // Case 1: App is in BACKGROUND — user taps notification
-        const unsubBg = messaging().onNotificationOpenedApp(remoteMessage => {
-            const screen = remoteMessage?.data?.screen;
-            if (screen === 'Chat' || screen === 'chat') {
-                setActiveTab('chat');
-                setChatNotif(null);
-            }
-        });
-
-        // Case 2: App was CLOSED — user taps notification to open app
-        messaging().getInitialNotification().then(remoteMessage => {
-            if (remoteMessage) {
-                const screen = remoteMessage?.data?.screen;
-                if (screen === 'Chat' || screen === 'chat') {
-                    setActiveTab('chat');
-                }
-            }
-        });
-
-        return () => { unsubBg(); };
-    }, []);
+        if (pendingChatRef.current) {
+            pendingChatRef.current = false;
+            setActiveTab('chat');
+        }
+    }, []); // runs once when AppShell first mounts
 
     // Check for pending agreement on mount
     useEffect(() => {
@@ -329,7 +313,8 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
     }, [session.tenant_id, session.location_id]);
 
     // ── TENANT: Poll for new admin messages every 10s ──────────
-    // Updates badge count + in-app overlay + OS notification shade
+    // Updates badge count + in-app overlay ONLY
+    // FCM (Firebase) handles OS push notifications — no duplicates
     useEffect(() => {
         const checkNewMessages = async () => {
             try {
@@ -351,13 +336,8 @@ function AppShell({ session, onLogout }: { session: TenantSession; onLogout: () 
                     if (newest.chat_id !== lastMsgIdRef.current) {
                         lastMsgIdRef.current = newest.chat_id;
 
-                        // 1. OS notification — appears in phone shade like WhatsApp
-                        pushNotification(
-                            '🏠 ARMS Property Management',
-                            newest.message,
-                            'arms_messages',
-                            { tenantId: session.tenant_id, screen: 'chat' },
-                        );
+                        // ✅ FCM handles OS push notification — do NOT call pushNotification() here
+                        // Only show in-app overlay if tenant is not already on chat tab
 
                         // 2. In-app overlay — if not already on chat tab
                         if (activeTab !== 'chat') {
@@ -564,6 +544,31 @@ function AppInner() {
     const [licenseError, setLicenseError] = useState('');
     const [forceUpdate, setForceUpdate] = useState<{ required: boolean; latestVersion: string }>({ required: false, latestVersion: APP_VERSION });
 
+    // ── FCM NOTIFICATION TAP — must live here (AppInner) for cold-start ──
+    // AppShell doesn't mount until after NavigationContainer, so cold-start
+    // notifications would be missed if handlers lived there.
+    const pendingChatRef = useRef<boolean>(false);
+
+    useEffect(() => {
+        // Case 1: App in BACKGROUND — user taps notification
+        const unsubBg = messaging().onNotificationOpenedApp(remoteMessage => {
+            const screen = remoteMessage?.data?.screen;
+            if (screen === 'Chat' || screen === 'chat') {
+                pendingChatRef.current = true;
+            }
+        });
+        // Case 2: App was CLOSED (cold start) — user taps notification
+        messaging().getInitialNotification().then(remoteMessage => {
+            if (remoteMessage) {
+                const screen = remoteMessage?.data?.screen;
+                if (screen === 'Chat' || screen === 'chat') {
+                    pendingChatRef.current = true;
+                }
+            }
+        });
+        return () => { unsubBg(); };
+    }, []);
+
     useEffect(() => {
         initApp();
     }, []);
@@ -764,7 +769,7 @@ function AppInner() {
                     <Stack.Screen name="Main">
                         {() => staffSession
                             ? <StaffShell staff={staffSession} onLogout={handleLogout} />
-                            : <AppShell session={session!} onLogout={handleLogout} />
+                            : <AppShell session={session!} onLogout={handleLogout} pendingChatRef={pendingChatRef} />
                         }
                     </Stack.Screen>
                 )}
