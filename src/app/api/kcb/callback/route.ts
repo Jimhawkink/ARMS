@@ -4,7 +4,7 @@
 // Ultra Grade: Full bill generation + FIFO + correct month tags
 // ============================================================
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { supabaseAdmin as supabase, getTenantMonthlyRentForMonth } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -185,7 +185,8 @@ export async function POST(req: NextRequest) {
         while (sy < ey || (sy === ey && sm <= em)) {
             const curM = `${sy}-${String(sm).padStart(2, "0")}`;
             if (!existingMonthSet.has(curM) && (tenant.monthly_rent || 0) > 0) {
-                const effectiveRent = getEffectiveRent(tenant.monthly_rent, curM, tenant.is_on_vacation || false);
+                const nominalRent = getTenantMonthlyRentForMonth(tenant.monthly_rent, tenant.notes, curM);
+                const effectiveRent = getEffectiveRent(nominalRent, curM, tenant.is_on_vacation || false);
                 billsToCreate.push({
                     tenant_id: tenantId,
                     location_id: tenant.location_id,

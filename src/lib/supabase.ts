@@ -271,6 +271,17 @@ export function parseComradesFromNotes(notes?: string | null): ComradeInfo[] {
     return comrades;
 }
 
+export function getTenantMonthlyRentForMonth(monthlyRent: number, notes: string | null | undefined, targetMonth: string): number {
+    const comrades = parseComradesFromNotes(notes);
+    if (!comrades.length) return monthlyRent;
+    const totalComradeSurcharge = comrades.reduce((s, c) => s + (c.amount || 0), 0);
+    const baseRent = Math.max(0, monthlyRent - totalComradeSurcharge);
+    const activeAmt = comrades
+        .filter(c => !c.start_month || c.start_month <= targetMonth)
+        .reduce((s, c) => s + (c.amount || 0), 0);
+    return baseRent + activeAmt;
+}
+
 // ==================== REPAIR VACATION BILLS ====================
 export async function repairVacationBills(): Promise<{ fixed: number; errors: string[] }> {
     const { data: vacTenants } = await supabase
@@ -470,23 +481,13 @@ export async function addTenant(tenant: {
         const billsToCreate: any[] = [];
         let totalBalance = 0;
 
-        const comrades = parseComradesFromNotes(tenant.notes);
-        const totalComradeSurcharge = comrades.reduce((s, c) => s + (c.amount || 0), 0);
-        const baseRent = Math.max(0, monthlyRent - totalComradeSurcharge);
-
         // Integer month arithmetic — avoids UTC timezone shift from new Date('YYYY-MM-DD')
         let [sy, sm] = earliestMonth.split('-').map(Number);
         const [ey, em] = [nowLocal.getFullYear(), nowLocal.getMonth() + 1];
 
         while (sy < ey || (sy === ey && sm <= em)) {
             const curM = `${sy}-${String(sm).padStart(2, '0')}`;
-            let activeComradeAmt = 0;
-            if (comrades.length > 0) {
-                activeComradeAmt = comrades
-                    .filter(c => !c.start_month || c.start_month <= curM)
-                    .reduce((s, c) => s + (c.amount || 0), 0);
-            }
-            const nominalRent = baseRent + activeComradeAmt;
+            const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curM);
             const effectiveRent = getEffectiveRent(nominalRent, curM, isOnVacation);
             billsToCreate.push({
                 tenant_id: data.tenant_id,
@@ -602,14 +603,7 @@ export async function updateTenant(id: number, updates: any) {
 
             if (unpaidBills && unpaidBills.length > 0) {
                 await Promise.all(unpaidBills.map((bill: any) => {
-                    // Only apply comrade surcharge from comrade's start_month forward
-                    let activeComradeAmt = 0;
-                    if (comrades.length > 0) {
-                        activeComradeAmt = comrades
-                            .filter(c => !c.start_month || c.start_month <= bill.billing_month)
-                            .reduce((s, c) => s + (c.amount || 0), 0);
-                    }
-                    const nominalRent = baseRent + activeComradeAmt;
+                    const nominalRent = getTenantMonthlyRentForMonth(currentRent, activeNotes, bill.billing_month);
                     const effectiveRent = getEffectiveRent(nominalRent, bill.billing_month, isOnVacation);
                     const newBalance = Math.max(0, Math.round((effectiveRent - (bill.amount_paid || 0)) * 100) / 100);
                     const newStatus = newBalance <= 0 ? 'Paid' : (bill.amount_paid || 0) > 0 ? 'Partial' : 'Unpaid';
@@ -622,13 +616,7 @@ export async function updateTenant(id: number, updates: any) {
                 }));
             } else {
                 // No bill for current month yet — create it
-                let activeComradeAmt = 0;
-                if (comrades.length > 0) {
-                    activeComradeAmt = comrades
-                        .filter(c => !c.start_month || c.start_month <= currentMonth)
-                        .reduce((s, c) => s + (c.amount || 0), 0);
-                }
-                const nominalRent = baseRent + activeComradeAmt;
+                const nominalRent = getTenantMonthlyRentForMonth(currentRent, activeNotes, currentMonth);
                 const effectiveRent = getEffectiveRent(nominalRent, currentMonth, isOnVacation);
                 await supabase.from('arms_billing').insert([{
                     tenant_id: id,
@@ -759,7 +747,8 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
         while (sy < ey || (sy === ey && sm <= em)) {
             const curM = `${sy}-${String(sm).padStart(2, '0')}`;
             if (!existingMonths.has(curM)) {
-                const effectiveRent = getEffectiveRent(monthlyRent, curM, tenantOnVacation);
+                const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curM);
+                const effectiveRent = getEffectiveRent(nominalRent, curM, tenantOnVacation);
                 billsToCreate.push({
                     tenant_id: tenantId,
                     location_id: tenant.location_id,
@@ -977,16 +966,7 @@ export async function generateMonthlyBills(month: string, locationId?: number): 
             while (sy < ey || (sy === ey && sm <= em)) {
                 const curMonth = `${sy}-${String(sm).padStart(2, '0')}`;
                 if (!existingMonths.has(curMonth)) {
-                    const comrades = parseComradesFromNotes(tenant.notes);
-                    let nominalRent = monthlyRent;
-                    if (comrades.length > 0) {
-                        const totalComradeSurcharge = comrades.reduce((s, c) => s + (c.amount || 0), 0);
-                        const baseRent = Math.max(0, monthlyRent - totalComradeSurcharge);
-                        const activeAmt = comrades
-                            .filter(c => !c.start_month || c.start_month <= curMonth)
-                            .reduce((s, c) => s + (c.amount || 0), 0);
-                        nominalRent = baseRent + activeAmt;
-                    }
+                    const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curMonth);
                     const effectiveRent = getEffectiveRent(nominalRent, curMonth, tenantOnVacation);
                     newBillsToInsert.push({
                         tenant_id: tenant.tenant_id,
@@ -1041,7 +1021,7 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
     const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
 
     const { data: tenant, error: tenantErr } = await supabase
-        .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance, is_on_vacation').eq('tenant_id', tenantId).single();
+        .from('arms_tenants').select('monthly_rent, move_in_date, created_at, balance, is_on_vacation, notes').eq('tenant_id', tenantId).single();
     if (tenantErr || !tenant) throw tenantErr || new Error('Tenant not found');
 
     const monthlyRent = Math.round((tenant.monthly_rent || 0) * 100) / 100;
@@ -1080,7 +1060,8 @@ export async function getAccumulatedArrearsForTenant(tenantId: number) {
                 else currentMonthDue += balance;
             }
         } else {
-            const effectiveRent = getEffectiveRent(monthlyRent, curMonth, tenantOnVacation);
+            const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curMonth);
+            const effectiveRent = getEffectiveRent(nominalRent, curMonth, tenantOnVacation);
             if (effectiveRent > 0) {
                 resultBills.push({
                     billing_id: null,
@@ -1214,7 +1195,8 @@ export async function recordPayment(payment: {
     while (sy2 < ey2 || (sy2 === ey2 && sm2 <= em2)) {
         const curM = `${sy2}-${String(sm2).padStart(2, '0')}`;
         if (!existingMonths.has(curM) && (tenant.monthly_rent || 0) > 0) {
-            const effectiveRent = getEffectiveRent(tenant.monthly_rent, curM, tenant.is_on_vacation || false);
+            const nominalRent = getTenantMonthlyRentForMonth(tenant.monthly_rent, tenant.notes, curM);
+            const effectiveRent = getEffectiveRent(nominalRent, curM, tenant.is_on_vacation || false);
             billsToCreate.push({
                 tenant_id: payment.tenant_id,
                 location_id: tenant.location_id,
@@ -1934,7 +1916,8 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
             // ── FIFO allocation: compute paid/balance per month from raw payments ──
             // This is independent of billing table state — always accurate
             const monthRents = expectedMonths.map(month => {
-                const effectiveRent = getEffectiveRent(monthlyRent, month, tenant.is_on_vacation || false);
+                const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, month);
+                const effectiveRent = getEffectiveRent(nominalRent, month, tenant.is_on_vacation || false);
                 const isVac = (tenant.is_on_vacation || false) && isVacationMonth(month);
                 return { month, rent: effectiveRent, isVacation: isVac };
             });

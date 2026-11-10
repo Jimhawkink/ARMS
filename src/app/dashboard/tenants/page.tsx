@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import {
     getTenants, addTenant, updateTenant, deactivateTenant, deleteTenantPermanently, getUnits,
     getLocations, calculateUnpaidRent, generateMonthlyBills, getMoveInPayment,
-    updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits
+    updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits,
+    getTenantMonthlyRentForMonth, parseComradesFromNotes
 } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
@@ -539,34 +540,16 @@ export default function TenantsPage() {
         // Parse comrades from notes if saved
         let loadedComrades: Array<{ name: string; phone: string; amount: string; start_month: string }> = [];
         let isComradeActive = false;
-        let cleanNotes = t.notes || '';
-        if (t.notes && t.notes.includes('[COMRADES:')) {
-            const m = t.notes.match(/\[COMRADES:\s*([\s\S]*?)\]/);
-            if (m) {
-                cleanNotes = t.notes.replace(/\n?\[COMRADES:[\s\S]*?\]/, '').trim();
-                const segments = m[1].split(/\s*\|\s*(?=Comrade \d+:)/);
-                segments.forEach((seg: string) => {
-                    const pure = seg.replace(/^Comrade \d+:\s*/, '');
-                    const parts = pure.split(/\s*\|\s*/);
-                    if (parts.length > 0 && parts[0]) {
-                        const cName = parts[0]?.trim() || '';
-                        const cPhone = parts[1]?.trim() || '';
-                        const cAmt = parts[2]?.replace(/[^0-9.]/g, '') || '';
-                        let cStartMonth = '';
-                        for (let i = 2; i < parts.length; i++) {
-                            const match = parts[i].match(/\d{4}-\d{2}/);
-                            if (match) { cStartMonth = match[0]; break; }
-                        }
-                        loadedComrades.push({
-                            name: cName,
-                            phone: cPhone,
-                            amount: cAmt,
-                            start_month: cStartMonth || currentMonth,
-                        });
-                    }
-                });
-                if (loadedComrades.length > 0) isComradeActive = true;
-            }
+        const cleanNotes = (t.notes || '').replace(/\n?\[COMRADES:[\s\S]*?\]/, '').trim();
+        const parsed = parseComradesFromNotes(t.notes);
+        if (parsed.length > 0) {
+            isComradeActive = true;
+            loadedComrades = parsed.map(c => ({
+                name: c.name || '',
+                phone: c.phone || '',
+                amount: String(c.amount || '1000'),
+                start_month: c.start_month || currentMonth,
+            }));
         }
         if (loadedComrades.length === 0) loadedComrades = [{ name: '', phone: '', amount: '1000', start_month: currentMonth }];
         setComradeEnabled(isComradeActive);
@@ -583,7 +566,7 @@ export default function TenantsPage() {
             monthly_rent: String(primaryRent > 0 ? primaryRent : totalRent),
             deposit_paid: String(t.deposit_paid || ''),
             move_in_date: t.move_in_date || '', billing_start_month: t.billing_start_month || t.move_in_date?.slice(0, 7) || '',
-            emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: t.notes || '',
+            emergency_contact: t.emergency_contact || '', emergency_phone: t.emergency_phone || '', notes: cleanNotes,
             password_hash: '',
             is_on_vacation: t.is_on_vacation || false,
             initial_payment: moveInPmt ? String(moveInPmt.amount) : '',
@@ -1282,8 +1265,8 @@ export default function TenantsPage() {
                                     <TenantAvatar name={t.tenant_name} status={t.status} size={42} />
                                     <div>
                                         <p className="text-xs font-bold text-slate-900">{t.tenant_name}</p>
-                                        <p className="text-xs text-violet-700">🏠 {t.arms_units?.unit_name} · Base: {fmt(t.monthly_rent)}</p>
-                                        <p className="text-[10px] text-slate-500">Vacation Rate: {fmt(Math.round((t.monthly_rent || 0) * 0.5))}/mo</p>
+                                        <p className="text-xs text-violet-700">🏠 {t.arms_units?.unit_name} · Base: {fmt(getTenantMonthlyRentForMonth(t.monthly_rent || 0, t.notes, currentMonth))}</p>
+                                        <p className="text-[10px] text-slate-500">Vacation Rate: {fmt(Math.round(getTenantMonthlyRentForMonth(t.monthly_rent || 0, t.notes, currentMonth) * 0.5))}/mo</p>
                                     </div>
                                 </div>
                                 <button
@@ -1404,7 +1387,10 @@ export default function TenantsPage() {
                                 const isExpanded = expandedTenants.has(t.tenant_id);
                                 const tuList = tenantUnitsMap[t.tenant_id] || [];
                                 const isVacNow = t.is_on_vacation && ['05','06','07','08'].includes(currentMonth.slice(5,7));
-                                const displayRent = isVacNow ? Math.round((t.monthly_rent || 0) * 0.5) : (t.monthly_rent || 0);
+                                const currentNominalRent = getTenantMonthlyRentForMonth(t.monthly_rent || 0, t.notes, currentMonth);
+                                const displayRent = isVacNow ? Math.round(currentNominalRent * 0.5) : currentNominalRent;
+                                const rowComrades = parseComradesFromNotes(t.notes);
+                                const rowComradeTotal = rowComrades.reduce((s, c) => s + (c.amount || 0), 0);
 
                                 return (
                                     <Fragment key={t.tenant_id}>
@@ -1531,6 +1517,11 @@ export default function TenantsPage() {
                                                         </span>
                                                     )}
                                                 </div>
+                                                {rowComrades.length > 0 && (
+                                                    <span className="text-[9px] text-amber-700 font-bold block" title={rowComrades.map(c => `${c.name || 'Comrade'}: +${fmt(c.amount)} from ${c.start_month || 'start'}`).join(', ')}>
+                                                        🤝 +{fmt(rowComradeTotal)} com
+                                                    </span>
+                                                )}
                                                 <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
                                                     Dep: {fmt(t.deposit_paid || 0)}
                                                 </p>
@@ -2475,98 +2466,191 @@ export default function TenantsPage() {
                         </div>
 
                         {/* Dossier Body */}
-                        <div className="p-6 space-y-4 overflow-y-auto">
-                            {/* Key Stats Row */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase">Monthly Base Rent</p>
-                                    <p className="text-sm font-black text-slate-900 mt-0.5">{fmt(dossierTenant.monthly_rent)}</p>
-                                </div>
-                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase">Security Deposit</p>
-                                    <p className="text-sm font-black text-slate-900 mt-0.5">{fmt(dossierTenant.deposit_paid)}</p>
-                                </div>
-                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase">Current Balance</p>
-                                    <p className={`text-sm font-black mt-0.5 ${(tenantBalances[dossierTenant.tenant_id] ?? dossierTenant.balance ?? 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                        {fmt(tenantBalances[dossierTenant.tenant_id] ?? dossierTenant.balance ?? 0)}
-                                    </p>
-                                </div>
-                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase">App Mobile PIN</p>
-                                    <p className="text-sm font-black text-indigo-600 mt-0.5 font-mono">{dossierTenant.mobile_pin || 'Active'}</p>
-                                </div>
-                            </div>
+                        {(() => {
+                            const dossierComrades = parseComradesFromNotes(dossierTenant.notes);
+                            const totalComradeSurcharge = dossierComrades.reduce((s, c) => s + (c.amount || 0), 0);
+                            const dossierBaseRent = Math.max(0, (dossierTenant.monthly_rent || 0) - totalComradeSurcharge);
+                            const dossierCurrentRent = getTenantMonthlyRentForMonth(dossierTenant.monthly_rent || 0, dossierTenant.notes, currentMonth);
+                            const dtDetails = tenantDetails[dossierTenant.tenant_id];
 
-                            {/* Contact Details */}
-                            <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-2 text-xs">
-                                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                                    <span className="text-slate-500 font-bold">Mobile Phone</span>
-                                    <span className="font-black text-slate-800">{dossierTenant.phone || '—'}</span>
-                                </div>
-                                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                                    <span className="text-slate-500 font-bold">National ID / Passport</span>
-                                    <span className="font-black text-slate-800">{dossierTenant.id_number || '—'}</span>
-                                </div>
-                                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                                    <span className="text-slate-500 font-bold">Email Address</span>
-                                    <span className="font-black text-slate-800">{dossierTenant.email || '—'}</span>
-                                </div>
-                                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                                    <span className="text-slate-500 font-bold">Move-In Date</span>
-                                    <span className="font-black text-slate-800">{dossierTenant.move_in_date || '—'}</span>
-                                </div>
-                                <div className="flex justify-between py-1">
-                                    <span className="text-slate-500 font-bold">Emergency Contact</span>
-                                    <span className="font-black text-slate-800">{dossierTenant.emergency_contact || '—'} ({dossierTenant.emergency_phone || '—'})</span>
-                                </div>
-                            </div>
+                            return (
+                                <div className="p-6 space-y-4 overflow-y-auto">
+                                    {/* Key Stats Row */}
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">
+                                                {dossierComrades.length > 0 ? 'Base Rent (Solo)' : 'Monthly Base Rent'}
+                                            </p>
+                                            <p className="text-sm font-black text-slate-900 mt-0.5">{fmt(dossierBaseRent)}</p>
+                                            {dossierComrades.length > 0 && (
+                                                <p className="text-[10px] font-bold text-amber-700 mt-0.5">
+                                                    +{fmt(totalComradeSurcharge)} com ({fmt(dossierCurrentRent)} now)
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">Security Deposit</p>
+                                            <p className="text-sm font-black text-slate-900 mt-0.5">{fmt(dossierTenant.deposit_paid)}</p>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">Current Balance</p>
+                                            <p className={`text-sm font-black mt-0.5 ${(tenantBalances[dossierTenant.tenant_id] ?? dossierTenant.balance ?? 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {fmt(tenantBalances[dossierTenant.tenant_id] ?? dossierTenant.balance ?? 0)}
+                                            </p>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">App Mobile PIN</p>
+                                            <p className="text-sm font-black text-indigo-600 mt-0.5 font-mono">{dossierTenant.mobile_pin || 'Active'}</p>
+                                        </div>
+                                    </div>
 
-                            {/* Multi-Room Units if any */}
-                            {tenantUnitsMap[dossierTenant.tenant_id]?.length > 1 && (
-                                <div className="p-4 rounded-2xl border border-purple-200 bg-purple-50/40">
-                                    <p className="text-xs font-black text-purple-900 uppercase tracking-wider mb-2">🏢 Multi-Room Portfolio</p>
-                                    <div className="space-y-1.5">
-                                        {tenantUnitsMap[dossierTenant.tenant_id].map((tu: any, i: number) => (
-                                            <div key={i} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-purple-100">
-                                                <span className="font-bold text-slate-800">{tu.arms_units?.unit_name || `Unit ${tu.unit_id}`} {tu.is_primary ? '(Primary)' : ''}</span>
-                                                <span className="font-black text-purple-700">{fmt(tu.custom_rent)}/mo</span>
+                                    {/* Room Sharing Comrades if any */}
+                                    {dossierComrades.length > 0 && (
+                                        <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/40 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs font-black text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                                                    <span>🤝</span> Room Sharing Comrades ({dossierComrades.length})
+                                                </p>
+                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
+                                                    Total Surcharge: +{fmt(totalComradeSurcharge)}/mo
+                                                </span>
                                             </div>
-                                        ))}
+                                            <div className="space-y-2">
+                                                {dossierComrades.map((c, i) => (
+                                                    <div key={i} className="p-2.5 rounded-xl bg-white border border-amber-200 text-xs flex flex-wrap items-center justify-between gap-2 shadow-sm">
+                                                        <div>
+                                                            <p className="font-black text-slate-900">{c.name || `Comrade #${i + 1}`}</p>
+                                                            <p className="text-[10px] text-slate-500 font-medium">📞 {c.phone || 'No phone'}</p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <span className="inline-block px-2 py-0.5 rounded-md font-black text-amber-800 bg-amber-100 text-xs">
+                                                                +{fmt(c.amount)}/mo
+                                                            </span>
+                                                            <p className="text-[10px] font-bold text-slate-500 mt-0.5">
+                                                                Effective from: <strong className="text-amber-900">{c.start_month || 'Move-in'}</strong>
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <p className="text-[10px] text-amber-800/80 font-medium pt-1">
+                                                💡 Rent prior to comrade start month is calculated at base rate ({fmt(dossierBaseRent)}). Surcharge only applies from the beginning month onwards.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* Contact Details */}
+                                    <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-2 text-xs">
+                                        <div className="flex justify-between py-1 border-b border-slate-200/60">
+                                            <span className="text-slate-500 font-bold">Mobile Phone</span>
+                                            <span className="font-black text-slate-800">{dossierTenant.phone || '—'}</span>
+                                        </div>
+                                        <div className="flex justify-between py-1 border-b border-slate-200/60">
+                                            <span className="text-slate-500 font-bold">National ID / Passport</span>
+                                            <span className="font-black text-slate-800">{dossierTenant.id_number || '—'}</span>
+                                        </div>
+                                        <div className="flex justify-between py-1 border-b border-slate-200/60">
+                                            <span className="text-slate-500 font-bold">Email Address</span>
+                                            <span className="font-black text-slate-800">{dossierTenant.email || '—'}</span>
+                                        </div>
+                                        <div className="flex justify-between py-1 border-b border-slate-200/60">
+                                            <span className="text-slate-500 font-bold">Move-In Date</span>
+                                            <span className="font-black text-slate-800">{dossierTenant.move_in_date || '—'}</span>
+                                        </div>
+                                        <div className="flex justify-between py-1">
+                                            <span className="text-slate-500 font-bold">Emergency Contact</span>
+                                            <span className="font-black text-slate-800">{dossierTenant.emergency_contact || '—'} ({dossierTenant.emergency_phone || '—'})</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Multi-Room Units if any */}
+                                    {tenantUnitsMap[dossierTenant.tenant_id]?.length > 1 && (
+                                        <div className="p-4 rounded-2xl border border-purple-200 bg-purple-50/40">
+                                            <p className="text-xs font-black text-purple-900 uppercase tracking-wider mb-2">🏢 Multi-Room Portfolio</p>
+                                            <div className="space-y-1.5">
+                                                {tenantUnitsMap[dossierTenant.tenant_id].map((tu: any, i: number) => (
+                                                    <div key={i} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-purple-100">
+                                                        <span className="font-bold text-slate-800">{tu.arms_units?.unit_name || `Unit ${tu.unit_id}`} {tu.is_primary ? '(Primary)' : ''}</span>
+                                                        <span className="font-black text-purple-700">{fmt(tu.custom_rent)}/mo</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Monthly Ledger Breakdown */}
+                                    {dtDetails?.allMonths && dtDetails.allMonths.length > 0 && (
+                                        <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                                                    <span>📅</span> Monthly Rent & Payment Ledger
+                                                </p>
+                                                <span className="text-[10px] font-bold text-slate-500">
+                                                    {dtDetails.allMonths.length} total months
+                                                </span>
+                                            </div>
+                                            <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                                                {dtDetails.allMonths.slice().reverse().map((m: any, idx: number) => (
+                                                    <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200/80 flex items-center justify-between text-xs shadow-xs">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono font-bold text-slate-700">{m.month}</span>
+                                                            {m.isVacation && (
+                                                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">🏖️ Vac</span>
+                                                            )}
+                                                            <span className="text-slate-500 text-[11px]">Rent: <strong>{fmt(m.rent)}</strong></span>
+                                                            {m.paid > 0 && (
+                                                                <span className="text-emerald-700 text-[11px]">· Paid: {fmt(m.paid)}</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`font-black ${m.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                                Bal: {fmt(m.balance)}
+                                                            </span>
+                                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                                                m.status === 'Paid' ? 'bg-emerald-100 text-emerald-800' :
+                                                                m.status === 'Partial' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                                                            }`}>
+                                                                {m.status}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Direct Actions inside Dossier */}
+                                    <div className="flex items-center gap-2 pt-2">
+                                        {dossierTenant.phone && (
+                                            <a
+                                                href={`https://wa.me/${dossierTenant.phone.replace(/^0/, '254').replace(/[^0-9]/g, '')}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex-1 py-2.5 rounded-2xl text-center text-xs font-black text-white shadow-sm flex items-center justify-center gap-1.5"
+                                                style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
+                                            >
+                                                <span>📱</span> WhatsApp Message
+                                            </a>
+                                        )}
+                                        <button
+                                            onClick={() => {
+                                                setDossierTenant(null);
+                                                openEdit(dossierTenant);
+                                            }}
+                                            className="px-4 py-2.5 rounded-2xl text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
+                                        >
+                                            ✏️ Edit Profile
+                                        </button>
+                                        <button
+                                            onClick={() => window.print()}
+                                            className="px-4 py-2.5 rounded-2xl text-xs font-black bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5"
+                                        >
+                                            <FiPrinter size={14} /> Print
+                                        </button>
                                     </div>
                                 </div>
-                            )}
-
-                            {/* Direct Actions inside Dossier */}
-                            <div className="flex items-center gap-2 pt-2">
-                                {dossierTenant.phone && (
-                                    <a
-                                        href={`https://wa.me/${dossierTenant.phone.replace(/^0/, '254').replace(/[^0-9]/g, '')}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex-1 py-2.5 rounded-2xl text-center text-xs font-black text-white shadow-sm flex items-center justify-center gap-1.5"
-                                        style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
-                                    >
-                                        <span>📱</span> WhatsApp Message
-                                    </a>
-                                )}
-                                <button
-                                    onClick={() => {
-                                        setDossierTenant(null);
-                                        openEdit(dossierTenant);
-                                    }}
-                                    className="px-4 py-2.5 rounded-2xl text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
-                                >
-                                    ✏️ Edit Profile
-                                </button>
-                                <button
-                                    onClick={() => window.print()}
-                                    className="px-4 py-2.5 rounded-2xl text-xs font-black bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5"
-                                >
-                                    <FiPrinter size={14} /> Print
-                                </button>
-                            </div>
-                        </div>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
