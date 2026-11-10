@@ -207,7 +207,7 @@ export default function TenantsPage() {
     const [tenantUnitsMap, setTenantUnitsMap] = useState<Record<number, any[]>>({});
     const [additionalUnits, setAdditionalUnits] = useState<Array<{ unit_id: number; rent: string }>>([])
     const [comradeEnabled, setComradeEnabled] = useState(false);
-    const [comrades, setComrades] = useState<Array<{ name: string; phone: string; amount: string }>>([{ name: '', phone: '', amount: '1000' }]);
+    const [comrades, setComrades] = useState<Array<{ name: string; phone: string; amount: string; start_month: string }>>([{ name: '', phone: '', amount: '1000', start_month: currentMonth }]);
 
     // Dossier Modal State
     const [dossierTenant, setDossierTenant] = useState<any | null>(null);
@@ -509,7 +509,7 @@ export default function TenantsPage() {
         setModalStep('identity');
         setAdditionalUnits([]);
         setComradeEnabled(false);
-        setComrades([{ name: '', phone: '', amount: '1000' }]);
+        setComrades([{ name: '', phone: '', amount: '1000', start_month: currentMonth }]);
         setForm({
             tenant_name: '', phone: '', email: '', id_number: '',
             unit_id: 0, location_id: globalLocationId || locations[0]?.location_id || 0,
@@ -537,7 +537,7 @@ export default function TenantsPage() {
         setAdditionalUnits(loadedAdditional);
 
         // Parse comrades from notes if saved
-        let loadedComrades: Array<{ name: string; phone: string; amount: string }> = [];
+        let loadedComrades: Array<{ name: string; phone: string; amount: string; start_month: string }> = [];
         let isComradeActive = false;
         let cleanNotes = t.notes || '';
         if (t.notes && t.notes.includes('[COMRADES:')) {
@@ -552,13 +552,23 @@ export default function TenantsPage() {
                         const cName = parts[0]?.trim() || '';
                         const cPhone = parts[1]?.trim() || '';
                         const cAmt = parts[2]?.replace(/[^0-9.]/g, '') || '';
-                        loadedComrades.push({ name: cName, phone: cPhone, amount: cAmt });
+                        let cStartMonth = '';
+                        for (let i = 2; i < parts.length; i++) {
+                            const match = parts[i].match(/\d{4}-\d{2}/);
+                            if (match) { cStartMonth = match[0]; break; }
+                        }
+                        loadedComrades.push({
+                            name: cName,
+                            phone: cPhone,
+                            amount: cAmt,
+                            start_month: cStartMonth || currentMonth,
+                        });
                     }
                 });
                 if (loadedComrades.length > 0) isComradeActive = true;
             }
         }
-        if (loadedComrades.length === 0) loadedComrades = [{ name: '', phone: '', amount: '1000' }];
+        if (loadedComrades.length === 0) loadedComrades = [{ name: '', phone: '', amount: '1000', start_month: currentMonth }];
         setComradeEnabled(isComradeActive);
         setComrades(loadedComrades);
 
@@ -629,7 +639,10 @@ export default function TenantsPage() {
                     let clean = (form.notes || '').replace(/\n?\[COMRADES:[\s\S]*?\]/, '').trim();
                     if (comradeEnabled && comrades.some(c => c.name.trim() || c.amount.trim())) {
                         const valid = comrades.filter(c => c.name.trim() || c.amount.trim());
-                        const ci = valid.map((c, i) => `Comrade ${i+1}: ${c.name.trim() || 'Unnamed'} | ${c.phone.trim() || 'N/A'} | +KES ${c.amount.trim() || '0'}`).join(' | ');
+                        const ci = valid.map((c, i) => {
+                            const sm = c.start_month ? ` | From: ${c.start_month}` : ` | From: ${currentMonth}`;
+                            return `Comrade ${i+1}: ${c.name.trim() || 'Unnamed'} | ${c.phone.trim() || 'N/A'} | +KES ${c.amount.trim() || '0'}${sm}`;
+                        }).join(' | ');
                         clean = (clean ? clean + '\n' : '') + `[COMRADES: ${ci}]`;
                     }
                     return clean || null;
@@ -2112,7 +2125,7 @@ export default function TenantsPage() {
                                                     const checked = e.target.checked;
                                                     setComradeEnabled(checked);
                                                     if (checked && comrades.length === 0) {
-                                                        setComrades([{ name: '', phone: '', amount: '1000' }]);
+                                                        setComrades([{ name: '', phone: '', amount: '1000', start_month: currentMonth }]);
                                                     }
                                                 }}
                                                 className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
@@ -2133,7 +2146,7 @@ export default function TenantsPage() {
                                         {comradeEnabled && (
                                             <button
                                                 type="button"
-                                                onClick={() => setComrades(prev => [...prev, { name: '', phone: '', amount: '1000' }])}
+                                                onClick={() => setComrades(prev => [...prev, { name: '', phone: '', amount: '1000', start_month: currentMonth }])}
                                                 className="px-3 py-1 rounded-xl text-xs font-black text-white bg-amber-600 hover:bg-amber-700 transition flex items-center gap-1 shadow-sm"
                                             >
                                                 <FiPlus size={12} /> Add Another Comrade
@@ -2175,7 +2188,7 @@ export default function TenantsPage() {
                                                             </button>
                                                         )}
                                                     </div>
-                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                                                         <div>
                                                             <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Comrade Full Name</label>
                                                             <input
@@ -2197,7 +2210,7 @@ export default function TenantsPage() {
                                                             />
                                                         </div>
                                                         <div>
-                                                            <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Added Amount To Rent (KES)</label>
+                                                            <label className="text-[9px] font-bold text-amber-900 uppercase block mb-1">Added Amount (KES)</label>
                                                             <input
                                                                 type="number"
                                                                 value={comrade.amount}
@@ -2206,6 +2219,24 @@ export default function TenantsPage() {
                                                                 placeholder="e.g. 1000"
                                                             />
                                                         </div>
+                                                        <div>
+                                                            <label className="text-[9px] font-black text-amber-900 uppercase block mb-1">Beginning Month *</label>
+                                                            <input
+                                                                type="month"
+                                                                value={comrade.start_month || currentMonth}
+                                                                onChange={e => setComrades(prev => prev.map((item, i) => i === idx ? { ...item, start_month: e.target.value } : item))}
+                                                                className="w-full px-2.5 py-2 bg-amber-50/70 border border-amber-300 rounded-xl text-xs font-black text-amber-950 focus:bg-white focus:border-amber-500 transition cursor-pointer"
+                                                                title="Month this comrade joined — surcharge only applies from this month forward"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-2.5 pt-2 border-t border-amber-100 flex flex-wrap items-center justify-between gap-1 text-[10px] text-amber-900">
+                                                        <span className="font-bold flex items-center gap-1">
+                                                            <span>📅</span> Surcharge (+KES {(parseFloat(comrade.amount) || 0).toLocaleString()}) applies from <strong>{comrade.start_month || currentMonth}</strong> onwards
+                                                        </span>
+                                                        <span className="text-amber-700/80 font-medium text-[10px]">
+                                                            Bills before {comrade.start_month || currentMonth} keep normal rent ({fmt(parseFloat(form.monthly_rent) || 0)})
+                                                        </span>
                                                     </div>
                                                 </div>
                                             ))}
