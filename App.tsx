@@ -281,6 +281,7 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
     const [activeTab, setActiveTab] = useState<'home' | 'pay' | 'history' | 'chat' | 'profile'>('home');
     const [currentSession, setCurrentSession] = useState(session);
     const [unreadAdmin, setUnreadAdmin] = useState(0);
+    const [chatRefreshCount, setChatRefreshCount] = useState(0);
     const [pendingAgreement, setPendingAgreement] = useState<TenantAgreement | null>(null);
     const [agreementTemplate, setAgreementTemplate] = useState<AgreementTemplate | null>(null);
     const [checkingAgreement, setCheckingAgreement] = useState(true);
@@ -298,6 +299,7 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
     useEffect(() => {
         if (pendingChat) {
             setActiveTab('chat');
+            setChatRefreshCount(c => c + 1);
             setChatNotif(null);
             onChatHandled(); // reset state so next tap works too
         }
@@ -406,7 +408,7 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
             case 'history':
                 return <HistoryScreen session={currentSession} />;
             case 'chat':
-                return <ChatScreen />;
+                return <ChatScreen session={currentSession} refreshTrigger={chatRefreshCount} />;
             case 'profile':
                 return <ProfileScreen session={currentSession} onLogout={onLogout} />;
             default:
@@ -469,12 +471,21 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
 
                         {/* Message body */}
                         <View style={notifStyles.cardBody}>
-                            <Text style={notifStyles.msgLabel}>📨 NEW MESSAGE</Text>
-                            <View style={notifStyles.msgBox}>
-                                <Text style={notifStyles.msgText} numberOfLines={6}>
-                                    {chatNotif?.message || ''}
-                                </Text>
-                            </View>
+                            <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                    setChatNotif(null);
+                                    setActiveTab('chat');
+                                    setChatRefreshCount(c => c + 1);
+                                }}
+                            >
+                                <Text style={notifStyles.msgLabel}>📨 NEW MESSAGE (Tap to view)</Text>
+                                <View style={notifStyles.msgBox}>
+                                    <Text style={notifStyles.msgText} numberOfLines={6}>
+                                        {chatNotif?.message || ''}
+                                    </Text>
+                                </View>
+                            </TouchableOpacity>
 
                             {/* Progress bar — auto dismiss in 10s */}
                             <View style={notifStyles.progressTrack}>
@@ -487,6 +498,7 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
                                     onPress={() => {
                                         setChatNotif(null);
                                         setActiveTab('chat');
+                                        setChatRefreshCount(c => c + 1);
                                     }}
                                 >
                                     <Text style={notifStyles.btnReplyText}>💬 Reply Now</Text>
@@ -513,7 +525,10 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
                                 style={[styles.tab, isActive && styles.tabActive]}
                                 onTouchEnd={() => {
                                     setActiveTab(tab.key);
-                                    if (tab.key === 'chat') setUnreadAdmin(0);
+                                    if (tab.key === 'chat') {
+                                        setChatRefreshCount(c => c + 1);
+                                        setUnreadAdmin(0);
+                                    }
                                 }}
                             >
                                 <View style={{ position: 'relative' }}>

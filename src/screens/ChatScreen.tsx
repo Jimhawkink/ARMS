@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, FlatList,
     KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
-    Alert, RefreshControl, Animated, Keyboard, ImageBackground,
+    Alert, RefreshControl, Animated, Keyboard, ImageBackground, AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,8 +49,8 @@ function sameDay(a: string, b: string) {
 }
 
 // ── Main Screen ───────────────────────────────────────────────
-export default function ChatScreen() {
-    const [session, setSession]     = useState<TenantSession | null>(null);
+export default function ChatScreen({ session: propSession, refreshTrigger }: { session?: any; refreshTrigger?: number } = {}) {
+    const [session, setSession]     = useState<TenantSession | null>(propSession || null);
     const [messages, setMessages]   = useState<ChatMsg[]>([]);
     const [loading, setLoading]     = useState(true);
     const [error, setError]         = useState<string | null>(null);
@@ -61,8 +61,16 @@ export default function ChatScreen() {
     const channelRef                = useRef<any>(null);
     const sendScale                 = useRef(new Animated.Value(1)).current;
 
-    // ── Load session from AsyncStorage ───────────────────────
+    // Sync session prop if provided
     useEffect(() => {
+        if (propSession) {
+            setSession(propSession);
+        }
+    }, [propSession]);
+
+    // ── Load session from AsyncStorage if not passed via props ───
+    useEffect(() => {
+        if (propSession) return;
         let cancelled = false;
         (async () => {
             try {
@@ -88,7 +96,7 @@ export default function ChatScreen() {
             }
         })();
         return () => { cancelled = true; };
-    }, []);
+    }, [propSession]);
 
     // ── Load messages when session is ready ──────────────────
     const loadMessages = useCallback(async (sess: TenantSession, showRefresh = false) => {
@@ -127,6 +135,23 @@ export default function ChatScreen() {
             setRefreshing(false);
         }
     }, []);
+
+    // ── External refresh trigger (tab tap, notification tap, overlay tap) ──
+    useEffect(() => {
+        if (session && refreshTrigger !== undefined && refreshTrigger > 0) {
+            loadMessages(session, true);
+        }
+    }, [refreshTrigger, session, loadMessages]);
+
+    // ── Foreground re-check: refresh when app returns from background ──
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', nextState => {
+            if (nextState === 'active' && session) {
+                loadMessages(session, false);
+            }
+        });
+        return () => sub.remove();
+    }, [session, loadMessages]);
 
     // ── Subscribe to realtime when session ready ─────────────
     useEffect(() => {
@@ -422,10 +447,21 @@ export default function ChatScreen() {
                             }
                             ListEmptyComponent={
                                 <View style={styles.emptyContainer}>
-                                    <View style={styles.emptyIconBg}>
-                                        <Text style={styles.emptyEmoji}>💬</Text>
-                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.emptyIconBg}
+                                        onPress={() => session && loadMessages(session, true)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={styles.emptyEmoji}>{refreshing ? '⏳' : '💬'}</Text>
+                                    </TouchableOpacity>
                                     <Text style={styles.emptyTitle}>No messages yet</Text>
+                                    <TouchableOpacity
+                                        style={styles.emptyRefreshBtn}
+                                        onPress={() => session && loadMessages(session, true)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={styles.emptyRefreshBtnText}>{refreshing ? '⏳ Refreshing...' : '🔄 Tap to refresh chats'}</Text>
+                                    </TouchableOpacity>
                                     <Text style={styles.emptySub}>
                                         Send your first message to the property management team.
                                         {'\n'}We respond as soon as possible.
@@ -437,9 +473,14 @@ export default function ChatScreen() {
                                             '📋 Ask about your lease',
                                             '🚨 Report emergencies',
                                         ].map(hint => (
-                                            <View key={hint} style={styles.emptyHintRow}>
+                                            <TouchableOpacity
+                                                key={hint}
+                                                style={styles.emptyHintRow}
+                                                onPress={() => setMessage(hint.replace(/^[^\w]+/, '').trim())}
+                                                activeOpacity={0.7}
+                                            >
                                                 <Text style={styles.emptyHintText}>{hint}</Text>
-                                            </View>
+                                            </TouchableOpacity>
                                         ))}
                                     </View>
                                 </View>
@@ -604,7 +645,15 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', marginBottom: 20,
     },
     emptyEmoji:       { fontSize: 44 },
-    emptyTitle:       { fontSize: 20, fontWeight: '800', color: '#e2e8f0', marginBottom: 10 },
+    emptyTitle:       { fontSize: 20, fontWeight: '800', color: '#e2e8f0', marginBottom: 6 },
+    emptyRefreshBtn: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: 'rgba(99,102,241,0.25)',
+        borderWidth: 1, borderColor: 'rgba(167,139,250,0.4)',
+        borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
+        marginBottom: 16,
+    },
+    emptyRefreshBtnText: { fontSize: 12, fontWeight: '700', color: '#c4b5fd' },
     emptySub:         { fontSize: 14, color: '#94a3b8', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
     emptyHints:       { width: '100%', gap: 8 },
     emptyHintRow: {
