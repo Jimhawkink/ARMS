@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     ActivityIndicator, Animated, Alert,
-    StatusBar, Image, Dimensions, ScrollView,
+    StatusBar, Image, Dimensions, SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
     loginTenantByPin, loginStaffByPin, checkTenantLicense,
-    getPendingAgreement, TenantSession, StaffSession,
+    getPendingAgreement, getBusinessInfo, BusinessInfo, TenantSession, StaffSession,
 } from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
@@ -17,7 +17,7 @@ import { MobileLicense } from './LicenseScreen';
 import { setupNotifications, registerPushToken } from '../lib/notifications';
 import { APP_VERSION } from '../lib/version';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface Props {
     onLoginSuccess: (session: TenantSession | StaffSession) => void;
@@ -25,11 +25,11 @@ interface Props {
 }
 
 const ASSETS = {
-    bgFull: require('../../assets/login/login_bg_full.png'),
-    shieldBadge: require('../../assets/login/shield_lock_badge.png'),
-    keyFingerprint: require('../../assets/login/key_fingerprint.png'),
-    keyBackspace: require('../../assets/login/key_backspace.png'),
-    btnArrow: require('../../assets/login/btn_arrow.png'),
+    villa: require('../../assets/dashboard/hero_villa_clean.png'),
+    logo: require('../../assets/dashboard/arms_logo.png'),
+    bottomLeftArt: require('../../assets/login/bottom_left_art.png'),
+    keyFingerprintClean: require('../../assets/login/fingerprint_clean.png'),
+    keyBackspaceClean: require('../../assets/login/backspace_clean.png'),
 };
 
 export default function LoginScreen({ onLoginSuccess, license }: Props) {
@@ -40,10 +40,22 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [checkingLicense, setCheckingLicense] = useState(false);
     const [licenseRevoked, setLicenseRevoked] = useState(false);
     const [revokeReason, setRevokeReason] = useState<string | undefined>(undefined);
+    const [businessInfo, setBusinessInfo] = useState<BusinessInfo>({
+        companyName: 'Alpha Rental Management',
+        phone: '0720316175',
+        email: 'info@arms.com',
+    });
 
     const shakeAnim = useRef(new Animated.Value(0)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const lockoutRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // ── Load business name from database on mount ──────────
+    useEffect(() => {
+        getBusinessInfo().then(info => {
+            if (info && info.companyName) setBusinessInfo(info);
+        }).catch(() => {});
+    }, []);
 
     // ── Check lockout on mount ─────────────────────────────
     useEffect(() => {
@@ -102,7 +114,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         if (key === 'fingerprint') {
             Alert.alert(
                 'Biometric PIN',
-                'Please enter your 4-6 digit assigned PIN to log into your account securely.',
+                `Please enter your 4-6 digit assigned PIN to log into your account securely.\nNeed help? Call ${businessInfo.phone}`,
                 [{ text: 'OK' }]
             );
             return;
@@ -116,7 +128,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
             Animated.timing(pulseAnim, { toValue: 1.05, duration: 80, useNativeDriver: true }),
             Animated.timing(pulseAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
         ]).start();
-    }, [pin, isLoading, lockoutSeconds]);
+    }, [pin, isLoading, lockoutSeconds, businessInfo.phone]);
 
     const handleDelete = useCallback(() => {
         if (isLoading || lockoutSeconds > 0) return;
@@ -151,7 +163,6 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 await clearRateLimit();
                 await saveSession(tenant);
 
-                // Register push notification token
                 setupNotifications()
                     .then(() => registerPushToken(tenant.tenant_id))
                     .catch(() => {});
@@ -169,7 +180,6 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         setRevokeReason(licenseResult.reason);
                     } else {
                         onLoginSuccess(tenant);
-                        // Check pending agreement in background
                         getPendingAgreement(tenant.tenant_id).then(pending => {
                             if (pending) {
                                 import('@react-native-async-storage/async-storage').then(({ default: AS }) => {
@@ -179,7 +189,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         }).catch(() => {});
                     }
                 } catch {
-                    onLoginSuccess(tenant); // fail-open
+                    onLoginSuccess(tenant);
                 } finally {
                     setCheckingLicense(false);
                 }
@@ -225,15 +235,39 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         ['fingerprint', '0', 'delete'],
     ];
 
+    const displayCompanyName = license?.clientName || businessInfo.companyName;
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            {/* ════ Full Screen Luxury Villa & Silk Wave Backdrop ════ */}
-            <Image
-                source={ASSETS.bgFull}
+            {/* ════ CLEAN RADIANT EMERALD GRADIENT BACKDROP ════ */}
+            <LinearGradient
+                colors={['#022c22', '#064e3b', '#047857', '#022c22']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFillObject}
+            />
+
+            {/* Top-Right Modern Luxury Villa Visual */}
+            <Image
+                source={ASSETS.villa}
+                style={styles.villaBackdrop}
                 resizeMode="cover"
+            />
+            {/* Fade overlay so building blends into the emerald silk gradient */}
+            <LinearGradient
+                colors={['rgba(2,44,34,0.95)', 'rgba(4,120,87,0.65)', 'rgba(2,44,34,0.1)']}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.villaFade}
+            />
+
+            {/* Bottom-Left Botanical Art with "Your Property, Our Priority!" */}
+            <Image
+                source={ASSETS.bottomLeftArt}
+                style={styles.bottomLeftArt}
+                resizeMode="contain"
             />
 
             {/* ════ License Gate Modal (If Revoked) ════ */}
@@ -275,192 +309,207 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 </View>
             )}
 
-            <ScrollView
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-            >
-                {/* Top spacer to align nicely over the background header */}
-                <View style={{ height: (StatusBar.currentHeight || 36) + 160 }} />
+            <SafeAreaView style={styles.safeArea}>
+                {/* ══════════════════════════════════════════════════════
+                    1. TOP BRAND HEADER (Dynamic Landlord / Business Name)
+                ══════════════════════════════════════════════════════ */}
+                <View style={styles.topBrandHeader}>
+                    <Image source={ASSETS.logo} style={styles.brandLogo} />
+
+                    <View style={styles.brandTextCol}>
+                        <Text style={styles.brandTitle} numberOfLines={1}>
+                            {displayCompanyName.toUpperCase()}
+                        </Text>
+                        <Text style={styles.brandSubtitle}>Rental Management</Text>
+                        <Text style={styles.brandTagline}>Smart Rentals. Better Living.</Text>
+                    </View>
+                </View>
 
                 {/* ══════════════════════════════════════════════════════
-                    CENTRAL FLOATING FROSTED GLASS LOGIN CARD
+                    2. CENTRAL FLOATING CURVY FROSTED GLASS LOGIN CARD
                 ══════════════════════════════════════════════════════ */}
-                <Animated.View
-                    style={[
-                        styles.glassCard,
-                        {
-                            transform: [
-                                { translateX: shakeAnim },
-                                { scale: pulseAnim },
-                            ],
-                        },
-                    ]}
-                >
-                    {/* Glowing Shield Padlock Badge on Top Rim */}
-                    <Image
-                        source={ASSETS.shieldBadge}
-                        style={styles.shieldBadge}
-                        resizeMode="contain"
-                    />
-
-                    {/* Card Title & Subtitle */}
-                    <Text style={styles.cardTitle}>Secure Login</Text>
-                    <Text style={styles.cardSubtitle}>Enter your PIN to access your account</Text>
-
-                    {/* PIN Indicator Dots (6 Circles) */}
-                    <View style={styles.pinDotsRow}>
-                        {Array.from({ length: 6 }).map((_, i) => {
-                            const isFilled = i < pin.length;
-                            const isLatest = i === pin.length - 1;
-                            return (
-                                <View
-                                    key={i}
-                                    style={[
-                                        styles.dot,
-                                        isFilled ? styles.dotFilled : styles.dotEmpty,
-                                        isLatest && styles.dotLatest,
-                                    ]}
-                                >
-                                    {isFilled && <View style={styles.dotInnerGlow} />}
-                                </View>
-                            );
-                        })}
-                    </View>
-
-                    {/* Error message */}
-                    {error ? (
-                        <View style={styles.errorBanner}>
-                            <Text style={styles.errorText}>⚠️ {error}</Text>
-                        </View>
-                    ) : null}
-
-                    {/* Keypad Grid (4 Rows x 3 Columns) */}
-                    <View style={styles.keypadGrid}>
-                        {KEYS.map((row, ri) => (
-                            <View key={ri} style={styles.keyRow}>
-                                {row.map((key, ki) => {
-                                    if (key === 'fingerprint') {
-                                        return (
-                                            <TouchableOpacity
-                                                key={ki}
-                                                style={styles.keyBtn}
-                                                activeOpacity={0.7}
-                                                onPress={() => handleKeyPress('fingerprint')}
-                                                disabled={isLoading || lockoutSeconds > 0}
-                                            >
-                                                <Image
-                                                    source={ASSETS.keyFingerprint}
-                                                    style={styles.keyIconImg}
-                                                    resizeMode="contain"
-                                                />
-                                            </TouchableOpacity>
-                                        );
-                                    }
-
-                                    if (key === 'delete') {
-                                        return (
-                                            <TouchableOpacity
-                                                key={ki}
-                                                style={styles.keyBtn}
-                                                activeOpacity={0.7}
-                                                onPress={handleDelete}
-                                                disabled={isLoading || lockoutSeconds > 0}
-                                            >
-                                                <Image
-                                                    source={ASSETS.keyBackspace}
-                                                    style={styles.keyIconImg}
-                                                    resizeMode="contain"
-                                                />
-                                            </TouchableOpacity>
-                                        );
-                                    }
-
-                                    return (
-                                        <TouchableOpacity
-                                            key={ki}
-                                            style={styles.keyBtn}
-                                            activeOpacity={0.75}
-                                            onPress={() => handleKeyPress(key)}
-                                            disabled={isLoading || lockoutSeconds > 0}
-                                        >
-                                            <Text style={styles.keyNumberText}>{key}</Text>
-                                        </TouchableOpacity>
-                                    );
-                                })}
-                            </View>
-                        ))}
-                    </View>
-
-                    {/* "Login to Portal" Glowing Action Button */}
-                    <TouchableOpacity
+                <View style={styles.cardCenterWrapper}>
+                    <Animated.View
                         style={[
-                            styles.loginPortalBtn,
-                            (pin.length < 4 || isLoading || lockoutSeconds > 0) && styles.loginBtnDisabled,
+                            styles.curvyGlassCard,
+                            {
+                                transform: [
+                                    { translateX: shakeAnim },
+                                    { scale: pulseAnim },
+                                ],
+                            },
                         ]}
-                        activeOpacity={0.85}
-                        onPress={handleLogin}
-                        disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
                     >
-                        <LinearGradient
-                            colors={
-                                pin.length >= 4 && lockoutSeconds === 0
-                                    ? ['#00C853', '#00E676', '#047857']
-                                    : ['#64748b', '#475569']
-                            }
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={styles.loginBtnGrad}
-                        >
-                            {isLoading ? (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                    <ActivityIndicator color="#fff" size="small" />
-                                    <Text style={styles.loginBtnText}>Verifying…</Text>
-                                </View>
-                            ) : (
-                                <>
-                                    <Text style={styles.loginPortalIcon}>➔]</Text>
-                                    <Text style={styles.loginBtnText}>Login to Portal</Text>
-                                    <Image
-                                        source={ASSETS.btnArrow}
-                                        style={styles.btnArrowImg}
-                                        resizeMode="contain"
-                                    />
-                                </>
-                            )}
-                        </LinearGradient>
-                    </TouchableOpacity>
-
-                    {/* Trust & Support Strip */}
-                    <View style={styles.trustStrip}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                            <Text style={{ fontSize: 12 }}>🛡️</Text>
-                            <Text style={styles.trustText}>Secure & Encrypted</Text>
-                        </View>
-                        <Text style={styles.trustDivider}>|</Text>
-                        <TouchableOpacity
-                            activeOpacity={0.7}
-                            onPress={() => {
-                                Alert.alert(
-                                    'ARMS Support',
-                                    'Contact Property Management:\n📞 Phone: 0720316175\n📧 Email: info@arms.co.ke',
-                                    [{ text: 'OK' }]
-                                );
-                            }}
-                        >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                                <Text style={{ fontSize: 12 }}>🎧</Text>
-                                <Text style={styles.trustText}>Need Help? Contact Support</Text>
+                        {/* Glowing Emerald Shield Lock Badge on Top Rim */}
+                        <View style={styles.shieldBadgeContainer}>
+                            <View style={styles.shieldOuterRing}>
+                                <LinearGradient
+                                    colors={['#00E676', '#00C853', '#047857']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.shieldInner}
+                                >
+                                    <Text style={{ fontSize: 24 }}>🔒</Text>
+                                </LinearGradient>
                             </View>
-                        </TouchableOpacity>
-                    </View>
-                </Animated.View>
+                        </View>
 
-                {/* Bottom App Version */}
-                <Text style={styles.versionText}>
+                        {/* Card Title & Subtitle */}
+                        <Text style={styles.cardTitle}>Secure Login</Text>
+                        <Text style={styles.cardSubtitle}>Enter your PIN to access your account</Text>
+
+                        {/* PIN Indicator Dots (6 Circles) */}
+                        <View style={styles.pinDotsRow}>
+                            {Array.from({ length: 6 }).map((_, i) => {
+                                const isFilled = i < pin.length;
+                                const isLatest = i === pin.length - 1;
+                                return (
+                                    <View
+                                        key={i}
+                                        style={[
+                                            styles.dot,
+                                            isFilled ? styles.dotFilled : styles.dotEmpty,
+                                            isLatest && styles.dotLatest,
+                                        ]}
+                                    >
+                                        {isFilled && <View style={styles.dotInnerGlow} />}
+                                    </View>
+                                );
+                            })}
+                        </View>
+
+                        {/* Error banner */}
+                        {error ? (
+                            <View style={styles.errorBanner}>
+                                <Text style={styles.errorText}>⚠️ {error}</Text>
+                            </View>
+                        ) : null}
+
+                        {/* Keypad Grid (4 Rows x 3 Columns) */}
+                        <View style={styles.keypadGrid}>
+                            {KEYS.map((row, ri) => (
+                                <View key={ri} style={styles.keyRow}>
+                                    {row.map((key, ki) => {
+                                        if (key === 'fingerprint') {
+                                            return (
+                                                <TouchableOpacity
+                                                    key={ki}
+                                                    style={styles.keyBtn}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => handleKeyPress('fingerprint')}
+                                                    disabled={isLoading || lockoutSeconds > 0}
+                                                >
+                                                    <Image
+                                                        source={ASSETS.keyFingerprintClean}
+                                                        style={styles.keyFingerprintImg}
+                                                        resizeMode="contain"
+                                                    />
+                                                </TouchableOpacity>
+                                            );
+                                        }
+
+                                        if (key === 'delete') {
+                                            return (
+                                                <TouchableOpacity
+                                                    key={ki}
+                                                    style={styles.keyBtn}
+                                                    activeOpacity={0.7}
+                                                    onPress={handleDelete}
+                                                    disabled={isLoading || lockoutSeconds > 0}
+                                                >
+                                                    <Image
+                                                        source={ASSETS.keyBackspaceClean}
+                                                        style={styles.keyBackspaceImg}
+                                                        resizeMode="contain"
+                                                    />
+                                                </TouchableOpacity>
+                                            );
+                                        }
+
+                                        return (
+                                            <TouchableOpacity
+                                                key={ki}
+                                                style={styles.keyBtn}
+                                                activeOpacity={0.75}
+                                                onPress={() => handleKeyPress(key)}
+                                                disabled={isLoading || lockoutSeconds > 0}
+                                            >
+                                                <Text style={styles.keyNumberText}>{key}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            ))}
+                        </View>
+
+                        {/* "Login to Portal" Glowing Action Button */}
+                        <TouchableOpacity
+                            style={[
+                                styles.loginPortalBtn,
+                                (pin.length < 4 || isLoading || lockoutSeconds > 0) && styles.loginBtnDisabled,
+                            ]}
+                            activeOpacity={0.85}
+                            onPress={handleLogin}
+                            disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
+                        >
+                            <LinearGradient
+                                colors={
+                                    pin.length >= 4 && lockoutSeconds === 0
+                                        ? ['#00C853', '#00E676', '#047857']
+                                        : ['#64748b', '#475569']
+                                }
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.loginBtnGrad}
+                            >
+                                {isLoading ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <ActivityIndicator color="#fff" size="small" />
+                                        <Text style={styles.loginBtnText}>Verifying…</Text>
+                                    </View>
+                                ) : (
+                                    <>
+                                        <Text style={styles.loginPortalIcon}>➔]</Text>
+                                        <Text style={styles.loginBtnText}>Login to Portal</Text>
+                                        <View style={styles.arrowCircleBadge}>
+                                            <Text style={styles.arrowChevron}>❯</Text>
+                                        </View>
+                                    </>
+                                )}
+                            </LinearGradient>
+                        </TouchableOpacity>
+
+                        {/* Trust & Support Strip */}
+                        <View style={styles.trustStrip}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Text style={{ fontSize: 11 }}>🛡️</Text>
+                                <Text style={styles.trustText}>Secure & Encrypted</Text>
+                            </View>
+                            <Text style={styles.trustDivider}>|</Text>
+                            <TouchableOpacity
+                                activeOpacity={0.7}
+                                onPress={() => {
+                                    Alert.alert(
+                                        'Support Contact',
+                                        `${displayCompanyName}\n📞 Phone: ${businessInfo.phone}\n📧 Email: ${businessInfo.email}`,
+                                        [{ text: 'OK' }]
+                                    );
+                                }}
+                            >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <Text style={{ fontSize: 11 }}>🎧</Text>
+                                    <Text style={styles.trustText}>Need Help? Contact Support</Text>
+                                </View>
+                            </TouchableOpacity>
+                        </View>
+                    </Animated.View>
+                </View>
+
+                {/* Bottom App Version Footer */}
+                <Text style={styles.versionFooterText}>
                     ARMS Mobile {APP_VERSION} • Developed by Jimhawkins Korir
                 </Text>
-            </ScrollView>
+            </SafeAreaView>
         </View>
     );
 }
@@ -470,70 +519,163 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#022c22',
     },
-    scrollContent: {
-        flexGrow: 1,
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingBottom: 24,
+    safeArea: {
+        flex: 1,
+        justifyContent: 'space-between',
+        paddingBottom: 8,
+    },
+    villaBackdrop: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: SCREEN_WIDTH * 0.58,
+        height: 220,
+        opacity: 0.75,
+    },
+    villaFade: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: SCREEN_WIDTH * 0.58,
+        height: 220,
+    },
+    bottomLeftArt: {
+        position: 'absolute',
+        bottom: 8,
+        left: 0,
+        width: 120,
+        height: 220,
+        opacity: 0.6,
     },
 
-    // ── Floating Glass Card ──
-    glassCard: {
-        width: Math.min(SCREEN_WIDTH * 0.92, 380),
-        backgroundColor: 'rgba(255, 255, 255, 0.94)',
-        borderRadius: 36,
-        paddingTop: 42,
+    // ── 1. Top Brand Header ──
+    topBrandHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingTop: (StatusBar.currentHeight || 36) + 6,
+        paddingHorizontal: 20,
+    },
+    brandLogo: {
+        width: 56,
+        height: 56,
+        borderRadius: 16,
+        marginRight: 12,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.4)',
+    },
+    brandTextCol: {
+        flex: 1,
+    },
+    brandTitle: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: '900',
+        letterSpacing: 0.5,
+        textShadowColor: 'rgba(0, 0, 0, 0.6)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+    },
+    brandSubtitle: {
+        color: '#fbbf24',
+        fontSize: 13,
+        fontWeight: '800',
+        marginTop: 1,
+        letterSpacing: 0.3,
+    },
+    brandTagline: {
+        color: '#ffffff',
+        fontSize: 11,
+        fontStyle: 'italic',
+        fontWeight: '500',
+        marginTop: 1,
+        opacity: 0.9,
+    },
+
+    // ── 2. Curvy Frosted Glass Card ──
+    cardCenterWrapper: {
+        alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 16,
-        paddingBottom: 20,
+        marginVertical: 10,
+    },
+    curvyGlassCard: {
+        width: Math.min(SCREEN_WIDTH * 0.92, 380),
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: 36,
+        paddingTop: 36,
+        paddingHorizontal: 16,
+        paddingBottom: 16,
         position: 'relative',
         borderWidth: 1.5,
-        borderColor: 'rgba(52, 211, 153, 0.5)',
+        borderColor: 'rgba(52, 211, 153, 0.6)',
         shadowColor: '#00E676',
-        shadowOffset: { width: 0, height: 12 },
+        shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.35,
         shadowRadius: 24,
         elevation: 16,
     },
-    shieldBadge: {
+
+    // Shield Lock Badge on Top
+    shieldBadgeContainer: {
         position: 'absolute',
-        top: -38,
+        top: -32,
         alignSelf: 'center',
-        width: 76,
-        height: 76,
+        zIndex: 10,
     },
+    shieldOuterRing: {
+        width: 64,
+        height: 64,
+        borderRadius: 22,
+        backgroundColor: 'rgba(0, 230, 118, 0.25)',
+        padding: 4,
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.8,
+        shadowRadius: 14,
+        elevation: 12,
+    },
+    shieldInner: {
+        flex: 1,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: 'rgba(255, 255, 255, 0.9)',
+    },
+
     cardTitle: {
-        fontSize: 22,
+        fontSize: 21,
         fontWeight: '900',
         color: '#0f172a',
         textAlign: 'center',
         letterSpacing: 0.3,
     },
     cardSubtitle: {
-        fontSize: 12.5,
+        fontSize: 12,
         fontWeight: '600',
         color: '#64748b',
         textAlign: 'center',
-        marginTop: 4,
-        marginBottom: 16,
+        marginTop: 2,
+        marginBottom: 12,
     },
 
-    // ── PIN Dots Indicator ──
+    // PIN Indicator Dots
     pinDotsRow: {
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
         gap: 12,
-        marginBottom: 14,
+        marginBottom: 12,
     },
     dot: {
-        width: 18,
-        height: 18,
-        borderRadius: 9,
+        width: 16,
+        height: 16,
+        borderRadius: 8,
         justifyContent: 'center',
         alignItems: 'center',
     },
     dotEmpty: {
-        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
         borderWidth: 2,
         borderColor: '#94a3b8',
     },
@@ -551,41 +693,40 @@ const styles = StyleSheet.create({
         transform: [{ scale: 1.15 }],
     },
     dotInnerGlow: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
+        width: 5,
+        height: 5,
+        borderRadius: 2.5,
         backgroundColor: '#ffffff',
     },
 
-    // ── Error Banner ──
     errorBanner: {
         backgroundColor: '#fee2e2',
         borderWidth: 1,
         borderColor: '#fca5a5',
-        borderRadius: 12,
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        marginBottom: 10,
+        borderRadius: 10,
+        paddingVertical: 5,
+        paddingHorizontal: 8,
+        marginBottom: 8,
         alignItems: 'center',
     },
     errorText: {
         color: '#b91c1c',
-        fontSize: 11.5,
+        fontSize: 11,
         fontWeight: '700',
     },
 
-    // ── Keypad Grid ──
+    // Keypad Grid
     keypadGrid: {
-        marginBottom: 12,
+        marginBottom: 10,
     },
     keyRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 8,
+        marginBottom: 7,
     },
     keyBtn: {
         flex: 1,
-        height: 52,
+        height: 48,
         marginHorizontal: 4,
         borderRadius: 18,
         backgroundColor: '#ffffff',
@@ -594,91 +735,107 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#64748b',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 5,
         elevation: 3,
     },
     keyNumberText: {
-        fontSize: 22,
+        fontSize: 21,
         fontWeight: '800',
         color: '#0f172a',
     },
-    keyIconImg: {
+    keyFingerprintImg: {
         width: 26,
         height: 26,
     },
+    keyBackspaceImg: {
+        width: 28,
+        height: 24,
+    },
 
-    // ── Login Button ──
+    // Login Portal Button
     loginPortalBtn: {
-        borderRadius: 27,
+        borderRadius: 25,
         overflow: 'hidden',
-        marginBottom: 12,
+        marginBottom: 10,
         shadowColor: '#00E676',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.45,
-        shadowRadius: 12,
-        elevation: 8,
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
+        elevation: 6,
     },
     loginBtnDisabled: {
         opacity: 0.7,
         shadowOpacity: 0.1,
     },
     loginBtnGrad: {
-        height: 54,
-        paddingHorizontal: 20,
+        height: 50,
+        paddingHorizontal: 18,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     loginPortalIcon: {
         color: '#ffffff',
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '900',
     },
     loginBtnText: {
         color: '#ffffff',
-        fontSize: 16,
+        fontSize: 15.5,
         fontWeight: '900',
-        letterSpacing: 0.5,
+        letterSpacing: 0.3,
     },
-    btnArrowImg: {
-        width: 32,
-        height: 32,
+    arrowCircleBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255, 255, 255, 0.25)',
+        borderWidth: 1.5,
+        borderColor: '#ffffff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    arrowChevron: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '900',
+        marginLeft: 1,
     },
 
-    // ── Trust & Support Strip ──
+    // Trust Strip
     trustStrip: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'rgba(2, 44, 34, 0.08)',
-        borderRadius: 18,
-        paddingVertical: 8,
+        borderRadius: 16,
+        paddingVertical: 7,
         paddingHorizontal: 10,
         borderWidth: 1,
         borderColor: 'rgba(16, 185, 129, 0.2)',
-        gap: 8,
+        gap: 6,
     },
     trustText: {
-        fontSize: 9.5,
+        fontSize: 9,
         color: '#065f46',
         fontWeight: '700',
     },
     trustDivider: {
         color: '#cbd5e1',
-        fontSize: 11,
+        fontSize: 10,
     },
 
-    // ── Version text ──
-    versionText: {
-        marginTop: 14,
+    // Version Footer Text
+    versionFooterText: {
+        textAlign: 'center',
         fontSize: 10,
         color: 'rgba(255, 255, 255, 0.65)',
         fontWeight: '600',
     },
 
-    // ── License Gate & Overlays ──
+    // Overlays
     gateContainer: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 999,

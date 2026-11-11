@@ -1444,6 +1444,34 @@ export async function signAgreement(
     if (error) throw new Error(error.message);
 }
 
+export interface BusinessInfo {
+    companyName: string;
+    phone: string;
+    email: string;
+}
+
+export async function getBusinessInfo(): Promise<BusinessInfo> {
+    try {
+        const { data, error } = await supabase
+            .from('arms_settings')
+            .select('setting_key, setting_value');
+        if (error) throw error;
+        const map = new Map((data || []).map((s: any) => [s.setting_key, s.setting_value]));
+        return {
+            companyName: map.get('company_name') || 'Alpha Rental Management',
+            phone: map.get('company_phone') || '0720316175',
+            email: map.get('company_email') || 'info@arms.com',
+        };
+    } catch {
+        return {
+            companyName: 'Alpha Rental Management',
+            phone: '0720316175',
+            email: 'info@arms.com',
+        };
+    }
+}
+
+
 
 
 
