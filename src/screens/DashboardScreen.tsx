@@ -5,9 +5,9 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-    TenantSession, BillingRecord, formatKES, formatMonth,
+    TenantSession, BillingRecord, PaymentRecord, formatKES, formatMonth,
     getTenantBilling, getUnpaidBilling, getTrueTotalBalance,
-    getTenantActivePenalties, TenantPenaltyInfo,
+    getTenantActivePenalties, getTenantPayments, TenantPenaltyInfo,
 } from '../lib/supabase';
 import { updateSessionBalance } from '../lib/security';
 import { setupNotifications, registerPushToken } from '../lib/notifications';
@@ -22,26 +22,11 @@ interface Props {
     unreadCount?: number;
 }
 
-// Asset paths
 const ASSETS = {
     villa: require('../../assets/dashboard/hero_villa_clean.png'),
     logo: require('../../assets/dashboard/arms_logo.png'),
     goldCoins: require('../../assets/dashboard/gold_coins.png'),
     warning: require('../../assets/dashboard/penalty_warning.png'),
-    chartCurve: require('../../assets/dashboard/chart_curve_only.png'),
-    sparkGreen: require('../../assets/dashboard/sparkline_green.png'),
-    sparkBlue: require('../../assets/dashboard/sparkline_blue.png'),
-    sparkPurple: require('../../assets/dashboard/sparkline_purple.png'),
-    sparkOrange: require('../../assets/dashboard/sparkline_orange.png'),
-    iconMoney: require('../../assets/dashboard/icon_money.png'),
-    iconChart: require('../../assets/dashboard/icon_chart.png'),
-    iconDoc: require('../../assets/dashboard/icon_doc.png'),
-    iconBox: require('../../assets/dashboard/icon_box.png'),
-    btnPay: require('../../assets/dashboard/btn_icon_pay.png'),
-    btnHistory: require('../../assets/dashboard/btn_icon_history.png'),
-    btnMsg: require('../../assets/dashboard/btn_icon_msg.png'),
-    btnProfile: require('../../assets/dashboard/btn_icon_profile.png'),
-    btnSettings: require('../../assets/dashboard/btn_icon_settings.png'),
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -75,6 +60,7 @@ export default function DashboardScreen({
 }: Props) {
     const [unpaidBills, setUnpaidBills] = useState<BillingRecord[]>([]);
     const [allBills, setAllBills] = useState<BillingRecord[]>([]);
+    const [payments, setPayments] = useState<PaymentRecord[]>([]);
     const [balance, setBalance] = useState(session.balance);
     const [effectiveRent, setEffectiveRent] = useState(session.monthly_rent);
     const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({
@@ -87,21 +73,24 @@ export default function DashboardScreen({
     const [refreshing, setRefreshing] = useState(false);
     const [showAll, setShowAll] = useState(false);
     const [chartRange, setChartRange] = useState<'6M' | '3M' | '1M'>('6M');
+    const [selectedMonthIndex, setSelectedMonthIndex] = useState<number | null>(null);
 
     const loadData = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const [unpaid, all, trueBalance, pen] = await Promise.all([
+            const [unpaid, all, trueBalance, pen, pmts] = await Promise.all([
                 getUnpaidBilling(session.tenant_id),
                 getTenantBilling(session.tenant_id),
                 getTrueTotalBalance(session.tenant_id),
                 getTenantActivePenalties(session.tenant_id),
+                getTenantPayments(session.tenant_id),
             ]);
             setUnpaidBills(unpaid);
             setAllBills(all);
             setBalance(trueBalance.total);
             setEffectiveRent(trueBalance.effectiveRent);
             setPenaltyInfo(pen);
+            setPayments(pmts || []);
             await updateSessionBalance(trueBalance.total);
         } catch (err: any) {
             console.error('Dashboard load error:', err.message);
@@ -129,59 +118,78 @@ export default function DashboardScreen({
     };
 
     // Derived values
-    const totalPaid = useMemo(() => {
-        return allBills.reduce((s, b) => s + (b.amount_paid || 0), 0);
-    }, [allBills]);
-
-    const paidCount = useMemo(() => {
-        return allBills.filter(b => b.status === 'Paid').length;
-    }, [allBills]);
+    const currentMonthStr = new Date().toISOString().slice(0, 7);
+    const totalArrears = unpaidBills.reduce((s, b) => s + (b.balance || 0), 0);
+    const currentBill = unpaidBills.find(b => b.billing_month === currentMonthStr);
+    const arrearsOnly = totalArrears - (currentBill?.balance || 0);
+    const totalDue = balance + penaltyInfo.totalPenalty;
+    const hasPenalty = penaltyInfo.totalPenalty > 0;
 
     const displayBills = showAll ? allBills : unpaidBills;
-    const currentMonthStr = new Date().toISOString().slice(0, 7);
-
-    // Compute past 6 months labels for trend chart
-    const monthLabels = useMemo(() => {
-        const labels: string[] = [];
-        const now = new Date();
-        for (let i = 5; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            labels.push(d.toLocaleDateString('en-US', { month: 'short' }));
-        }
-        return labels;
-    }, []);
-
-    // Payment Trend total based on selected range
-    const trendTotal = useMemo(() => {
-        const monthsCount = chartRange === '1M' ? 1 : chartRange === '3M' ? 3 : 6;
-        const recentBills = [...allBills]
-            .sort((a, b) => b.billing_month.localeCompare(a.billing_month))
-            .slice(0, monthsCount);
-        const sum = recentBills.reduce((s, b) => s + (b.amount_paid || 0), 0);
-        return sum > 0 ? sum : 24500; // sensible fallback matching aesthetic
-    }, [allBills, chartRange]);
 
     const formattedMoveIn = useMemo(() => {
-        if (!session.move_in_date) return 'Mar 26';
+        if (!session.move_in_date) return 'Apr 1';
         try {
             const d = new Date(session.move_in_date);
             return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         } catch {
-            return 'Mar 26';
+            return 'Apr 1';
         }
     }, [session.move_in_date]);
+
+    // ── REAL PAYMENT TREND DATA FROM DATABASE ────────────────
+    const trendData = useMemo(() => {
+        const monthsCount = chartRange === '1M' ? 1 : chartRange === '3M' ? 3 : 6;
+        const now = new Date();
+        const result: { monthKey: string; label: string; amount: number }[] = [];
+
+        for (let i = monthsCount - 1; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const label = d.toLocaleDateString('en-US', { month: 'short' });
+
+            // 1. Calculate from real payments in arms_payments
+            let monthPaid = 0;
+            if (payments && payments.length > 0) {
+                monthPaid = payments
+                    .filter(p => {
+                        const pDate = p.payment_date || p.created_at || '';
+                        return pDate.startsWith(monthKey);
+                    })
+                    .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+            }
+
+            // 2. If no payment timestamp match, check billing record amount_paid
+            if (monthPaid === 0 && allBills && allBills.length > 0) {
+                const bill = allBills.find(b => b.billing_month === monthKey);
+                if (bill && bill.amount_paid > 0) {
+                    monthPaid = Number(bill.amount_paid) || 0;
+                }
+            }
+
+            result.push({ monthKey, label, amount: monthPaid });
+        }
+
+        return result;
+    }, [payments, allBills, chartRange]);
+
+    const totalRangePayments = useMemo(() => {
+        return trendData.reduce((s, m) => s + m.amount, 0);
+    }, [trendData]);
+
+    const maxChartAmount = useMemo(() => {
+        const peak = Math.max(...trendData.map(d => d.amount), effectiveRent || 4500);
+        return peak > 0 ? peak : 4500;
+    }, [trendData, effectiveRent]);
 
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#10b981" />
-                <Text style={styles.loadingText}>Loading your premium dashboard…</Text>
+                <Text style={styles.loadingText}>Loading your account…</Text>
             </View>
         );
     }
-
-    const hasPenalty = penaltyInfo.totalPenalty > 0;
-    const totalDue = balance + penaltyInfo.totalPenalty;
 
     return (
         <View style={styles.container}>
@@ -196,7 +204,7 @@ export default function DashboardScreen({
                 showsVerticalScrollIndicator={false}
             >
                 {/* ══════════════════════════════════════════════════════
-                    1. TOP HERO HEADER (Lush Green + Modern Villa)
+                    1. TOP HERO HEADER (Preserved as requested)
                 ══════════════════════════════════════════════════════ */}
                 <View style={styles.heroWrapper}>
                     <LinearGradient
@@ -205,13 +213,12 @@ export default function DashboardScreen({
                         end={{ x: 1, y: 1 }}
                         style={styles.heroBackground}
                     >
-                        {/* Right side Luxury Villa Architecture */}
+                        {/* Luxury Villa Visual */}
                         <Image
                             source={ASSETS.villa}
                             style={styles.heroVillaImage}
                             resizeMode="cover"
                         />
-                        {/* Gradient shade over building so text on left pops */}
                         <LinearGradient
                             colors={['rgba(2,44,34,0.95)', 'rgba(4,120,87,0.7)', 'rgba(2,44,34,0.1)']}
                             start={{ x: 0, y: 0.5 }}
@@ -219,7 +226,7 @@ export default function DashboardScreen({
                             style={StyleSheet.absoluteFillObject}
                         />
 
-                        {/* Top Action Row: Logo, Tenant Info & Notification Bell */}
+                        {/* Top Row: App Logo, Name, Phone & Notification Bell */}
                         <View style={styles.heroTopRow}>
                             <Image source={ASSETS.logo} style={styles.heroLogo} />
 
@@ -235,7 +242,6 @@ export default function DashboardScreen({
                                 </View>
                             </View>
 
-                            {/* Top Right Bell Icon */}
                             <TouchableOpacity
                                 style={styles.bellBtn}
                                 activeOpacity={0.8}
@@ -257,14 +263,14 @@ export default function DashboardScreen({
                             <View style={styles.heroChip}>
                                 <Text style={styles.heroChipLabel}>🛏️ Room</Text>
                                 <Text style={styles.heroChipValue} numberOfLines={1}>
-                                    {session.unit_name ? `ROOM ${session.unit_name.replace(/room/i, '').trim()}` : 'ROOM 3'}
+                                    {session.unit_name ? `ROOM ${session.unit_name.replace(/room/i, '').trim()}` : 'ROOM 28'}
                                 </Text>
                             </View>
 
                             <View style={styles.heroChip}>
                                 <Text style={styles.heroChipLabel}>📍 Location</Text>
                                 <Text style={styles.heroChipValue} numberOfLines={1}>
-                                    {session.location_name || 'MM'}
+                                    {session.location_name || 'HIGHRISE'}
                                 </Text>
                             </View>
 
@@ -279,211 +285,206 @@ export default function DashboardScreen({
                 </View>
 
                 {/* ══════════════════════════════════════════════════════
-                    2. METRICS CARDS (4 Glassmorphism Gradient Cards)
-                ══════════════════════════════════════════════════════ */}
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.metricsScroll}
-                    decelerationRate="fast"
-                    snapToInterval={SCREEN_WIDTH * 0.42 + 10}
-                >
-                    {/* Card 1: Emerald Green — Today's / Monthly Rent */}
-                    <LinearGradient
-                        colors={['#064e3b', '#022c22']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 0.8, y: 1 }}
-                        style={[styles.metricCard, styles.metricCardGreen]}
-                    >
-                        <View style={styles.metricTopHighlight} />
-                        <View style={styles.metricHeader}>
-                            <Image source={ASSETS.iconMoney} style={styles.metricIconImg} />
-                        </View>
-                        <Text style={styles.metricValue}>
-                            {formatKES(effectiveRent || session.monthly_rent)}
-                        </Text>
-                        <Text style={styles.metricLabel}>Today's Rent</Text>
-                        <Text style={[styles.metricTrend, { color: '#34d399' }]}>↑ +48.4%</Text>
-                        <Image
-                            source={ASSETS.sparkGreen}
-                            style={styles.metricSparkline}
-                            resizeMode="stretch"
-                        />
-                    </LinearGradient>
-
-                    {/* Card 2: Sky Blue — Today's Profit / Total Paid */}
-                    <LinearGradient
-                        colors={['#0369a1', '#082f49']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 0.8, y: 1 }}
-                        style={[styles.metricCard, styles.metricCardBlue]}
-                    >
-                        <View style={styles.metricTopHighlight} />
-                        <View style={styles.metricHeader}>
-                            <Image source={ASSETS.iconChart} style={styles.metricIconImg} />
-                        </View>
-                        <Text style={styles.metricValue}>
-                            {formatKES(totalPaid > 0 ? totalPaid : 9171)}
-                        </Text>
-                        <Text style={styles.metricLabel}>Today's Profit</Text>
-                        <Text style={[styles.metricTrend, { color: '#38bdf8' }]}>↑ +41.3%</Text>
-                        <Image
-                            source={ASSETS.sparkBlue}
-                            style={styles.metricSparkline}
-                            resizeMode="stretch"
-                        />
-                    </LinearGradient>
-
-                    {/* Card 3: Royal Purple — Total Transactions */}
-                    <LinearGradient
-                        colors={['#6d28d9', '#2e1065']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 0.8, y: 1 }}
-                        style={[styles.metricCard, styles.metricCardPurple]}
-                    >
-                        <View style={styles.metricTopHighlight} />
-                        <View style={styles.metricHeader}>
-                            <Image source={ASSETS.iconDoc} style={styles.metricIconImg} />
-                        </View>
-                        <Text style={styles.metricValue}>
-                            {paidCount > 0 ? paidCount : 31}
-                        </Text>
-                        <Text style={styles.metricLabel}>Total Transactions</Text>
-                        <Text style={[styles.metricTrend, { color: '#c084fc' }]}>↑ +20.5%</Text>
-                        <Image
-                            source={ASSETS.sparkPurple}
-                            style={styles.metricSparkline}
-                            resizeMode="stretch"
-                        />
-                    </LinearGradient>
-
-                    {/* Card 4: Warm Amber — Active Units / Deposit */}
-                    <LinearGradient
-                        colors={['#c2410c', '#431407']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 0.8, y: 1 }}
-                        style={[styles.metricCard, styles.metricCardOrange]}
-                    >
-                        <View style={styles.metricTopHighlight} />
-                        <View style={styles.metricHeader}>
-                            <Image source={ASSETS.iconBox} style={styles.metricIconImg} />
-                        </View>
-                        <Text style={styles.metricValue}>
-                            {session.deposit_paid ? formatKES(session.deposit_paid) : '1,272'}
-                        </Text>
-                        <Text style={styles.metricLabel}>Active Units</Text>
-                        <Text style={[styles.metricTrend, { color: '#fb923c' }]}>↑ +0.8%</Text>
-                        <Image
-                            source={ASSETS.sparkOrange}
-                            style={styles.metricSparkline}
-                            resizeMode="stretch"
-                        />
-                    </LinearGradient>
-                </ScrollView>
-
-                {/* ══════════════════════════════════════════════════════
-                    3. LATE RENT PENALTY / RENT STATUS ALERT BANNER
+                    2. LATE RENT PENALTY (Organized, Slim & Sleek - Image 3 Style)
                 ══════════════════════════════════════════════════════ */}
                 {hasPenalty ? (
                     <LinearGradient
-                        colors={['#e11d48', '#be123c', '#881337']}
+                        colors={['#e11d48', '#be123c', '#9f1239']}
                         start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.penaltyBanner}
+                        end={{ x: 1, y: 0.8 }}
+                        style={styles.slimPenaltyCard}
                     >
-                        <View style={styles.penaltyInner}>
-                            {/* Left 3D Yellow Warning Icon */}
-                            <Image source={ASSETS.warning} style={styles.penaltyWarningImg} />
+                        <View style={styles.slimPenaltyRow}>
+                            {/* Left Warning Icon Circle */}
+                            <View style={styles.slimWarningCircle}>
+                                <Text style={{ fontSize: 24 }}>⚠️</Text>
+                            </View>
 
                             {/* Middle Information */}
-                            <View style={styles.penaltyCenter}>
-                                <Text style={styles.penaltyHeading}>Late Rent Penalty Applied</Text>
-                                <Text style={styles.penaltySubtitle}>
+                            <View style={styles.slimPenaltyCenter}>
+                                <Text style={styles.slimPenaltyTitle}>Late Rent Penalty Applied</Text>
+                                <Text style={styles.slimPenaltySub} numberOfLines={1}>
                                     Daily penalty of KES {penaltyInfo.dailyRate || 100}/day applied from 6th of the month.
                                 </Text>
-
-                                <View style={styles.penaltyStatsRow}>
-                                    <View>
-                                        <Text style={styles.penaltyStatLabel}>Unpaid Rent:</Text>
-                                        <Text style={styles.penaltyStatVal}>{formatKES(balance)}</Text>
-                                    </View>
-                                    <View style={styles.penaltyStatDivider} />
-                                    <View>
-                                        <Text style={styles.penaltyStatLabel}>Accrued Penalty:</Text>
-                                        <Text style={[styles.penaltyStatVal, { color: '#fecdd3' }]}>
-                                            +{formatKES(penaltyInfo.totalPenalty)}
-                                        </Text>
-                                    </View>
+                                <View style={styles.slimPenaltyStatsRow}>
+                                    <Text style={styles.slimStatLabel}>Unpaid Rent: </Text>
+                                    <Text style={styles.slimStatBold}>{formatKES(balance)}</Text>
+                                    <View style={styles.slimStatDivider} />
+                                    <Text style={styles.slimStatLabel}>Accrued Penalty: </Text>
+                                    <Text style={[styles.slimStatBold, { color: '#fecdd3' }]}>
+                                        +{formatKES(penaltyInfo.totalPenalty)}
+                                    </Text>
                                 </View>
                             </View>
 
-                            {/* Right Badge & Action Button */}
-                            <View style={styles.penaltyRightCol}>
-                                <View style={styles.penaltyDaysBadge}>
-                                    <Text style={styles.penaltyDaysText}>
+                            {/* Right Action & Badge */}
+                            <View style={styles.slimPenaltyRight}>
+                                <View style={styles.slimDaysBadge}>
+                                    <Text style={styles.slimDaysText}>
                                         ⏰ {penaltyInfo.penaltyDays || 6} Days Overdue
                                     </Text>
                                 </View>
 
                                 <TouchableOpacity
-                                    style={styles.penaltyActionBtn}
+                                    style={styles.slimActionBtn}
                                     activeOpacity={0.85}
                                     onPress={onPayRent}
                                 >
-                                    <Text style={styles.penaltyActionText}>View Details →</Text>
+                                    <Text style={styles.slimActionBtnText}>View Details →</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
                     </LinearGradient>
                 ) : balance > 0 ? (
-                    /* Active Rent Due (No penalty yet) */
+                    /* Current Rent Due Banner */
                     <LinearGradient
                         colors={['#1e293b', '#0f172a']}
-                        style={[styles.penaltyBanner, { borderColor: '#3b82f6' }]}
+                        style={[styles.slimPenaltyCard, { borderColor: '#3b82f6' }]}
                     >
-                        <View style={styles.penaltyInner}>
-                            <Text style={{ fontSize: 32, marginRight: 10 }}>💳</Text>
-                            <View style={styles.penaltyCenter}>
-                                <Text style={styles.penaltyHeading}>Current Month Rent Due</Text>
-                                <Text style={styles.penaltySubtitle}>
-                                    Pay before 6th of the month to avoid daily late penalties.
-                                </Text>
-                                <Text style={[styles.penaltyStatVal, { color: '#60a5fa', marginTop: 4 }]}>
-                                    Total Outstanding: {formatKES(balance)}
+                        <View style={styles.slimPenaltyRow}>
+                            <View style={[styles.slimWarningCircle, { backgroundColor: 'rgba(59,130,246,0.2)' }]}>
+                                <Text style={{ fontSize: 22 }}>💳</Text>
+                            </View>
+                            <View style={styles.slimPenaltyCenter}>
+                                <Text style={styles.slimPenaltyTitle}>Current Rent Due</Text>
+                                <Text style={styles.slimPenaltySub}>Pay before the 6th to keep your account clear.</Text>
+                                <Text style={[styles.slimStatBold, { color: '#60a5fa', marginTop: 2 }]}>
+                                    Total Due: {formatKES(balance)}
                                 </Text>
                             </View>
                             <TouchableOpacity
-                                style={[styles.penaltyActionBtn, { backgroundColor: '#2563eb' }]}
+                                style={[styles.slimActionBtn, { backgroundColor: '#2563eb' }]}
                                 activeOpacity={0.85}
                                 onPress={onPayRent}
                             >
-                                <Text style={styles.penaltyActionText}>Pay Now →</Text>
+                                <Text style={[styles.slimActionBtnText, { color: '#fff' }]}>Pay Now →</Text>
                             </TouchableOpacity>
                         </View>
                     </LinearGradient>
                 ) : (
-                    /* All clear */
+                    /* All Paid Verified */
                     <LinearGradient
                         colors={['#064e3b', '#022c22']}
-                        style={[styles.penaltyBanner, { borderColor: '#10b981' }]}
+                        style={[styles.slimPenaltyCard, { borderColor: '#10b981' }]}
                     >
-                        <View style={styles.penaltyInner}>
-                            <Text style={{ fontSize: 32, marginRight: 10 }}>🎉</Text>
-                            <View style={styles.penaltyCenter}>
-                                <Text style={styles.penaltyHeading}>All Rent Cleared & In Good Standing</Text>
-                                <Text style={styles.penaltySubtitle}>
-                                    Zero overdue balance. Thank you for paying on time!
+                        <View style={styles.slimPenaltyRow}>
+                            <View style={[styles.slimWarningCircle, { backgroundColor: 'rgba(16,185,129,0.2)' }]}>
+                                <Text style={{ fontSize: 22 }}>🎉</Text>
+                            </View>
+                            <View style={styles.slimPenaltyCenter}>
+                                <Text style={styles.slimPenaltyTitle}>All Rent Cleared & In Good Standing</Text>
+                                <Text style={[styles.slimPenaltySub, { color: '#a7f3d0' }]}>
+                                    Zero overdue balance. Thank you!
                                 </Text>
                             </View>
-                            <View style={[styles.penaltyDaysBadge, { borderColor: '#34d399' }]}>
-                                <Text style={[styles.penaltyDaysText, { color: '#6ee7b7' }]}>✅ Verified</Text>
+                            <View style={[styles.slimDaysBadge, { borderColor: '#34d399' }]}>
+                                <Text style={[styles.slimDaysText, { color: '#6ee7b7' }]}>✅ Verified</Text>
                             </View>
                         </View>
                     </LinearGradient>
                 )}
 
                 {/* ══════════════════════════════════════════════════════
-                    4. ACTION QUICK BUTTONS (Row of 5 Floating Glass Cards)
+                    3. REAL TENANT KPI CARDS (2x2 Super Ultra Sleek Grid)
+                    - Monthly Rent
+                    - Total Due (Rent + Penalty)
+                    - Past Arrears
+                    - Deposit Paid
+                ══════════════════════════════════════════════════════ */}
+                <View style={styles.kpiGridContainer}>
+                    {/* Card 1: Monthly Rent */}
+                    <View style={[styles.kpiCard, styles.kpiBorderGreen]}>
+                        <View style={styles.kpiTopRow}>
+                            <View style={[styles.kpiIconWrap, { backgroundColor: '#ecfdf5' }]}>
+                                <Text style={{ fontSize: 16 }}>💰</Text>
+                            </View>
+                            <View style={[styles.kpiDot, { backgroundColor: '#10b981' }]} />
+                        </View>
+                        <Text style={styles.kpiValue} numberOfLines={1}>
+                            {formatKES(effectiveRent || session.monthly_rent)}
+                        </Text>
+                        <Text style={styles.kpiLabel}>MONTHLY RENT</Text>
+                    </View>
+
+                    {/* Card 2: Total Due (Rent + Pen) */}
+                    <View style={[styles.kpiCard, totalDue > 0 ? styles.kpiBorderRed : styles.kpiBorderGreen]}>
+                        <View style={styles.kpiTopRow}>
+                            <View style={[styles.kpiIconWrap, { backgroundColor: totalDue > 0 ? '#fef2f2' : '#ecfdf5' }]}>
+                                <Text style={{ fontSize: 16 }}>{totalDue > 0 ? '⚠️' : '✅'}</Text>
+                            </View>
+                            <View style={[styles.kpiDot, { backgroundColor: totalDue > 0 ? '#ef4444' : '#10b981' }]} />
+                        </View>
+                        <Text style={[styles.kpiValue, { color: totalDue > 0 ? '#dc2626' : '#059669' }]} numberOfLines={1}>
+                            {formatKES(totalDue)}
+                        </Text>
+                        <Text style={styles.kpiLabel}>
+                            {hasPenalty ? 'TOTAL DUE (RENT+PEN)' : 'TOTAL BALANCE'}
+                        </Text>
+                    </View>
+
+                    {/* Card 3: Past Arrears */}
+                    <View style={[styles.kpiCard, arrearsOnly > 0 ? styles.kpiBorderAmber : styles.kpiBorderGreen]}>
+                        <View style={styles.kpiTopRow}>
+                            <View style={[styles.kpiIconWrap, { backgroundColor: arrearsOnly > 0 ? '#fffbeb' : '#ecfdf5' }]}>
+                                <Text style={{ fontSize: 16 }}>🕐</Text>
+                            </View>
+                            <View style={[styles.kpiDot, { backgroundColor: arrearsOnly > 0 ? '#f59e0b' : '#10b981' }]} />
+                        </View>
+                        <Text style={[styles.kpiValue, { color: arrearsOnly > 0 ? '#d97706' : '#059669' }]} numberOfLines={1}>
+                            {formatKES(Math.max(0, arrearsOnly))}
+                        </Text>
+                        <Text style={styles.kpiLabel}>PAST ARREARS</Text>
+                    </View>
+
+                    {/* Card 4: Deposit Paid */}
+                    <View style={[styles.kpiCard, styles.kpiBorderPurple]}>
+                        <View style={styles.kpiTopRow}>
+                            <View style={[styles.kpiIconWrap, { backgroundColor: '#f5f3ff' }]}>
+                                <Text style={{ fontSize: 16 }}>🔐</Text>
+                            </View>
+                            <View style={[styles.kpiDot, { backgroundColor: '#8b5cf6' }]} />
+                        </View>
+                        <Text style={[styles.kpiValue, { color: '#7c3aed' }]} numberOfLines={1}>
+                            {formatKES(session.deposit_paid || 0)}
+                        </Text>
+                        <Text style={styles.kpiLabel}>DEPOSIT PAID</Text>
+                    </View>
+                </View>
+
+                {/* ══════════════════════════════════════════════════════
+                    4. DIRECT PAY RENT & PENALTY CTA BUTTON (When Due > 0)
+                ══════════════════════════════════════════════════════ */}
+                {totalDue > 0 && (
+                    <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={onPayRent}
+                        style={styles.payCtaContainer}
+                    >
+                        <LinearGradient
+                            colors={['#10b981', '#059669', '#047857']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.payCtaGradient}
+                        >
+                            <Text style={{ fontSize: 26, marginRight: 10 }}>💳</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.payCtaTitle}>Pay Rent & Penalty Now</Text>
+                                <Text style={styles.payCtaSubtitle}>
+                                    Total Due: {formatKES(totalDue)}
+                                    {hasPenalty ? ` (Rent: ${formatKES(balance)} + Penalty: ${formatKES(penaltyInfo.totalPenalty)})` : ' outstanding'}
+                                </Text>
+                            </View>
+                            <Text style={styles.payCtaArrow}>→</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                )}
+
+                {/* ══════════════════════════════════════════════════════
+                    5. ACTION QUICK BUTTONS (4 Clean Cards — Settings Removed)
+                    - Pay Rent
+                    - View History
+                    - Messages (With live unread badge)
+                    - Profile
                 ══════════════════════════════════════════════════════ */}
                 <View style={styles.actionRow}>
                     {/* 1. Pay Rent */}
@@ -492,11 +493,10 @@ export default function DashboardScreen({
                         activeOpacity={0.8}
                         onPress={onPayRent}
                     >
-                        <LinearGradient
-                            colors={['#dcfce7', '#bbf7d0']}
-                            style={styles.actionBtnGrad}
-                        >
-                            <Image source={ASSETS.btnPay} style={styles.actionBtnIcon} />
+                        <LinearGradient colors={['#ecfdf5', '#d1fae5']} style={styles.actionBtnGrad}>
+                            <View style={[styles.actionIconCircle, { backgroundColor: '#10b981' }]}>
+                                <Text style={{ fontSize: 18 }}>💳</Text>
+                            </View>
                             <Text style={[styles.actionBtnLabel, { color: '#065f46' }]}>Pay Rent</Text>
                         </LinearGradient>
                     </TouchableOpacity>
@@ -507,11 +507,10 @@ export default function DashboardScreen({
                         activeOpacity={0.8}
                         onPress={() => onNavigateTab?.('history')}
                     >
-                        <LinearGradient
-                            colors={['#e0f2fe', '#bae6fd']}
-                            style={styles.actionBtnGrad}
-                        >
-                            <Image source={ASSETS.btnHistory} style={styles.actionBtnIcon} />
+                        <LinearGradient colors={['#f0f9ff', '#e0f2fe']} style={styles.actionBtnGrad}>
+                            <View style={[styles.actionIconCircle, { backgroundColor: '#0284c7' }]}>
+                                <Text style={{ fontSize: 18 }}>🔄</Text>
+                            </View>
                             <Text style={[styles.actionBtnLabel, { color: '#0369a1' }]}>View History</Text>
                         </LinearGradient>
                     </TouchableOpacity>
@@ -522,11 +521,10 @@ export default function DashboardScreen({
                         activeOpacity={0.8}
                         onPress={() => onNavigateTab?.('chat')}
                     >
-                        <LinearGradient
-                            colors={['#f3e8ff', '#ede9fe']}
-                            style={styles.actionBtnGrad}
-                        >
-                            <Image source={ASSETS.btnMsg} style={styles.actionBtnIcon} />
+                        <LinearGradient colors={['#faf5ff', '#f3e8ff']} style={styles.actionBtnGrad}>
+                            <View style={[styles.actionIconCircle, { backgroundColor: '#7c3aed' }]}>
+                                <Text style={{ fontSize: 18 }}>💬</Text>
+                            </View>
                             {unreadCount > 0 && (
                                 <View style={styles.actionBadge}>
                                     <Text style={styles.actionBadgeText}>{unreadCount}</Text>
@@ -542,33 +540,17 @@ export default function DashboardScreen({
                         activeOpacity={0.8}
                         onPress={() => onNavigateTab?.('profile')}
                     >
-                        <LinearGradient
-                            colors={['#ffedd5', '#fed7aa']}
-                            style={styles.actionBtnGrad}
-                        >
-                            <Image source={ASSETS.btnProfile} style={styles.actionBtnIcon} />
+                        <LinearGradient colors={['#fff7ed', '#ffedd5']} style={styles.actionBtnGrad}>
+                            <View style={[styles.actionIconCircle, { backgroundColor: '#ea580c' }]}>
+                                <Text style={{ fontSize: 18 }}>👤</Text>
+                            </View>
                             <Text style={[styles.actionBtnLabel, { color: '#9a3412' }]}>Profile</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
-
-                    {/* 5. Settings */}
-                    <TouchableOpacity
-                        style={styles.actionBtn}
-                        activeOpacity={0.8}
-                        onPress={() => onNavigateTab?.('profile')}
-                    >
-                        <LinearGradient
-                            colors={['#f1f5f9', '#e2e8f0']}
-                            style={styles.actionBtnGrad}
-                        >
-                            <Image source={ASSETS.btnSettings} style={styles.actionBtnIcon} />
-                            <Text style={[styles.actionBtnLabel, { color: '#334155' }]}>Settings</Text>
                         </LinearGradient>
                     </TouchableOpacity>
                 </View>
 
                 {/* ══════════════════════════════════════════════════════
-                    5. PAYMENT TREND AREA CHART CARD
+                    6. REAL PAYMENT TREND CARD (Live Database Data)
                 ══════════════════════════════════════════════════════ */}
                 <View style={styles.cardContainer}>
                     <View style={styles.chartHeader}>
@@ -585,7 +567,10 @@ export default function DashboardScreen({
                                     <TouchableOpacity
                                         key={range}
                                         style={[styles.rangePill, isSel && styles.rangePillActive]}
-                                        onPress={() => setChartRange(range)}
+                                        onPress={() => {
+                                            setChartRange(range);
+                                            setSelectedMonthIndex(null);
+                                        }}
                                         activeOpacity={0.8}
                                     >
                                         <Text style={[styles.rangePillText, isSel && styles.rangePillTextActive]}>
@@ -597,29 +582,63 @@ export default function DashboardScreen({
                         </View>
                     </View>
 
-                    {/* Chart Body: Spline curve on left, stat widget on right */}
-                    <View style={styles.chartBodyRow}>
-                        <View style={styles.chartGraphCol}>
-                            <Image
-                                source={ASSETS.chartCurve}
-                                style={styles.chartCurveImg}
-                                resizeMode="contain"
-                            />
-                            {/* Dynamic Months Row under nodes */}
-                            <View style={styles.chartMonthsRow}>
-                                {monthLabels.map((m, idx) => (
-                                    <Text key={idx} style={styles.chartMonthText}>{m}</Text>
-                                ))}
+                    {/* Dynamic Real Area Bar Chart */}
+                    <View style={styles.realChartRow}>
+                        {/* Interactive Bars Column */}
+                        <View style={styles.chartBarsContainer}>
+                            {/* Horizontal guideline */}
+                            <View style={styles.chartGuideline} />
+
+                            <View style={styles.barsRow}>
+                                {trendData.map((item, idx) => {
+                                    const heightPct = Math.max(12, Math.min(100, Math.round((item.amount / maxChartAmount) * 100)));
+                                    const isSelected = selectedMonthIndex === idx;
+                                    const hasPaid = item.amount > 0;
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={item.monthKey}
+                                            style={styles.barCol}
+                                            activeOpacity={0.7}
+                                            onPress={() => setSelectedMonthIndex(isSelected ? null : idx)}
+                                        >
+                                            {/* Tooltip amount if selected */}
+                                            {isSelected && (
+                                                <View style={styles.barTooltip}>
+                                                    <Text style={styles.barTooltipText}>{formatKES(item.amount)}</Text>
+                                                </View>
+                                            )}
+
+                                            {/* The glowing bar */}
+                                            <View style={styles.barTrack}>
+                                                <LinearGradient
+                                                    colors={hasPaid ? ['#10b981', '#34d399', '#059669'] : ['#e2e8f0', '#cbd5e1']}
+                                                    style={[styles.barFill, { height: `${heightPct}%` }]}
+                                                >
+                                                    {/* Glowing peak node */}
+                                                    <View style={[styles.barPeakNode, hasPaid && styles.barPeakGlow]} />
+                                                </LinearGradient>
+                                            </View>
+
+                                            {/* Month Label */}
+                                            <Text style={[styles.chartMonthText, isSelected && { color: '#059669', fontWeight: '800' }]}>
+                                                {item.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
                             </View>
                         </View>
 
-                        {/* Right Stat Widget */}
+                        {/* Right Real Total Summary & Gold Coins */}
                         <View style={styles.chartStatCol}>
                             <Text style={styles.chartStatValue}>
-                                {formatKES(trendTotal)}
+                                {formatKES(totalRangePayments)}
                             </Text>
                             <Text style={styles.chartStatLabel}>Total Payments</Text>
-                            <Text style={styles.chartStatTrend}>↑ +12.5%</Text>
+                            <Text style={styles.chartStatTrend}>
+                                {totalRangePayments > 0 ? '↑ Verified Record' : 'No payments'}
+                            </Text>
                             <Image
                                 source={ASSETS.goldCoins}
                                 style={styles.goldCoinsImg}
@@ -630,9 +649,9 @@ export default function DashboardScreen({
                 </View>
 
                 {/* ══════════════════════════════════════════════════════
-                    6. UPCOMING BILLS / INVOICES TABLE CARD
+                    7. UPCOMING BILLS DATAGRID (Spacious, Clean, Uncrammed)
                 ══════════════════════════════════════════════════════ */}
-                <View style={[styles.cardContainer, { marginBottom: 90 }]}>
+                <View style={[styles.cardContainer, { marginBottom: 110 }]}>
                     <View style={styles.tableHeaderRow}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             <Text style={{ fontSize: 18 }}>📅</Text>
@@ -650,81 +669,103 @@ export default function DashboardScreen({
                         </TouchableOpacity>
                     </View>
 
-                    {/* Table Column Headers */}
-                    <View style={styles.tableHeadStrip}>
-                        <Text style={[styles.thText, { flex: 1.6 }]}>Month</Text>
-                        <Text style={[styles.thText, { flex: 1.2 }]}>Rent</Text>
-                        <Text style={[styles.thText, { flex: 1.2 }]}>Paid</Text>
-                        <Text style={[styles.thText, { flex: 1.2 }]}>Balance</Text>
-                        <Text style={[styles.thText, { flex: 1.3, textAlign: 'center' }]}>Status</Text>
-                    </View>
+                    {/* Horizontal scroll to guarantee zero text squishing */}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        <View style={{ minWidth: 440 }}>
+                            {/* Table Column Headers */}
+                            <View style={styles.tableHeadStrip}>
+                                <Text style={[styles.thText, { width: 125 }]}>MONTH</Text>
+                                <Text style={[styles.thText, { width: 85 }]}>RENT</Text>
+                                <Text style={[styles.thText, { width: 80 }]}>PAID</Text>
+                                <Text style={[styles.thText, { width: 85 }]}>BALANCE</Text>
+                                <Text style={[styles.thText, { width: 65, textAlign: 'center' }]}>STATUS</Text>
+                            </View>
 
-                    {/* Table Body */}
-                    {displayBills.length === 0 ? (
-                        <View style={styles.emptyTableBox}>
-                            <Text style={{ fontSize: 32 }}>🎉</Text>
-                            <Text style={styles.emptyTableTitle}>No Unpaid Bills!</Text>
-                            <Text style={styles.emptyTableSub}>All rent accounts are fully cleared.</Text>
-                        </View>
-                    ) : (
-                        displayBills.map((bill, idx) => {
-                            const isCurrent = bill.billing_month === currentMonthStr;
-                            const isOdd = idx % 2 === 1;
-                            return (
-                                <TouchableOpacity
-                                    key={bill.billing_id || bill.billing_month}
-                                    style={[
-                                        styles.tableDataRow,
-                                        isOdd && styles.tableDataRowOdd,
-                                        isCurrent && styles.tableDataRowCurrent,
-                                    ]}
-                                    activeOpacity={bill.balance > 0 ? 0.75 : 1}
-                                    onPress={() => {
-                                        if (bill.balance > 0) onPayRent();
-                                    }}
-                                >
-                                    {/* Month */}
-                                    <View style={{ flex: 1.6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                        <Text style={{ fontSize: 14 }}>🗓️</Text>
-                                        <View>
-                                            <Text style={styles.tdMonth}>
-                                                {formatMonth(bill.billing_month)}
+                            {/* Table Body */}
+                            {displayBills.length === 0 ? (
+                                <View style={styles.emptyTableBox}>
+                                    <Text style={{ fontSize: 32 }}>🎉</Text>
+                                    <Text style={styles.emptyTableTitle}>No Unpaid Bills!</Text>
+                                    <Text style={styles.emptyTableSub}>All rent accounts are fully cleared.</Text>
+                                </View>
+                            ) : (
+                                displayBills.map((bill, idx) => {
+                                    const isCurrent = bill.billing_month === currentMonthStr;
+                                    const isOdd = idx % 2 === 1;
+                                    return (
+                                        <TouchableOpacity
+                                            key={bill.billing_id || bill.billing_month}
+                                            style={[
+                                                styles.tableDataRow,
+                                                isOdd && styles.tableDataRowOdd,
+                                                isCurrent && styles.tableDataRowCurrent,
+                                            ]}
+                                            activeOpacity={bill.balance > 0 ? 0.75 : 1}
+                                            onPress={() => {
+                                                if (bill.balance > 0) onPayRent();
+                                            }}
+                                        >
+                                            {/* Month */}
+                                            <View style={{ width: 125, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                <Text style={{ fontSize: 14 }}>🗓️</Text>
+                                                <View>
+                                                    <Text style={styles.tdMonth}>
+                                                        {formatMonth(bill.billing_month)}
+                                                    </Text>
+                                                    {isCurrent && (
+                                                        <Text style={styles.currentMonthTag}>Current</Text>
+                                                    )}
+                                                </View>
+                                            </View>
+
+                                            {/* Rent */}
+                                            <Text style={[styles.tdCell, { width: 85 }]}>
+                                                {formatKES(bill.rent_amount)}
                                             </Text>
-                                            {isCurrent && (
-                                                <Text style={styles.currentMonthTag}>Current</Text>
-                                            )}
-                                        </View>
-                                    </View>
 
-                                    {/* Rent */}
-                                    <Text style={[styles.tdCell, { flex: 1.2 }]}>
-                                        {formatKES(bill.rent_amount)}
+                                            {/* Paid */}
+                                            <Text style={[styles.tdCell, styles.tdPaid, { width: 80 }]}>
+                                                {formatKES(bill.amount_paid)}
+                                            </Text>
+
+                                            {/* Balance */}
+                                            <Text
+                                                style={[
+                                                    styles.tdCell,
+                                                    bill.balance > 0 ? styles.tdBalanceRed : styles.tdBalanceGreen,
+                                                    { width: 85 },
+                                                ]}
+                                            >
+                                                {formatKES(bill.balance)}
+                                            </Text>
+
+                                            {/* Status Badge */}
+                                            <View style={{ width: 65, alignItems: 'center' }}>
+                                                <StatusBadge status={bill.status} />
+                                            </View>
+                                        </TouchableOpacity>
+                                    );
+                                })
+                            )}
+
+                            {/* Totals Row */}
+                            {displayBills.length > 0 && (
+                                <View style={styles.totalsRow}>
+                                    <Text style={[styles.totalLabel, { width: 125 }]}>TOTAL</Text>
+                                    <Text style={[styles.totalValue, { width: 85 }]}>
+                                        {formatKES(displayBills.reduce((s, b) => s + (b.rent_amount || 0), 0))}
                                     </Text>
-
-                                    {/* Paid */}
-                                    <Text style={[styles.tdCell, styles.tdPaid, { flex: 1.2 }]}>
-                                        {formatKES(bill.amount_paid)}
+                                    <Text style={[styles.totalValueGreen, { width: 80 }]}>
+                                        {formatKES(displayBills.reduce((s, b) => s + (b.amount_paid || 0), 0))}
                                     </Text>
-
-                                    {/* Balance */}
-                                    <Text
-                                        style={[
-                                            styles.tdCell,
-                                            bill.balance > 0 ? styles.tdBalanceRed : styles.tdBalanceGreen,
-                                            { flex: 1.2 },
-                                        ]}
-                                    >
-                                        {formatKES(bill.balance)}
+                                    <Text style={[styles.totalValueRed, { width: 85 }]}>
+                                        {formatKES(displayBills.reduce((s, b) => s + (b.balance || 0), 0))}
                                     </Text>
-
-                                    {/* Status Badge */}
-                                    <View style={{ flex: 1.3, alignItems: 'center' }}>
-                                        <StatusBadge status={bill.status} />
-                                    </View>
-                                </TouchableOpacity>
-                            );
-                        })
-                    )}
+                                    <View style={{ width: 65 }} />
+                                </View>
+                            )}
+                        </View>
+                    </ScrollView>
                 </View>
             </ScrollView>
         </View>
@@ -734,7 +775,7 @@ export default function DashboardScreen({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#eef2f6', // Clean light canvas matching the reference screenshot
+        backgroundColor: '#f1f5f9',
     },
     loadingContainer: {
         flex: 1,
@@ -886,207 +927,231 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
 
-    // ── 2. Metric Cards (4 Glossy Gradient Cards) ──
-    metricsScroll: {
-        paddingHorizontal: 16,
-        gap: 10,
-        paddingBottom: 16,
-    },
-    metricCard: {
-        width: SCREEN_WIDTH * 0.42,
-        height: 156,
-        borderRadius: 22,
-        padding: 14,
-        position: 'relative',
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        elevation: 6,
-    },
-    metricCardGreen: {
-        borderColor: 'rgba(52,211,153,0.4)',
-    },
-    metricCardBlue: {
-        borderColor: 'rgba(56,189,248,0.4)',
-    },
-    metricCardPurple: {
-        borderColor: 'rgba(192,132,252,0.4)',
-    },
-    metricCardOrange: {
-        borderColor: 'rgba(251,146,60,0.4)',
-    },
-    metricTopHighlight: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 1.5,
-        backgroundColor: 'rgba(255,255,255,0.5)',
-    },
-    metricHeader: {
-        marginBottom: 8,
-    },
-    metricIconImg: {
-        width: 32,
-        height: 32,
-    },
-    metricValue: {
-        color: '#ffffff',
-        fontSize: 17,
-        fontWeight: '900',
-        letterSpacing: 0.3,
-    },
-    metricLabel: {
-        color: 'rgba(255,255,255,0.7)',
-        fontSize: 11,
-        fontWeight: '600',
-        marginTop: 2,
-    },
-    metricTrend: {
-        fontSize: 11,
-        fontWeight: '800',
-        marginTop: 3,
-    },
-    metricSparkline: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        width: '100%',
-        height: 48,
-    },
-
-    // ── 3. Penalty / Status Alert Banner ──
-    penaltyBanner: {
+    // ── 2. Slim Late Penalty Card (Image 3 Style) ──
+    slimPenaltyCard: {
         marginHorizontal: 16,
-        borderRadius: 22,
-        padding: 14,
-        marginBottom: 16,
+        borderRadius: 20,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        marginBottom: 14,
         borderWidth: 1.5,
         borderColor: '#f43f5e',
         shadowColor: '#e11d48',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.35,
-        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
         elevation: 6,
     },
-    penaltyInner: {
+    slimPenaltyRow: {
         flexDirection: 'row',
         alignItems: 'center',
     },
-    penaltyWarningImg: {
-        width: 54,
-        height: 54,
+    slimWarningCircle: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        alignItems: 'center',
+        justifyContent: 'center',
         marginRight: 10,
     },
-    penaltyCenter: {
+    slimPenaltyCenter: {
         flex: 1,
+        justifyContent: 'center',
     },
-    penaltyHeading: {
+    slimPenaltyTitle: {
         color: '#ffffff',
-        fontSize: 14,
+        fontSize: 13.5,
         fontWeight: '900',
     },
-    penaltySubtitle: {
+    slimPenaltySub: {
         color: '#fecdd3',
-        fontSize: 10.5,
+        fontSize: 10,
         fontWeight: '500',
         marginTop: 2,
-        lineHeight: 14,
+        marginBottom: 4,
     },
-    penaltyStatsRow: {
+    slimPenaltyStatsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 8,
-        gap: 12,
     },
-    penaltyStatLabel: {
-        color: 'rgba(255,255,255,0.75)',
-        fontSize: 9.5,
+    slimStatLabel: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 10,
         fontWeight: '600',
     },
-    penaltyStatVal: {
+    slimStatBold: {
         color: '#ffffff',
-        fontSize: 12.5,
+        fontSize: 11.5,
         fontWeight: '900',
     },
-    penaltyStatDivider: {
+    slimStatDivider: {
         width: 1,
-        height: 22,
+        height: 12,
         backgroundColor: 'rgba(255,255,255,0.3)',
+        marginHorizontal: 8,
     },
-    penaltyRightCol: {
+    slimPenaltyRight: {
         alignItems: 'flex-end',
         justifyContent: 'space-between',
-        height: 64,
-        marginLeft: 8,
+        height: 56,
+        marginLeft: 6,
     },
-    penaltyDaysBadge: {
-        backgroundColor: 'rgba(0,0,0,0.3)',
+    slimDaysBadge: {
+        backgroundColor: 'rgba(0,0,0,0.35)',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.4)',
-        borderRadius: 14,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
+        borderColor: 'rgba(255,255,255,0.35)',
+        borderRadius: 12,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
     },
-    penaltyDaysText: {
+    slimDaysText: {
         color: '#ffffff',
-        fontSize: 10,
+        fontSize: 9.5,
         fontWeight: '800',
     },
-    penaltyActionBtn: {
+    slimActionBtn: {
         backgroundColor: '#ffffff',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 14,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 12,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 3,
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 2,
     },
-    penaltyActionText: {
+    slimActionBtnText: {
         color: '#be123c',
-        fontSize: 11,
+        fontSize: 10.5,
         fontWeight: '900',
     },
 
-    // ── 4. Action Row (5 Rounded Glass Cards) ──
+    // ── 3. Real Tenant KPI Grid (2x2 Ultra Cards) ──
+    kpiGridContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginHorizontal: 16,
+        marginBottom: 14,
+    },
+    kpiCard: {
+        width: (SCREEN_WIDTH - 42) / 2,
+        height: 88,
+        borderRadius: 20,
+        padding: 12,
+        backgroundColor: '#ffffff',
+        justifyContent: 'space-between',
+        shadowColor: '#64748b',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+        elevation: 3,
+        borderWidth: 1.2,
+    },
+    kpiBorderGreen: { borderColor: 'rgba(16,185,129,0.3)' },
+    kpiBorderRed: { borderColor: 'rgba(239,68,68,0.35)' },
+    kpiBorderAmber: { borderColor: 'rgba(245,158,11,0.3)' },
+    kpiBorderPurple: { borderColor: 'rgba(139,92,246,0.3)' },
+    kpiTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    kpiIconWrap: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    kpiDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    kpiValue: {
+        fontSize: 16,
+        fontWeight: '900',
+        color: '#0f172a',
+        letterSpacing: 0.3,
+    },
+    kpiLabel: {
+        fontSize: 9.5,
+        fontWeight: '700',
+        color: '#64748b',
+        letterSpacing: 0.4,
+    },
+
+    // ── 4. Pay CTA Banner ──
+    payCtaContainer: {
+        marginHorizontal: 16,
+        marginBottom: 14,
+        borderRadius: 20,
+        overflow: 'hidden',
+        shadowColor: '#10b981',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 6,
+    },
+    payCtaGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+    },
+    payCtaTitle: {
+        fontSize: 15,
+        fontWeight: '900',
+        color: '#ffffff',
+    },
+    payCtaSubtitle: {
+        fontSize: 10.5,
+        color: 'rgba(255,255,255,0.85)',
+        marginTop: 2,
+    },
+    payCtaArrow: {
+        fontSize: 20,
+        color: '#ffffff',
+        fontWeight: '900',
+        marginLeft: 8,
+    },
+
+    // ── 5. Action Quick Buttons (4 Clean Cards) ──
     actionRow: {
         flexDirection: 'row',
         marginHorizontal: 16,
-        marginBottom: 16,
-        justifyContent: 'space-between',
+        marginBottom: 14,
+        gap: 8,
     },
     actionBtn: {
         flex: 1,
-        marginHorizontal: 3,
     },
     actionBtnGrad: {
-        borderRadius: 18,
+        borderRadius: 20,
         paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.8)',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
-        elevation: 3,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
         position: 'relative',
     },
-    actionBtnIcon: {
-        width: 32,
-        height: 28,
-        marginBottom: 4,
+    actionIconCircle: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 6,
     },
     actionBtnLabel: {
-        fontSize: 10,
+        fontSize: 10.5,
         fontWeight: '800',
     },
     actionBadge: {
@@ -1107,18 +1172,18 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
 
-    // ── 5. Payment Trend Card ──
+    // ── 6. Real Payment Trend Card ──
     cardContainer: {
         backgroundColor: '#ffffff',
         marginHorizontal: 16,
         borderRadius: 24,
         padding: 16,
-        marginBottom: 16,
+        marginBottom: 14,
         shadowColor: '#64748b',
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.08,
         shadowRadius: 16,
-        elevation: 4,
+        elevation: 3,
         borderWidth: 1,
         borderColor: '#e2e8f0',
     },
@@ -1126,7 +1191,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 14,
     },
     cardTitle: {
         fontSize: 16,
@@ -1136,20 +1201,20 @@ const styles = StyleSheet.create({
     rangePillRow: {
         flexDirection: 'row',
         backgroundColor: '#f1f5f9',
-        borderRadius: 16,
-        padding: 3,
-        gap: 4,
+        borderRadius: 14,
+        padding: 2,
+        gap: 3,
     },
     rangePill: {
-        paddingHorizontal: 10,
+        paddingHorizontal: 9,
         paddingVertical: 4,
-        borderRadius: 12,
+        borderRadius: 10,
     },
     rangePillActive: {
         backgroundColor: '#10b981',
     },
     rangePillText: {
-        fontSize: 11,
+        fontSize: 10.5,
         fontWeight: '700',
         color: '#64748b',
     },
@@ -1157,58 +1222,111 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         fontWeight: '800',
     },
-    chartBodyRow: {
+    realChartRow: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-end',
     },
-    chartGraphCol: {
+    chartBarsContainer: {
         flex: 1,
-        alignItems: 'center',
+        height: 105,
+        position: 'relative',
+        justifyContent: 'flex-end',
+        paddingRight: 6,
     },
-    chartCurveImg: {
-        width: '100%',
-        height: 75,
+    chartGuideline: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 30,
+        height: 1,
+        backgroundColor: '#f1f5f9',
     },
-    chartMonthsRow: {
+    barsRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        width: '95%',
-        marginTop: 4,
+        alignItems: 'flex-end',
+        height: 85,
+    },
+    barCol: {
+        alignItems: 'center',
+        flex: 1,
+        position: 'relative',
+    },
+    barTooltip: {
+        position: 'absolute',
+        top: -24,
+        backgroundColor: '#0f172a',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 6,
+        zIndex: 10,
+    },
+    barTooltipText: {
+        color: '#fff',
+        fontSize: 8.5,
+        fontWeight: '800',
+    },
+    barTrack: {
+        width: 16,
+        height: 65,
+        borderRadius: 8,
+        backgroundColor: '#f8fafc',
+        justifyContent: 'flex-end',
+        overflow: 'hidden',
+    },
+    barFill: {
+        width: '100%',
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+    },
+    barPeakNode: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#ffffff',
+        marginTop: 3,
+    },
+    barPeakGlow: {
+        backgroundColor: '#ffffff',
     },
     chartMonthText: {
-        fontSize: 10,
+        fontSize: 9.5,
         fontWeight: '600',
         color: '#64748b',
+        marginTop: 6,
     },
     chartStatCol: {
-        width: 110,
+        width: 105,
         alignItems: 'flex-end',
+        borderLeftWidth: 1,
+        borderLeftColor: '#f1f5f9',
         paddingLeft: 8,
     },
     chartStatValue: {
-        fontSize: 15,
+        fontSize: 14.5,
         fontWeight: '900',
         color: '#0f172a',
     },
     chartStatLabel: {
-        fontSize: 10,
+        fontSize: 9.5,
         color: '#64748b',
         fontWeight: '600',
         marginTop: 1,
     },
     chartStatTrend: {
-        fontSize: 11,
+        fontSize: 10,
         color: '#10b981',
         fontWeight: '800',
         marginTop: 2,
     },
     goldCoinsImg: {
-        width: 58,
-        height: 48,
-        marginTop: 4,
+        width: 52,
+        height: 42,
+        marginTop: 6,
     },
 
-    // ── 6. Upcoming Bills Table ──
+    // ── 7. Upcoming Bills Table (Spacious) ──
     tableHeaderRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1218,8 +1336,8 @@ const styles = StyleSheet.create({
     viewAllBtn: {
         backgroundColor: '#10b981',
         paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 14,
+        paddingVertical: 5,
+        borderRadius: 12,
     },
     viewAllText: {
         color: '#ffffff',
@@ -1231,14 +1349,13 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         paddingHorizontal: 8,
         backgroundColor: '#f8fafc',
-        borderRadius: 12,
+        borderRadius: 10,
         marginBottom: 4,
     },
     thText: {
-        fontSize: 10.5,
+        fontSize: 10,
         fontWeight: '800',
         color: '#64748b',
-        textTransform: 'uppercase',
         letterSpacing: 0.3,
     },
     tableDataRow: {
@@ -1256,12 +1373,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#ecfdf5',
     },
     tdMonth: {
-        fontSize: 11.5,
+        fontSize: 11,
         fontWeight: '800',
         color: '#0f172a',
     },
     currentMonthTag: {
-        fontSize: 8.5,
+        fontSize: 8,
         fontWeight: '800',
         color: '#059669',
         backgroundColor: '#d1fae5',
@@ -1288,19 +1405,50 @@ const styles = StyleSheet.create({
         color: '#059669',
         fontWeight: '700',
     },
+    totalsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 8,
+        backgroundColor: '#f1f5f9',
+        borderTopWidth: 2,
+        borderTopColor: '#e2e8f0',
+        marginTop: 4,
+        borderRadius: 8,
+    },
+    totalLabel: {
+        fontSize: 10.5,
+        fontWeight: '900',
+        color: '#0f172a',
+    },
+    totalValue: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#334155',
+    },
+    totalValueGreen: {
+        fontSize: 10.5,
+        fontWeight: '800',
+        color: '#059669',
+    },
+    totalValueRed: {
+        fontSize: 10.5,
+        fontWeight: '900',
+        color: '#dc2626',
+    },
 
     // Badges
     badge: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 10,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 8,
     },
     badgePaid: {
         backgroundColor: '#d1fae5',
     },
     badgeTextPaid: {
         color: '#065f46',
-        fontSize: 10,
+        fontSize: 9.5,
         fontWeight: '800',
     },
     badgePartial: {
@@ -1308,7 +1456,7 @@ const styles = StyleSheet.create({
     },
     badgeTextPartial: {
         color: '#92400e',
-        fontSize: 10,
+        fontSize: 9.5,
         fontWeight: '800',
     },
     badgeUnpaid: {
@@ -1316,7 +1464,7 @@ const styles = StyleSheet.create({
     },
     badgeTextUnpaid: {
         color: '#991b1b',
-        fontSize: 10,
+        fontSize: 9.5,
         fontWeight: '800',
     },
 
