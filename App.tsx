@@ -417,6 +417,14 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
                         session={currentSession}
                         onPayRent={() => setActiveTab('pay')}
                         onSessionUpdate={handleSessionUpdate}
+                        onNavigateTab={tab => {
+                            setActiveTab(tab);
+                            if (tab === 'chat') {
+                                setChatRefreshCount(c => c + 1);
+                                setUnreadAdmin(0);
+                            }
+                        }}
+                        unreadCount={unreadAdmin}
                     />
                 );
         }
@@ -515,42 +523,93 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
                 </View>
             </Modal>
 
-            {/* Bottom Tab Bar */}
-            <View style={styles.bottomBar}>
-                {tabs.map(tab => {
-                    const isActive = activeTab === tab.key;
-                    return (
-                        <View key={tab.key} style={styles.tabWrap}>
-                            <View
-                                style={[styles.tab, isActive && styles.tabActive]}
-                                onTouchEnd={() => {
-                                    setActiveTab(tab.key);
-                                    if (tab.key === 'chat') {
-                                        setChatRefreshCount(c => c + 1);
-                                        setUnreadAdmin(0);
-                                    }
-                                }}
-                            >
-                                <View style={{ position: 'relative' }}>
-                                    <Text style={[styles.tabEmoji, isActive && styles.tabEmojiActive]}>
-                                        {tab.emoji}
-                                    </Text>
-                                    {(tab as any).badge > 0 && (
-                                        <View style={styles.tabBadge}>
-                                            <Text style={styles.tabBadgeText}>
-                                                {(tab as any).badge > 9 ? '9+' : (tab as any).badge}
-                                            </Text>
-                                        </View>
-                                    )}
-                                </View>
-                                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                                    {tab.label}
-                                </Text>
-                                {isActive && <View style={styles.tabDot} />}
-                            </View>
-                        </View>
-                    );
-                })}
+            {/* Super Premium Floating Bottom Tab Bar */}
+            <View style={tenantTabStyles.container}>
+                {/* 1. Home Tab */}
+                <TouchableOpacity
+                    style={[
+                        tenantTabStyles.tab,
+                        activeTab === 'home' && tenantTabStyles.tabActiveGreen,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('home')}
+                >
+                    <Text style={[
+                        tenantTabStyles.tabEmoji,
+                        activeTab === 'home' && tenantTabStyles.tabEmojiActiveWhite,
+                    ]}>🏠</Text>
+                    {activeTab === 'home' && (
+                        <Text style={tenantTabStyles.tabLabelActiveWhite}>Home</Text>
+                    )}
+                </TouchableOpacity>
+
+                {/* 2. Pay Rent Tab */}
+                <TouchableOpacity
+                    style={[
+                        tenantTabStyles.tab,
+                        activeTab === 'pay' && tenantTabStyles.tabActiveGreen,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('pay')}
+                >
+                    <Text style={[
+                        tenantTabStyles.tabEmoji,
+                        activeTab === 'pay' && tenantTabStyles.tabEmojiActiveWhite,
+                    ]}>💳</Text>
+                    {activeTab === 'pay' && (
+                        <Text style={tenantTabStyles.tabLabelActiveWhite}>Pay Rent</Text>
+                    )}
+                </TouchableOpacity>
+
+                {/* 3. Center Elevated Floating Scanner Button */}
+                <TouchableOpacity
+                    style={tenantTabStyles.centerScanBtn}
+                    activeOpacity={0.85}
+                    onPress={() => setActiveTab('pay')}
+                >
+                    <LinearGradient
+                        colors={['#00E676', '#00C853', '#059669']}
+                        style={tenantTabStyles.centerScanGrad}
+                    >
+                        <Text style={tenantTabStyles.centerScanIcon}>⛶</Text>
+                    </LinearGradient>
+                </TouchableOpacity>
+
+                {/* 4. History Tab */}
+                <TouchableOpacity
+                    style={[
+                        tenantTabStyles.tab,
+                        activeTab === 'history' && tenantTabStyles.tabActiveGreen,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('history')}
+                >
+                    <Text style={[
+                        tenantTabStyles.tabEmoji,
+                        activeTab === 'history' && tenantTabStyles.tabEmojiActiveWhite,
+                    ]}>🕒</Text>
+                    {activeTab === 'history' && (
+                        <Text style={tenantTabStyles.tabLabelActiveWhite}>History</Text>
+                    )}
+                </TouchableOpacity>
+
+                {/* 5. Profile Tab */}
+                <TouchableOpacity
+                    style={[
+                        tenantTabStyles.tab,
+                        activeTab === 'profile' && tenantTabStyles.tabActiveGreen,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setActiveTab('profile')}
+                >
+                    <Text style={[
+                        tenantTabStyles.tabEmoji,
+                        activeTab === 'profile' && tenantTabStyles.tabEmojiActiveWhite,
+                    ]}>👤</Text>
+                    {activeTab === 'profile' && (
+                        <Text style={tenantTabStyles.tabLabelActiveWhite}>Profile</Text>
+                    )}
+                </TouchableOpacity>
             </View>
         </View>
     );
@@ -943,5 +1002,90 @@ const styles = StyleSheet.create({
     },
     tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 });
+
+const tenantTabStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        backgroundColor: '#ffffff',
+        position: 'absolute',
+        bottom: 12,
+        left: 14,
+        right: 14,
+        height: 64,
+        borderRadius: 36,
+        alignItems: 'center',
+        justifyContent: 'space-around',
+        paddingHorizontal: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 16,
+        elevation: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(226,232,240,0.8)',
+    },
+    tab: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 24,
+    },
+    tabActiveGreen: {
+        backgroundColor: '#00C853',
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 8,
+        elevation: 6,
+    },
+    tabEmoji: {
+        fontSize: 18,
+        color: '#64748b',
+    },
+    tabEmojiActiveWhite: {
+        color: '#ffffff',
+    },
+    tabText: {
+        fontSize: 11,
+        color: '#64748b',
+        fontWeight: '700',
+        marginLeft: 4,
+    },
+    tabLabelActiveWhite: {
+        color: '#ffffff',
+        fontSize: 11.5,
+        fontWeight: '900',
+        marginLeft: 4,
+    },
+    centerScanBtn: {
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: -20,
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.5,
+        shadowRadius: 10,
+        elevation: 10,
+        borderWidth: 3,
+        borderColor: '#ffffff',
+    },
+    centerScanGrad: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    centerScanIcon: {
+        color: '#ffffff',
+        fontSize: 22,
+        fontWeight: '900',
+    },
+});
+
 
 
