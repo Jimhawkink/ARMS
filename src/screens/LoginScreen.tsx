@@ -1,36 +1,36 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { APP_VERSION } from '../lib/version';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     ActivityIndicator, Animated, Alert,
-    StatusBar, SafeAreaView,
+    StatusBar, Image, Dimensions, ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loginTenantByPin, loginStaffByPin, checkTenantLicense, getPendingAgreement, getAgreementTemplate, TenantSession, StaffSession } from '../lib/supabase';
+import {
+    loginTenantByPin, loginStaffByPin, checkTenantLicense,
+    getPendingAgreement, TenantSession, StaffSession,
+} from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
     clearRateLimit, saveSession, saveStaffSession,
 } from '../lib/security';
 import { MobileLicense } from './LicenseScreen';
 import { setupNotifications, registerPushToken } from '../lib/notifications';
+import { APP_VERSION } from '../lib/version';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface Props {
     onLoginSuccess: (session: TenantSession | StaffSession) => void;
     license?: MobileLicense | null;
 }
 
-const COLORS = {
-    bg1: '#0f172a', bg2: '#1e1b4b', bg3: '#0c1a2e',
-    primary: '#6366f1', primaryDark: '#4f46e5', primaryLight: '#818cf8',
-    accent: '#10b981', accentDark: '#059669',
-    danger: '#ef4444',
-    gold: '#f59e0b',
-    text: '#f8fafc', textMuted: '#94a3b8', textDim: '#64748b',
-    card: 'rgba(255,255,255,0.05)', cardBorder: 'rgba(255,255,255,0.1)',
-    keyBg: 'rgba(255,255,255,0.07)', keyBgActive: 'rgba(99,102,241,0.3)',
+const ASSETS = {
+    bgFull: require('../../assets/login/login_bg_full.png'),
+    shieldBadge: require('../../assets/login/shield_lock_badge.png'),
+    keyFingerprint: require('../../assets/login/key_fingerprint.png'),
+    keyBackspace: require('../../assets/login/key_backspace.png'),
+    btnArrow: require('../../assets/login/btn_arrow.png'),
 };
-
-const DOT_SIZE = 18;
 
 export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [pin, setPin] = useState('');
@@ -43,23 +43,14 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
 
     const shakeAnim = useRef(new Animated.Value(0)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const floatAnim = useRef(new Animated.Value(0)).current;
     const lockoutRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // ── Floating animation ───────────────────────────────────
-    useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(floatAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
-                Animated.timing(floatAnim, { toValue: 0, duration: 3000, useNativeDriver: true }),
-            ])
-        ).start();
-        return () => { if (lockoutRef.current) clearInterval(lockoutRef.current); };
-    }, []);
-
-    // ── Check lockout on mount ───────────────────────────────
+    // ── Check lockout on mount ─────────────────────────────
     useEffect(() => {
         checkLockout();
+        return () => {
+            if (lockoutRef.current) clearInterval(lockoutRef.current);
+        };
     }, []);
 
     const checkLockout = async () => {
@@ -86,37 +77,45 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         }, 1000);
     };
 
-    // ── Shake animation for wrong PIN ────────────────────────
+    // ── Shake animation on error ───────────────────────────
     const triggerShake = () => {
         shakeAnim.setValue(0);
         Animated.sequence([
+            Animated.timing(shakeAnim, { toValue: 12, duration: 60, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: -12, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
-            Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
-            Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
         ]).start();
     };
 
-    // ── PIN keypad press ─────────────────────────────────────
+    // ── Keypad press handler ───────────────────────────────
     const handleKeyPress = useCallback((key: string) => {
         if (isLoading || lockoutSeconds > 0) return;
         setError('');
-        if (key === '⌫') {
+
+        if (key === 'delete') {
             setPin(p => p.slice(0, -1));
             return;
         }
+
+        if (key === 'fingerprint') {
+            Alert.alert(
+                'Biometric PIN',
+                'Please enter your 4-6 digit assigned PIN to log into your account securely.',
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+
         if (pin.length >= 6) return;
         const newPin = pin + key;
         setPin(newPin);
 
-        // Auto-submit when 4-6 digits entered and user presses any key at max len
-        if (newPin.length >= 4) {
-            Animated.sequence([
-                Animated.timing(pulseAnim, { toValue: 1.1, duration: 100, useNativeDriver: true }),
-                Animated.timing(pulseAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
-            ]).start();
-        }
+        Animated.sequence([
+            Animated.timing(pulseAnim, { toValue: 1.05, duration: 80, useNativeDriver: true }),
+            Animated.timing(pulseAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
+        ]).start();
     }, [pin, isLoading, lockoutSeconds]);
 
     const handleDelete = useCallback(() => {
@@ -125,28 +124,41 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         setError('');
     }, [isLoading, lockoutSeconds]);
 
+    // ── Login authentication ───────────────────────────────
     const handleLogin = useCallback(async () => {
         if (isLoading || lockoutSeconds > 0) return;
 
         const { limited, secondsLeft } = await isRateLimited();
-        if (limited) { startLockoutCountdown(secondsLeft); return; }
+        if (limited) {
+            startLockoutCountdown(secondsLeft);
+            return;
+        }
 
         const { valid, error: pinErr } = validatePin(pin);
-        if (!valid) { setError(pinErr || 'Invalid PIN'); triggerShake(); return; }
+        if (!valid) {
+            setError(pinErr || 'Enter a valid PIN');
+            triggerShake();
+            return;
+        }
 
         setIsLoading(true);
         setError('');
 
         try {
-            // ── Step 1: Try tenant login ──────────────────────────────
+            // Step 1: Try tenant login
             const tenant = await loginTenantByPin(pin);
             if (tenant) {
                 await clearRateLimit();
                 await saveSession(tenant);
-                // Register push token � web app can now ring this phone like WhatsApp
-                setupNotifications().then(() => registerPushToken(tenant.tenant_id)).catch(() => {});
+
+                // Register push notification token
+                setupNotifications()
+                    .then(() => registerPushToken(tenant.tenant_id))
+                    .catch(() => {});
+
                 setIsLoading(false);
                 setCheckingLicense(true);
+
                 try {
                     const licenseResult = await checkTenantLicense(
                         tenant.tenant_id,
@@ -157,17 +169,14 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         setRevokeReason(licenseResult.reason);
                     } else {
                         onLoginSuccess(tenant);
-                        // Check pending agreement in background (non-blocking)
+                        // Check pending agreement in background
                         getPendingAgreement(tenant.tenant_id).then(pending => {
                             if (pending) {
-                                // Signal to App.tsx that there's a pending agreement
-                                // by storing it in AsyncStorage — App.tsx reads it on mount
                                 import('@react-native-async-storage/async-storage').then(({ default: AS }) => {
                                     AS.setItem('pending_agreement', JSON.stringify(pending));
                                 });
                             }
                         }).catch(() => {});
-
                     }
                 } catch {
                     onLoginSuccess(tenant); // fail-open
@@ -177,7 +186,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 return;
             }
 
-            // ── Step 2: Try staff login (caretaker / landlord) ──────
+            // Step 2: Try staff login (caretaker / landlord)
             const staff = await loginStaffByPin(pin);
             if (staff) {
                 await clearRateLimit();
@@ -187,15 +196,16 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 return;
             }
 
-            // ── Step 3: No match ────────────────────────────────
+            // Step 3: No match
             triggerShake();
             const { locked, attemptsLeft, lockoutMs } = await recordFailedAttempt();
             if (locked) {
                 startLockoutCountdown(Math.ceil(lockoutMs / 1000));
             } else {
-                setError(attemptsLeft > 0
-                    ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
-                    : 'Incorrect PIN'
+                setError(
+                    attemptsLeft > 0
+                        ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
+                        : 'Incorrect PIN'
                 );
             }
             setPin('');
@@ -206,36 +216,35 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         } finally {
             setIsLoading(false);
         }
-    }, [pin, isLoading, lockoutSeconds]);
-
-    const floatY = floatAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -12] });
+    }, [pin, isLoading, lockoutSeconds, onLoginSuccess]);
 
     const KEYS = [
         ['1', '2', '3'],
         ['4', '5', '6'],
         ['7', '8', '9'],
-        ['', '0', '⌫'],
+        ['fingerprint', '0', 'delete'],
     ];
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.bg1} />
-            <LinearGradient
-                colors={[COLORS.bg1, COLORS.bg2, COLORS.bg3]}
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+
+            {/* ════ Full Screen Luxury Villa & Silk Wave Backdrop ════ */}
+            <Image
+                source={ASSETS.bgFull}
                 style={StyleSheet.absoluteFillObject}
+                resizeMode="cover"
             />
 
-            {/* License Gate — shown when access is revoked */}
+            {/* ════ License Gate Modal (If Revoked) ════ */}
             {licenseRevoked && (
                 <View style={styles.gateContainer}>
                     <LinearGradient colors={['#1e1b4b', '#312e81', '#1e1b4b']} style={StyleSheet.absoluteFillObject} />
                     <View style={styles.gateContent}>
-                        <View style={styles.gateIconWrap}>
-                            <Text style={{ fontSize: 40 }}>🔒</Text>
-                        </View>
+                        <Text style={{ fontSize: 44, marginBottom: 12 }}>🔒</Text>
                         <Text style={styles.gateTitle}>Access Revoked</Text>
                         <Text style={styles.gateMessage}>
-                            Your access has been revoked.{'\n'}Please contact your landlord.
+                            Your account access has been revoked.{'\n'}Please contact property management.
                         </Text>
                         {revokeReason ? (
                             <View style={styles.gateReasonBox}>
@@ -253,301 +262,483 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 </View>
             )}
 
-            {/* License checking overlay */}
+            {/* ════ Verifying Access Overlay ════ */}
             {checkingLicense && !licenseRevoked && (
                 <View style={styles.gateContainer}>
-                    <LinearGradient colors={['#0f172a', '#1e1b4b', '#0f172a']} style={StyleSheet.absoluteFillObject} />
+                    <LinearGradient colors={['rgba(2,44,34,0.95)', 'rgba(4,120,87,0.95)']} style={StyleSheet.absoluteFillObject} />
                     <View style={{ alignItems: 'center', gap: 16 }}>
-                        <ActivityIndicator color="#6366f1" size="large" />
-                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' }}>
-                            Verifying access...
+                        <ActivityIndicator color="#00E676" size="large" />
+                        <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>
+                            Verifying secure account access…
                         </Text>
                     </View>
                 </View>
             )}
 
-            {/* Decorative glows */}
-            <View style={styles.glow1} />
-            <View style={styles.glow2} />
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+            >
+                {/* Top spacer to align nicely over the background header */}
+                <View style={{ height: (StatusBar.currentHeight || 36) + 160 }} />
 
-            {/* Floating icons */}
-            <Animated.Text style={[styles.floatIcon, styles.fi1, { transform: [{ translateY: floatY }] }]}>🏠</Animated.Text>
-            <Animated.Text style={[styles.floatIcon, styles.fi2, { transform: [{ translateY: floatY }] }]}>🔐</Animated.Text>
-            <Animated.Text style={[styles.floatIcon, styles.fi3, { transform: [{ translateY: floatY }] }]}>💳</Animated.Text>
+                {/* ══════════════════════════════════════════════════════
+                    CENTRAL FLOATING FROSTED GLASS LOGIN CARD
+                ══════════════════════════════════════════════════════ */}
+                <Animated.View
+                    style={[
+                        styles.glassCard,
+                        {
+                            transform: [
+                                { translateX: shakeAnim },
+                                { scale: pulseAnim },
+                            ],
+                        },
+                    ]}
+                >
+                    {/* Glowing Shield Padlock Badge on Top Rim */}
+                    <Image
+                        source={ASSETS.shieldBadge}
+                        style={styles.shieldBadge}
+                        resizeMode="contain"
+                    />
 
-            <SafeAreaView style={styles.safe}>
-                {/* Logo + Title */}
-                <View style={styles.header}>
-                    <Animated.View style={[styles.logoWrap, { transform: [{ translateY: floatY }] }]}>
-                        <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.logoGrad}>
-                            <Text style={styles.logoEmoji}>🏢</Text>
-                        </LinearGradient>
-                        <View style={styles.logoBadge}>
-                            <Text style={styles.logoBadgeText}>ARMS</Text>
-                        </View>
-                    </Animated.View>
-                    <Text style={styles.title}>Tenant Portal</Text>
-                    <Text style={styles.subtitle}>Alpha Rental Management</Text>
-                    {license?.clientName ? (
-                        <View style={styles.licensedBadge}>
-                            <Text style={styles.licensedText}>Licensed to: </Text>
-                            <Text style={styles.licensedName}>{license.clientName}</Text>
+                    {/* Card Title & Subtitle */}
+                    <Text style={styles.cardTitle}>Secure Login</Text>
+                    <Text style={styles.cardSubtitle}>Enter your PIN to access your account</Text>
+
+                    {/* PIN Indicator Dots (6 Circles) */}
+                    <View style={styles.pinDotsRow}>
+                        {Array.from({ length: 6 }).map((_, i) => {
+                            const isFilled = i < pin.length;
+                            const isLatest = i === pin.length - 1;
+                            return (
+                                <View
+                                    key={i}
+                                    style={[
+                                        styles.dot,
+                                        isFilled ? styles.dotFilled : styles.dotEmpty,
+                                        isLatest && styles.dotLatest,
+                                    ]}
+                                >
+                                    {isFilled && <View style={styles.dotInnerGlow} />}
+                                </View>
+                            );
+                        })}
+                    </View>
+
+                    {/* Error message */}
+                    {error ? (
+                        <View style={styles.errorBanner}>
+                            <Text style={styles.errorText}>⚠️ {error}</Text>
                         </View>
                     ) : null}
-                    <View style={styles.secBadge}>
-                        <Text style={styles.secIcon}>🔒</Text>
-                        <Text style={styles.secText}>Secure PIN Login</Text>
-                    </View>
-                </View>
 
-                {/* PIN Dots */}
-                <Animated.View style={[styles.pinArea, { transform: [{ translateX: shakeAnim }, { scale: pulseAnim }] }]}>
-                    <Text style={styles.pinLabel}>Enter Your PIN</Text>
-                    <View style={styles.dotRow}>
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <View
-                                key={i}
-                                style={[
-                                    styles.dot,
-                                    i < pin.length ? styles.dotFilled : styles.dotEmpty,
-                                    i === pin.length - 1 && styles.dotActive,
-                                ]}
-                            />
+                    {/* Keypad Grid (4 Rows x 3 Columns) */}
+                    <View style={styles.keypadGrid}>
+                        {KEYS.map((row, ri) => (
+                            <View key={ri} style={styles.keyRow}>
+                                {row.map((key, ki) => {
+                                    if (key === 'fingerprint') {
+                                        return (
+                                            <TouchableOpacity
+                                                key={ki}
+                                                style={styles.keyBtn}
+                                                activeOpacity={0.7}
+                                                onPress={() => handleKeyPress('fingerprint')}
+                                                disabled={isLoading || lockoutSeconds > 0}
+                                            >
+                                                <Image
+                                                    source={ASSETS.keyFingerprint}
+                                                    style={styles.keyIconImg}
+                                                    resizeMode="contain"
+                                                />
+                                            </TouchableOpacity>
+                                        );
+                                    }
+
+                                    if (key === 'delete') {
+                                        return (
+                                            <TouchableOpacity
+                                                key={ki}
+                                                style={styles.keyBtn}
+                                                activeOpacity={0.7}
+                                                onPress={handleDelete}
+                                                disabled={isLoading || lockoutSeconds > 0}
+                                            >
+                                                <Image
+                                                    source={ASSETS.keyBackspace}
+                                                    style={styles.keyIconImg}
+                                                    resizeMode="contain"
+                                                />
+                                            </TouchableOpacity>
+                                        );
+                                    }
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={ki}
+                                            style={styles.keyBtn}
+                                            activeOpacity={0.75}
+                                            onPress={() => handleKeyPress(key)}
+                                            disabled={isLoading || lockoutSeconds > 0}
+                                        >
+                                            <Text style={styles.keyNumberText}>{key}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
                         ))}
                     </View>
 
-                    {/* Error / Lockout message */}
-                    {error ? (
-                        <View style={styles.errorRow}>
-                            <Text style={styles.errorIcon}>⚠️</Text>
-                            <Text style={styles.errorText}>{error}</Text>
+                    {/* "Login to Portal" Glowing Action Button */}
+                    <TouchableOpacity
+                        style={[
+                            styles.loginPortalBtn,
+                            (pin.length < 4 || isLoading || lockoutSeconds > 0) && styles.loginBtnDisabled,
+                        ]}
+                        activeOpacity={0.85}
+                        onPress={handleLogin}
+                        disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
+                    >
+                        <LinearGradient
+                            colors={
+                                pin.length >= 4 && lockoutSeconds === 0
+                                    ? ['#00C853', '#00E676', '#047857']
+                                    : ['#64748b', '#475569']
+                            }
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.loginBtnGrad}
+                        >
+                            {isLoading ? (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                    <ActivityIndicator color="#fff" size="small" />
+                                    <Text style={styles.loginBtnText}>Verifying…</Text>
+                                </View>
+                            ) : (
+                                <>
+                                    <Text style={styles.loginPortalIcon}>➔]</Text>
+                                    <Text style={styles.loginBtnText}>Login to Portal</Text>
+                                    <Image
+                                        source={ASSETS.btnArrow}
+                                        style={styles.btnArrowImg}
+                                        resizeMode="contain"
+                                    />
+                                </>
+                            )}
+                        </LinearGradient>
+                    </TouchableOpacity>
+
+                    {/* Trust & Support Strip */}
+                    <View style={styles.trustStrip}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                            <Text style={{ fontSize: 12 }}>🛡️</Text>
+                            <Text style={styles.trustText}>Secure & Encrypted</Text>
                         </View>
-                    ) : (
-                        <Text style={styles.pinHint}>
-                            {pin.length === 0 ? 'Ask your landlord for your PIN' : `${pin.length} digit${pin.length !== 1 ? 's' : ''} entered`}
-                        </Text>
-                    )}
+                        <Text style={styles.trustDivider}>|</Text>
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => {
+                                Alert.alert(
+                                    'ARMS Support',
+                                    'Contact Property Management:\n📞 Phone: 0720316175\n📧 Email: info@arms.co.ke',
+                                    [{ text: 'OK' }]
+                                );
+                            }}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                                <Text style={{ fontSize: 12 }}>🎧</Text>
+                                <Text style={styles.trustText}>Need Help? Contact Support</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
                 </Animated.View>
 
-                {/* Keypad */}
-                <View style={styles.keypad}>
-                    {KEYS.map((row, ri) => (
-                        <View key={ri} style={styles.keyRow}>
-                            {row.map((key, ki) => (
-                                <TouchableOpacity
-                                    key={ki}
-                                    style={[
-                                        styles.key,
-                                        key === '' && styles.keyEmpty,
-                                        key === '⌫' && styles.keyBack,
-                                        lockoutSeconds > 0 && styles.keyDisabled,
-                                    ]}
-                                    onPress={() => key === '⌫' ? handleDelete() : key !== '' ? handleKeyPress(key) : undefined}
-                                    disabled={key === '' || isLoading || lockoutSeconds > 0}
-                                    activeOpacity={0.7}
-                                >
-                                    {key === '⌫' ? (
-                                        <Text style={styles.keyBackText}>⌫</Text>
-                                    ) : key !== '' ? (
-                                        <Text style={[styles.keyText, lockoutSeconds > 0 && styles.keyTextDisabled]}>{key}</Text>
-                                    ) : null}
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    ))}
-                </View>
-
-                {/* Login Button */}
-                <TouchableOpacity
-                    style={[styles.loginBtn, (pin.length < 4 || isLoading || lockoutSeconds > 0) && styles.loginBtnDisabled]}
-                    onPress={handleLogin}
-                    disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
-                    activeOpacity={0.85}
-                >
-                    <LinearGradient
-                        colors={pin.length >= 4 && lockoutSeconds === 0 ? [COLORS.accent, COLORS.accentDark] : ['#374151', '#1f2937']}
-                        style={styles.loginBtnGrad}
-                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                    >
-                        {isLoading ? (
-                            <>
-                                <ActivityIndicator color="#fff" size="small" />
-                                <Text style={styles.loginBtnText}> Verifying…</Text>
-                            </>
-                        ) : (
-                            <>
-                                <Text style={styles.loginBtnEmoji}>🚀</Text>
-                                <Text style={styles.loginBtnText}>Login to Portal</Text>
-                                <Text style={styles.loginBtnArrow}>→</Text>
-                            </>
-                        )}
-                    </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Footer */}
-                <View style={styles.footer}>
-                    <View style={styles.footerDivider}>
-                        <View style={styles.divLine} />
-                        <Text style={styles.divText}>Powered by</Text>
-                        <View style={styles.divLine} />
-                    </View>
-                    <Text style={styles.footerTitle}>💎 Alpha Solutions</Text>
-                    <Text style={styles.footerSub}>Developed by Jimhawkins Korir · 0720316175</Text>
-                    <Text style={styles.version}>ARMS Tenant App {APP_VERSION} • {new Date().getFullYear()}</Text>
-                </View>
-            </SafeAreaView>
+                {/* Bottom App Version */}
+                <Text style={styles.versionText}>
+                    ARMS Mobile {APP_VERSION} • Developed by Jimhawkins Korir
+                </Text>
+            </ScrollView>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg1 },
-    safe: { flex: 1, alignItems: 'center', paddingHorizontal: 24 },
-    // License Gate styles
-    gateContainer: {
-        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-        zIndex: 100, justifyContent: 'center', alignItems: 'center',
+    container: {
+        flex: 1,
+        backgroundColor: '#022c22',
     },
-    gateContent: { alignItems: 'center', paddingHorizontal: 32 },
-    gateIconWrap: {
-        width: 80, height: 80, borderRadius: 24,
-        backgroundColor: 'rgba(239,68,68,0.15)',
-        borderWidth: 2, borderColor: 'rgba(239,68,68,0.3)',
-        justifyContent: 'center', alignItems: 'center', marginBottom: 20,
+    scrollContent: {
+        flexGrow: 1,
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingBottom: 24,
     },
-    gateTitle: { color: '#fff', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 12 },
-    gateMessage: { color: 'rgba(255,255,255,0.7)', fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 20 },
-    gateReasonBox: {
-        backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 14, marginBottom: 24,
-        borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', width: '100%',
-    },
-    gateReasonLabel: { color: 'rgba(239,68,68,0.8)', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
-    gateReasonText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, lineHeight: 18 },
-    gateBackBtn: { paddingVertical: 12, paddingHorizontal: 24 },
-    gateBackText: { color: 'rgba(255,255,255,0.5)', fontSize: 14 },
-    glow1: {
-        position: 'absolute', top: -80, left: -80,
-        width: 250, height: 250, borderRadius: 125,
-        backgroundColor: 'rgba(99,102,241,0.15)',
-    },
-    glow2: {
-        position: 'absolute', bottom: -100, right: -80,
-        width: 300, height: 300, borderRadius: 150,
-        backgroundColor: 'rgba(16,185,129,0.1)',
-    },
-    floatIcon: { position: 'absolute', fontSize: 28, opacity: 0.12 },
-    fi1: { top: 100, left: '8%' },
-    fi2: { top: 180, right: '10%' },
-    fi3: { bottom: 240, left: '15%' },
 
-    // Header
-    header: { alignItems: 'center', marginTop: 48, marginBottom: 32 },
-    logoWrap: { alignItems: 'center', marginBottom: 14 },
-    logoGrad: {
-        width: 72, height: 72, borderRadius: 20,
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.5, shadowRadius: 16, elevation: 10,
+    // ── Floating Glass Card ──
+    glassCard: {
+        width: Math.min(SCREEN_WIDTH * 0.92, 380),
+        backgroundColor: 'rgba(255, 255, 255, 0.94)',
+        borderRadius: 36,
+        paddingTop: 42,
+        paddingHorizontal: 16,
+        paddingBottom: 20,
+        position: 'relative',
+        borderWidth: 1.5,
+        borderColor: 'rgba(52, 211, 153, 0.5)',
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.35,
+        shadowRadius: 24,
+        elevation: 16,
     },
-    logoEmoji: { fontSize: 34 },
-    logoBadge: {
-        marginTop: -10, backgroundColor: COLORS.gold,
-        paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10,
-        shadowColor: COLORS.gold, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 6,
+    shieldBadge: {
+        position: 'absolute',
+        top: -38,
+        alignSelf: 'center',
+        width: 76,
+        height: 76,
     },
-    logoBadgeText: { color: '#1f2937', fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
-    title: { fontSize: 26, fontWeight: '900', color: COLORS.text, letterSpacing: 0.5, marginBottom: 4 },
-    subtitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500', marginBottom: 10 },
-    secBadge: {
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: 20,
-        paddingHorizontal: 14, paddingVertical: 5,
-        borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
+    cardTitle: {
+        fontSize: 22,
+        fontWeight: '900',
+        color: '#0f172a',
+        textAlign: 'center',
+        letterSpacing: 0.3,
     },
-    secIcon: { fontSize: 12 },
-    secText: { fontSize: 11, color: COLORS.accent, fontWeight: '700' },
+    cardSubtitle: {
+        fontSize: 12.5,
+        fontWeight: '600',
+        color: '#64748b',
+        textAlign: 'center',
+        marginTop: 4,
+        marginBottom: 16,
+    },
 
-    // PIN Area
-    pinArea: { alignItems: 'center', marginBottom: 28 },
-    pinLabel: { fontSize: 14, color: COLORS.textMuted, fontWeight: '600', marginBottom: 16, letterSpacing: 1 },
-    dotRow: { flexDirection: 'row', gap: 14, marginBottom: 12 },
+    // ── PIN Dots Indicator ──
+    pinDotsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 14,
+    },
     dot: {
-        width: DOT_SIZE, height: DOT_SIZE, borderRadius: DOT_SIZE / 2,
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    dotEmpty: {
+        backgroundColor: 'rgba(255, 255, 255, 0.8)',
         borderWidth: 2,
+        borderColor: '#94a3b8',
     },
-    dotEmpty: { borderColor: COLORS.textDim, backgroundColor: 'transparent' },
-    dotFilled: { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
-    dotActive: {
-        borderColor: COLORS.primaryLight, backgroundColor: COLORS.primaryLight,
-        shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 6,
+    dotFilled: {
+        backgroundColor: '#00E676',
+        borderWidth: 2,
+        borderColor: '#ffffff',
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.9,
+        shadowRadius: 8,
+        elevation: 6,
     },
-    pinHint: { fontSize: 12, color: COLORS.textDim, textAlign: 'center' },
-    errorRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-    errorIcon: { fontSize: 14 },
-    errorText: { fontSize: 12, color: COLORS.danger, fontWeight: '600', textAlign: 'center' },
+    dotLatest: {
+        transform: [{ scale: 1.15 }],
+    },
+    dotInnerGlow: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#ffffff',
+    },
 
-    // Keypad
-    keypad: { width: '100%', maxWidth: 300, gap: 12, marginBottom: 24 },
-    keyRow: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
-    key: {
-        width: 80, height: 68, borderRadius: 20,
-        backgroundColor: COLORS.keyBg,
-        borderWidth: 1, borderColor: COLORS.cardBorder,
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2, shadowRadius: 4, elevation: 3,
+    // ── Error Banner ──
+    errorBanner: {
+        backgroundColor: '#fee2e2',
+        borderWidth: 1,
+        borderColor: '#fca5a5',
+        borderRadius: 12,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        marginBottom: 10,
+        alignItems: 'center',
     },
-    keyEmpty: { backgroundColor: 'transparent', borderColor: 'transparent', elevation: 0 },
-    keyBack: {
-        backgroundColor: 'rgba(239,68,68,0.12)',
-        borderColor: 'rgba(239,68,68,0.2)',
+    errorText: {
+        color: '#b91c1c',
+        fontSize: 11.5,
+        fontWeight: '700',
     },
-    keyDisabled: { opacity: 0.3 },
-    keyText: { fontSize: 24, fontWeight: '700', color: COLORS.text },
-    keyTextDisabled: { color: COLORS.textDim },
-    keyBackText: { fontSize: 22, color: COLORS.danger },
 
-    // Login Button
-    loginBtn: { width: '100%', maxWidth: 300, borderRadius: 16, overflow: 'hidden', marginBottom: 24 },
-    loginBtnDisabled: { opacity: 0.5 },
+    // ── Keypad Grid ──
+    keypadGrid: {
+        marginBottom: 12,
+    },
+    keyRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    keyBtn: {
+        flex: 1,
+        height: 52,
+        marginHorizontal: 4,
+        borderRadius: 18,
+        backgroundColor: '#ffffff',
+        borderWidth: 1.2,
+        borderColor: 'rgba(16, 185, 129, 0.25)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#64748b',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+        elevation: 3,
+    },
+    keyNumberText: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    keyIconImg: {
+        width: 26,
+        height: 26,
+    },
+
+    // ── Login Button ──
+    loginPortalBtn: {
+        borderRadius: 27,
+        overflow: 'hidden',
+        marginBottom: 12,
+        shadowColor: '#00E676',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.45,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+    loginBtnDisabled: {
+        opacity: 0.7,
+        shadowOpacity: 0.1,
+    },
     loginBtnGrad: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        paddingVertical: 16, paddingHorizontal: 24, gap: 8,
+        height: 54,
+        paddingHorizontal: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
     },
-    loginBtnEmoji: { fontSize: 18 },
-    loginBtnText: { fontSize: 16, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
-    loginBtnArrow: { fontSize: 18, color: '#fff', fontWeight: '700' },
+    loginPortalIcon: {
+        color: '#ffffff',
+        fontSize: 20,
+        fontWeight: '900',
+    },
+    loginBtnText: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: '900',
+        letterSpacing: 0.5,
+    },
+    btnArrowImg: {
+        width: 32,
+        height: 32,
+    },
 
-    // Footer
-    footer: { alignItems: 'center', paddingBottom: 24, gap: 4 },
-    footerDivider: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-    divLine: { width: 30, height: 1, backgroundColor: COLORS.textDim },
-    divText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
-    footerTitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: '700' },
-    footerSub: { fontSize: 10, color: COLORS.textDim },
-    version: { fontSize: 10, color: COLORS.textDim, marginTop: 4 },
-    licensedBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 },
-    licensedText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
-    licensedName: { fontSize: 10, color: COLORS.gold, fontWeight: '800' },
+    // ── Trust & Support Strip ──
+    trustStrip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(2, 44, 34, 0.08)',
+        borderRadius: 18,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(16, 185, 129, 0.2)',
+        gap: 8,
+    },
+    trustText: {
+        fontSize: 9.5,
+        color: '#065f46',
+        fontWeight: '700',
+    },
+    trustDivider: {
+        color: '#cbd5e1',
+        fontSize: 11,
+    },
 
-    // ── Role Selector (NEW) ──────────────────────────────────
-    roleSelector: {
-        flexDirection: 'row', gap: 6,
-        marginBottom: 20, marginTop: 4,
-        width: '100%', maxWidth: 320,
+    // ── Version text ──
+    versionText: {
+        marginTop: 14,
+        fontSize: 10,
+        color: 'rgba(255, 255, 255, 0.65)',
+        fontWeight: '600',
     },
-    roleBtn: {
-        flex: 1, paddingVertical: 9, paddingHorizontal: 4,
-        borderRadius: 14, alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+
+    // ── License Gate & Overlays ──
+    gateContainer: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 999,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
     },
-    roleBtnActive: {
-        backgroundColor: 'rgba(99,102,241,0.2)',
-        borderColor: 'rgba(99,102,241,0.5)',
+    gateContent: {
+        backgroundColor: '#1e293b',
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#475569',
+        width: '100%',
+        maxWidth: 340,
     },
-    roleBtnText: { fontSize: 10, color: COLORS.textDim, fontWeight: '700', textAlign: 'center' },
-    roleBtnTextActive: { color: '#a5b4fc', fontWeight: '900' },
+    gateTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#f87171',
+        marginBottom: 8,
+    },
+    gateMessage: {
+        fontSize: 13,
+        color: '#94a3b8',
+        textAlign: 'center',
+        lineHeight: 18,
+        marginBottom: 16,
+    },
+    gateReasonBox: {
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.3)',
+        borderRadius: 12,
+        padding: 12,
+        width: '100%',
+        marginBottom: 16,
+    },
+    gateReasonLabel: {
+        fontSize: 10,
+        color: '#f87171',
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        marginBottom: 2,
+    },
+    gateReasonText: {
+        fontSize: 12,
+        color: '#fecdd3',
+        fontWeight: '600',
+    },
+    gateBackBtn: {
+        backgroundColor: '#3b82f6',
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 14,
+    },
+    gateBackText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '800',
+    },
 });
-
-
