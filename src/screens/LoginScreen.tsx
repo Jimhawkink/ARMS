@@ -3,6 +3,7 @@ import {
     View, Text, TouchableOpacity, StyleSheet,
     ActivityIndicator, Animated, Alert,
     StatusBar, ImageBackground, Dimensions, SafeAreaView,
+    useWindowDimensions,
 } from 'react-native';
 import {
     loginTenantByPin, loginStaffByPin, checkTenantLicense,
@@ -24,7 +25,7 @@ interface Props {
 }
 
 const ASSETS = {
-    loginBg: require('../../assets/login/login_bg_final.png'),
+    loginBgPhone: require('../../assets/login/login_bg_phone_20_9.png'),
 };
 
 export default function LoginScreen({ onLoginSuccess, license }: Props) {
@@ -95,7 +96,7 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         ]).start();
     };
 
-    // ── Keypad press handler (pure native, NO bounce animations) ───────────
+    // ── Keypad press handler ───────────────────────────────
     const handleKeyPress = useCallback((key: string) => {
         if (isLoading || lockoutSeconds > 0) return;
         setError('');
@@ -216,143 +217,143 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         }
     }, [pin, isLoading, lockoutSeconds, onLoginSuccess]);
 
-    const KEYS = [
-        ['1', '2', '3'],
-        ['4', '5', '6'],
-        ['7', '8', '9'],
-        ['fingerprint', '0', 'delete'],
-    ];
-
     const displayCompanyName = license?.clientName || businessInfo.companyName;
 
-    // Split brand name gracefully without cutoff
-    const formatBrandLines = (name: string) => {
-        const clean = name.trim();
-        const words = clean.split(/\s+/);
-        if (words.length <= 1) {
-            return { line1: clean.toUpperCase(), line2: '' };
-        }
-        if (words.length === 2) {
-            return { line1: words[0].toUpperCase(), line2: words[1].toUpperCase() };
-        }
-        const mid = Math.ceil(words.length / 2);
-        return {
-            line1: words.slice(0, mid).join(' ').toUpperCase(),
-            line2: words.slice(mid).join(' ').toUpperCase(),
-        };
-    };
+    // ── Dynamic 100% Screen-Fitted Geometry Calculation ──
+    // The background image asset is 1024 x 2280.
+    // Under resizeMode="cover", the image is scaled and centered by React Native.
+    // We compute the exact scale and offsets so all touch targets and indicators
+    // lock directly over the artwork with sub-pixel precision on ANY device.
+    const { width: winW, height: winH } = useWindowDimensions();
+    const bgScale = Math.max(winW / 1024, winH / 2280);
+    const offsetX = (winW - 1024 * bgScale) / 2;
+    const offsetY = (winH - 2280 * bgScale) / 2;
 
-    const { line1: brandLine1, line2: brandLine2 } = formatBrandLines(displayCompanyName);
+    const toX = (x: number) => offsetX + x * bgScale;
+    const toY = (y: number) => offsetY + y * bgScale;
+    const toW = (w: number) => w * bgScale;
+    const toH = (h: number) => h * bgScale;
+
+    // Exact PIN dot center positions in the 1024x2280 background
+    const DOT_CENTERS_X = [284, 375, 466, 557, 648, 739];
+    const DOT_CENTER_Y = 840;
+
+    // Keypad layout definition locked over each pill in the artwork
+    const KEY_GRID = [
+        // Row 1
+        { key: '1', x: 180, y: 920 },
+        { key: '2', x: 412, y: 920 },
+        { key: '3', x: 644, y: 920 },
+
+        // Row 2
+        { key: '4', x: 180, y: 1025 },
+        { key: '5', x: 412, y: 1025 },
+        { key: '6', x: 644, y: 1025 },
+
+        // Row 3
+        { key: '7', x: 180, y: 1130 },
+        { key: '8', x: 412, y: 1130 },
+        { key: '9', x: 644, y: 1130 },
+
+        // Row 4
+        { key: 'fingerprint', x: 180, y: 1235 },
+        { key: '0',           x: 412, y: 1235 },
+        { key: 'delete',      x: 644, y: 1235 },
+    ];
 
     return (
-        <ImageBackground source={ASSETS.loginBg} style={styles.bgImage} resizeMode="cover">
+        <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            {/* ════ License Gate Modal (If Revoked) ════ */}
-            {licenseRevoked && (
-                <View style={styles.gateContainer}>
-                    <View style={styles.gateContent}>
-                        <Text style={{ fontSize: 44, marginBottom: 12 }}>🔒</Text>
-                        <Text style={styles.gateTitle}>Access Revoked</Text>
-                        <Text style={styles.gateMessage}>
-                            Your account access has been revoked.{'\n'}Please contact property management.
-                        </Text>
-                        {revokeReason ? (
-                            <View style={styles.gateReasonBox}>
-                                <Text style={styles.gateReasonLabel}>Reason:</Text>
-                                <Text style={styles.gateReasonText}>{revokeReason}</Text>
-                            </View>
-                        ) : null}
-                        <TouchableOpacity
-                            style={styles.gateBackBtn}
-                            onPress={() => { setLicenseRevoked(false); setRevokeReason(undefined); setPin(''); }}
-                        >
-                            <Text style={styles.gateBackText}>← Back to Login</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            )}
-
-            {/* ════ Verifying Access Overlay ════ */}
-            {checkingLicense && !licenseRevoked && (
-                <View style={styles.gateContainer}>
-                    <View style={{ alignItems: 'center', gap: 16 }}>
-                        <ActivityIndicator color="#00E676" size="large" />
-                        <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>
-                            Verifying secure account access…
-                        </Text>
-                    </View>
-                </View>
-            )}
-
-            <SafeAreaView style={styles.safeArea}>
-                {/* ════ 1. TOP BRAND HEADER (Dynamic Landlord / Company Name) ════ */}
-                <View style={styles.topBrandHeader}>
-                    <View style={styles.brandTextCol}>
-                        <Text style={styles.brandTitleLine1} numberOfLines={1} adjustsFontSizeToFit>
-                            {brandLine1}
-                        </Text>
-                        {brandLine2 ? (
-                            <Text style={styles.brandTitleLine2} numberOfLines={1} adjustsFontSizeToFit>
-                                {brandLine2}
-                            </Text>
-                        ) : null}
-                    </View>
-                </View>
-
-                {/* ════ 2. INTERACTIVE CARD OVERLAY LAYER ════ */}
+            {/* ════ 100% FIT 20:9 PHONE BACKGROUND WITH EXACT SCENERY & CURVY CARD ════ */}
+            <ImageBackground
+                source={ASSETS.loginBgPhone}
+                style={styles.bgImage}
+                resizeMode="cover"
+            >
                 <Animated.View
                     style={[
-                        styles.interactiveCardArea,
+                        StyleSheet.absoluteFillObject,
                         { transform: [{ translateX: shakeAnim }] },
                     ]}
                 >
-                    {/* Error Banner */}
+                    {/* Error Banner (floating gracefully in clear space above PIN dots) */}
                     {error ? (
-                        <View style={styles.errorBanner}>
+                        <View style={[styles.errorBanner, { top: toY(760) }]}>
                             <Text style={styles.errorText}>⚠️ {error}</Text>
                         </View>
-                    ) : (
-                        <View style={styles.errorSpacer} />
-                    )}
+                    ) : null}
 
-                    {/* PIN Indicator Dots Layer (Glows green when digit entered) */}
-                    <View style={styles.pinDotsRow}>
-                        {Array.from({ length: 6 }).map((_, i) => {
-                            const isFilled = i < pin.length;
-                            return (
-                                <View key={i} style={styles.dotSlot}>
-                                    {isFilled && <View style={styles.dotGlowFill} />}
-                                </View>
-                            );
-                        })}
-                    </View>
-
-                    {/* Keypad Grid (Interactive Transparent Touch Targets over Background Pills) */}
-                    <View style={styles.keypadGrid}>
-                        {KEYS.map((row, ri) => (
-                            <View key={ri} style={styles.keyRow}>
-                                {row.map((key, ki) => (
-                                    <TouchableOpacity
-                                        key={ki}
-                                        style={styles.keyTouchBtn}
-                                        activeOpacity={0.4}
-                                        onPress={() => {
-                                            if (key === 'fingerprint') handleKeyPress('fingerprint');
-                                            else if (key === 'delete') handleDelete();
-                                            else handleKeyPress(key);
-                                        }}
-                                        disabled={isLoading || lockoutSeconds > 0}
+                    {/* ════ 6 ACTIVE PIN INDICATOR DOTS (Locked over empty circle rings) ════ */}
+                    {DOT_CENTERS_X.map((cx, i) => {
+                        const isFilled = i < pin.length;
+                        return (
+                            <View
+                                key={i}
+                                style={[
+                                    styles.pinDotWrapper,
+                                    {
+                                        left: toX(cx) - toW(12),
+                                        top: toY(DOT_CENTER_Y) - toH(12),
+                                        width: toW(24),
+                                        height: toH(24),
+                                    },
+                                ]}
+                                pointerEvents="none"
+                            >
+                                {isFilled && (
+                                    <View
+                                        style={[
+                                            styles.pinDotActiveGlow,
+                                            {
+                                                width: toW(16),
+                                                height: toH(16),
+                                                borderRadius: toW(8),
+                                            },
+                                        ]}
                                     />
-                                ))}
+                                )}
                             </View>
-                        ))}
-                    </View>
+                        );
+                    })}
 
-                    {/* "Login to Portal" CTA Touch Target */}
+                    {/* ════ 12 INTERACTIVE KEYPAD TOUCH TARGETS (Locked over each pill) ════ */}
+                    {KEY_GRID.map((item, index) => (
+                        <TouchableOpacity
+                            key={index}
+                            style={[
+                                styles.keypadTouchTarget,
+                                {
+                                    left: toX(item.x),
+                                    top: toY(item.y),
+                                    width: toW(200),
+                                    height: toH(92),
+                                    borderRadius: toW(26),
+                                },
+                            ]}
+                            activeOpacity={0.35}
+                            onPress={() => {
+                                if (item.key === 'fingerprint') handleKeyPress('fingerprint');
+                                else if (item.key === 'delete') handleDelete();
+                                else handleKeyPress(item.key);
+                            }}
+                            disabled={isLoading || lockoutSeconds > 0}
+                        />
+                    ))}
+
+                    {/* ════ "LOGIN TO PORTAL" CTA TOUCH TARGET (Locked over green button) ════ */}
                     <TouchableOpacity
-                        style={styles.loginBtnTouchTarget}
-                        activeOpacity={0.7}
+                        style={[
+                            styles.loginBtnTouchTarget,
+                            {
+                                left: toX(150),
+                                top: toY(1355),
+                                width: toW(724),
+                                height: toH(110),
+                                borderRadius: toW(55),
+                            },
+                        ]}
+                        activeOpacity={0.65}
                         onPress={handleLogin}
                         disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
                     >
@@ -364,10 +365,19 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         )}
                     </TouchableOpacity>
 
-                    {/* Support Contact Strip Touch Target */}
+                    {/* ════ SUPPORT TOUCH TARGET (Locked over "Need Help? Contact Support") ════ */}
                     <TouchableOpacity
-                        style={styles.supportTouchTarget}
-                        activeOpacity={0.6}
+                        style={[
+                            styles.supportTouchTarget,
+                            {
+                                left: toX(160),
+                                top: toY(1505),
+                                width: toW(704),
+                                height: toH(70),
+                                borderRadius: toW(35),
+                            },
+                        ]}
+                        activeOpacity={0.5}
                         onPress={() => {
                             Alert.alert(
                                 'Property Support',
@@ -378,106 +388,93 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                     />
                 </Animated.View>
 
+                {/* ════ LICENSE GATE MODAL (If Revoked) ════ */}
+                {licenseRevoked && (
+                    <View style={styles.gateContainer}>
+                        <View style={styles.gateContent}>
+                            <Text style={{ fontSize: 44, marginBottom: 12 }}>🔒</Text>
+                            <Text style={styles.gateTitle}>Access Revoked</Text>
+                            <Text style={styles.gateMessage}>
+                                Your account access has been revoked.{'\n'}Please contact property management.
+                            </Text>
+                            {revokeReason ? (
+                                <View style={styles.gateReasonBox}>
+                                    <Text style={styles.gateReasonLabel}>Reason:</Text>
+                                    <Text style={styles.gateReasonText}>{revokeReason}</Text>
+                                </View>
+                            ) : null}
+                            <TouchableOpacity
+                                style={styles.gateBackBtn}
+                                onPress={() => { setLicenseRevoked(false); setRevokeReason(undefined); setPin(''); }}
+                            >
+                                <Text style={styles.gateBackText}>← Back to Login</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
+
+                {/* ════ VERIFYING ACCESS OVERLAY ════ */}
+                {checkingLicense && !licenseRevoked && (
+                    <View style={styles.gateContainer}>
+                        <View style={{ alignItems: 'center', gap: 16 }}>
+                            <ActivityIndicator color="#00E676" size="large" />
+                            <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>
+                                Verifying secure account access…
+                            </Text>
+                        </View>
+                    </View>
+                )}
+
                 {/* Bottom App Version Footer */}
                 <Text style={styles.versionFooterText}>
                     ARMS Mobile {APP_VERSION} • Developed by Jimhawkins Korir
                 </Text>
-            </SafeAreaView>
-        </ImageBackground>
+            </ImageBackground>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    bgImage: {
+    container: {
         flex: 1,
-        width: '100%',
-        height: '100%',
         backgroundColor: '#022c22',
     },
-    safeArea: {
-        flex: 1,
-        justifyContent: 'space-between',
-        paddingBottom: 4,
+    bgImage: {
+        width: '100%',
+        height: '100%',
     },
 
-    // ── 1. Top Brand Header ──
-    topBrandHeader: {
-        paddingTop: (StatusBar.currentHeight || 36) + 6,
-        paddingLeft: SCREEN_WIDTH * 0.23,
-        paddingRight: SCREEN_WIDTH * 0.38,
-        height: 110,
-        justifyContent: 'center',
-    },
-    brandTextCol: {
-        justifyContent: 'center',
-    },
-    brandTitleLine1: {
-        color: '#ffffff',
-        fontSize: 16.5,
-        fontWeight: '900',
-        letterSpacing: 0.5,
-        textShadowColor: 'rgba(0, 0, 0, 0.75)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
-    },
-    brandTitleLine2: {
-        color: '#fbbf24',
-        fontSize: 15.5,
-        fontWeight: '900',
-        letterSpacing: 0.5,
-        marginTop: 1,
-        textShadowColor: 'rgba(0, 0, 0, 0.75)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
-    },
-
-    // ── 2. Interactive Card Area ──
-    interactiveCardArea: {
-        width: Math.min(SCREEN_WIDTH * 0.90, 400),
-        alignSelf: 'center',
-        paddingHorizontal: 12,
-        paddingBottom: 16,
-    },
-
+    // ── Floating Error Banner ──
     errorBanner: {
+        position: 'absolute',
+        top: '32.5%',
+        alignSelf: 'center',
         backgroundColor: '#fee2e2',
         borderWidth: 1,
         borderColor: '#fca5a5',
         borderRadius: 10,
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        marginBottom: 8,
-        alignItems: 'center',
-    },
-    errorSpacer: {
-        height: 24,
+        paddingVertical: 5,
+        paddingHorizontal: 12,
+        zIndex: 50,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 6,
     },
     errorText: {
         color: '#b91c1c',
-        fontSize: 11,
-        fontWeight: '700',
+        fontSize: 12,
+        fontWeight: '800',
     },
 
-    // PIN Indicator Dots Layer
-    pinDotsRow: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: 16,
-        marginBottom: 20,
-        height: 24,
-    },
-    dotSlot: {
-        width: 18,
-        height: 18,
-        borderRadius: 9,
+    // ── PIN Dot Active Layer ──
+    pinDotWrapper: {
+        position: 'absolute',
         justifyContent: 'center',
         alignItems: 'center',
     },
-    dotGlowFill: {
-        width: 14,
-        height: 14,
-        borderRadius: 7,
+    pinDotActiveGlow: {
         backgroundColor: '#00E676',
         borderWidth: 1.5,
         borderColor: '#ffffff',
@@ -488,29 +485,15 @@ const styles = StyleSheet.create({
         elevation: 6,
     },
 
-    // Keypad Grid Touch Targets
-    keypadGrid: {
-        marginBottom: 12,
-    },
-    keyRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-    },
-    keyTouchBtn: {
-        flex: 1,
-        height: 52,
-        marginHorizontal: 5,
-        borderRadius: 22,
+    // ── Keypad Pill Touch Targets ──
+    keypadTouchTarget: {
+        position: 'absolute',
         backgroundColor: 'rgba(255, 255, 255, 0.01)',
     },
 
-    // Login CTA Touch Target
+    // ── "Login to Portal" CTA Touch Target ──
     loginBtnTouchTarget: {
-        width: '100%',
-        height: 56,
-        borderRadius: 28,
-        marginVertical: 12,
+        position: 'absolute',
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0, 230, 118, 0.01)',
@@ -519,9 +502,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
-        backgroundColor: 'rgba(0, 200, 83, 0.9)',
-        paddingVertical: 10,
-        paddingHorizontal: 24,
+        backgroundColor: 'rgba(0, 200, 83, 0.92)',
+        paddingVertical: 8,
+        paddingHorizontal: 22,
         borderRadius: 24,
     },
     verifyingText: {
@@ -531,24 +514,23 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
 
-    // Support Strip Touch Target
+    // ── Support Strip Touch Target ──
     supportTouchTarget: {
-        width: '100%',
-        height: 38,
-        borderRadius: 19,
-        marginTop: 6,
+        position: 'absolute',
         backgroundColor: 'rgba(2, 44, 34, 0.01)',
     },
 
-    // Version Footer Text
+    // ── Bottom Version Footer ──
     versionFooterText: {
-        textAlign: 'center',
+        position: 'absolute',
+        bottom: 10,
+        alignSelf: 'center',
         fontSize: 10,
-        color: 'rgba(255, 255, 255, 0.7)',
-        fontWeight: '600',
+        color: 'rgba(255, 255, 255, 0.75)',
+        fontWeight: '700',
     },
 
-    // Overlays
+    // ── Gate & Verification Overlays ──
     gateContainer: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 999,
