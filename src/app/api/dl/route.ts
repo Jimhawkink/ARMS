@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const APK_VERSION  = 'v4.29';
+const APK_VERSION  = 'v5.0';
 const APK_FILENAME = `ARMSTenantApp-${APK_VERSION}.apk`;
 
 // Use GitHub API to get the asset URL — more reliable than direct releases URL
