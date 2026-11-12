@@ -1,32 +1,36 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { APP_VERSION } from '../lib/version';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     ActivityIndicator, Animated, Alert,
-    StatusBar, ImageBackground, Dimensions, SafeAreaView,
-    useWindowDimensions,
+    StatusBar, SafeAreaView,
 } from 'react-native';
-import {
-    loginTenantByPin, loginStaffByPin, checkTenantLicense,
-    getPendingAgreement, getBusinessInfo, BusinessInfo, TenantSession, StaffSession,
-} from '../lib/supabase';
+import { LinearGradient } from 'expo-linear-gradient';
+import { loginTenantByPin, loginStaffByPin, checkTenantLicense, getPendingAgreement, getAgreementTemplate, TenantSession, StaffSession } from '../lib/supabase';
 import {
     validatePin, isRateLimited, recordFailedAttempt,
     clearRateLimit, saveSession, saveStaffSession,
 } from '../lib/security';
 import { MobileLicense } from './LicenseScreen';
 import { setupNotifications, registerPushToken } from '../lib/notifications';
-import { APP_VERSION } from '../lib/version';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface Props {
     onLoginSuccess: (session: TenantSession | StaffSession) => void;
     license?: MobileLicense | null;
 }
 
-const ASSETS = {
-    loginBgPhone: require('../../assets/login/login_bg_phone_20_9.png'),
+const COLORS = {
+    bg1: '#0f172a', bg2: '#1e1b4b', bg3: '#0c1a2e',
+    primary: '#6366f1', primaryDark: '#4f46e5', primaryLight: '#818cf8',
+    accent: '#10b981', accentDark: '#059669',
+    danger: '#ef4444',
+    gold: '#f59e0b',
+    text: '#f8fafc', textMuted: '#94a3b8', textDim: '#64748b',
+    card: 'rgba(255,255,255,0.05)', cardBorder: 'rgba(255,255,255,0.1)',
+    keyBg: 'rgba(255,255,255,0.07)', keyBgActive: 'rgba(99,102,241,0.3)',
 };
+
+const DOT_SIZE = 18;
 
 export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [pin, setPin] = useState('');
@@ -36,28 +40,26 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
     const [checkingLicense, setCheckingLicense] = useState(false);
     const [licenseRevoked, setLicenseRevoked] = useState(false);
     const [revokeReason, setRevokeReason] = useState<string | undefined>(undefined);
-    const [businessInfo, setBusinessInfo] = useState<BusinessInfo>({
-        companyName: 'Alpha Rental Management',
-        phone: '0720316175',
-        email: 'info@arms.com',
-    });
 
     const shakeAnim = useRef(new Animated.Value(0)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+    const floatAnim = useRef(new Animated.Value(0)).current;
     const lockoutRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // ── Load business name from database on mount ──────────
+    // ── Floating animation ───────────────────────────────────
     useEffect(() => {
-        getBusinessInfo().then(info => {
-            if (info && info.companyName) setBusinessInfo(info);
-        }).catch(() => {});
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(floatAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
+                Animated.timing(floatAnim, { toValue: 0, duration: 3000, useNativeDriver: true }),
+            ])
+        ).start();
+        return () => { if (lockoutRef.current) clearInterval(lockoutRef.current); };
     }, []);
 
-    // ── Check lockout on mount ─────────────────────────────
+    // ── Check lockout on mount ───────────────────────────────
     useEffect(() => {
         checkLockout();
-        return () => {
-            if (lockoutRef.current) clearInterval(lockoutRef.current);
-        };
     }, []);
 
     const checkLockout = async () => {
@@ -84,40 +86,38 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         }, 1000);
     };
 
-    // ── Shake animation on error ───────────────────────────
+    // ── Shake animation for wrong PIN ────────────────────────
     const triggerShake = () => {
         shakeAnim.setValue(0);
         Animated.sequence([
-            Animated.timing(shakeAnim, { toValue: 12, duration: 60, useNativeDriver: true }),
-            Animated.timing(shakeAnim, { toValue: -12, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
             Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
         ]).start();
     };
 
-    // ── Keypad press handler ───────────────────────────────
+    // ── PIN keypad press ─────────────────────────────────────
     const handleKeyPress = useCallback((key: string) => {
         if (isLoading || lockoutSeconds > 0) return;
         setError('');
-
-        if (key === 'delete') {
+        if (key === '⌫') {
             setPin(p => p.slice(0, -1));
             return;
         }
-
-        if (key === 'fingerprint') {
-            Alert.alert(
-                'Biometric PIN',
-                `Please enter your assigned 4-6 digit PIN to log into your account securely.\nNeed help? Call ${businessInfo.phone}`,
-                [{ text: 'OK' }]
-            );
-            return;
-        }
-
         if (pin.length >= 6) return;
-        setPin(prev => prev + key);
-    }, [pin, isLoading, lockoutSeconds, businessInfo.phone]);
+        const newPin = pin + key;
+        setPin(newPin);
+
+        // Auto-submit when 4-6 digits entered and user presses any key at max len
+        if (newPin.length >= 4) {
+            Animated.sequence([
+                Animated.timing(pulseAnim, { toValue: 1.1, duration: 100, useNativeDriver: true }),
+                Animated.timing(pulseAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+            ]).start();
+        }
+    }, [pin, isLoading, lockoutSeconds]);
 
     const handleDelete = useCallback(() => {
         if (isLoading || lockoutSeconds > 0) return;
@@ -125,40 +125,28 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         setError('');
     }, [isLoading, lockoutSeconds]);
 
-    // ── Login authentication ───────────────────────────────
     const handleLogin = useCallback(async () => {
         if (isLoading || lockoutSeconds > 0) return;
 
         const { limited, secondsLeft } = await isRateLimited();
-        if (limited) {
-            startLockoutCountdown(secondsLeft);
-            return;
-        }
+        if (limited) { startLockoutCountdown(secondsLeft); return; }
 
         const { valid, error: pinErr } = validatePin(pin);
-        if (!valid) {
-            setError(pinErr || 'Enter a valid PIN');
-            triggerShake();
-            return;
-        }
+        if (!valid) { setError(pinErr || 'Invalid PIN'); triggerShake(); return; }
 
         setIsLoading(true);
         setError('');
 
         try {
-            // Step 1: Try tenant login
+            // ── Step 1: Try tenant login ──────────────────────────────
             const tenant = await loginTenantByPin(pin);
             if (tenant) {
                 await clearRateLimit();
                 await saveSession(tenant);
-
-                setupNotifications()
-                    .then(() => registerPushToken(tenant.tenant_id))
-                    .catch(() => {});
-
+                // Register push token � web app can now ring this phone like WhatsApp
+                setupNotifications().then(() => registerPushToken(tenant.tenant_id)).catch(() => {});
                 setIsLoading(false);
                 setCheckingLicense(true);
-
                 try {
                     const licenseResult = await checkTenantLicense(
                         tenant.tenant_id,
@@ -169,23 +157,27 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                         setRevokeReason(licenseResult.reason);
                     } else {
                         onLoginSuccess(tenant);
+                        // Check pending agreement in background (non-blocking)
                         getPendingAgreement(tenant.tenant_id).then(pending => {
                             if (pending) {
+                                // Signal to App.tsx that there's a pending agreement
+                                // by storing it in AsyncStorage — App.tsx reads it on mount
                                 import('@react-native-async-storage/async-storage').then(({ default: AS }) => {
                                     AS.setItem('pending_agreement', JSON.stringify(pending));
                                 });
                             }
                         }).catch(() => {});
+
                     }
                 } catch {
-                    onLoginSuccess(tenant);
+                    onLoginSuccess(tenant); // fail-open
                 } finally {
                     setCheckingLicense(false);
                 }
                 return;
             }
 
-            // Step 2: Try staff login (caretaker / landlord)
+            // ── Step 2: Try staff login (caretaker / landlord) ──────
             const staff = await loginStaffByPin(pin);
             if (staff) {
                 await clearRateLimit();
@@ -195,16 +187,15 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
                 return;
             }
 
-            // Step 3: No match
+            // ── Step 3: No match ────────────────────────────────
             triggerShake();
             const { locked, attemptsLeft, lockoutMs } = await recordFailedAttempt();
             if (locked) {
                 startLockoutCountdown(Math.ceil(lockoutMs / 1000));
             } else {
-                setError(
-                    attemptsLeft > 0
-                        ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
-                        : 'Incorrect PIN'
+                setError(attemptsLeft > 0
+                    ? `Incorrect PIN — ${attemptsLeft} attempt${attemptsLeft > 1 ? 's' : ''} left`
+                    : 'Incorrect PIN'
                 );
             }
             setPin('');
@@ -215,383 +206,348 @@ export default function LoginScreen({ onLoginSuccess, license }: Props) {
         } finally {
             setIsLoading(false);
         }
-    }, [pin, isLoading, lockoutSeconds, onLoginSuccess]);
+    }, [pin, isLoading, lockoutSeconds]);
 
-    const displayCompanyName = license?.clientName || businessInfo.companyName;
+    const floatY = floatAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -12] });
 
-    // ── Dynamic 100% Screen-Fitted Geometry Calculation ──
-    // The background image asset is 1024 x 2280.
-    // Under resizeMode="cover", the image is scaled and centered by React Native.
-    // We compute the exact scale and offsets so all touch targets and indicators
-    // lock directly over the artwork with sub-pixel precision on ANY device.
-    const { width: winW, height: winH } = useWindowDimensions();
-    const bgScale = Math.max(winW / 1024, winH / 2280);
-    const offsetX = (winW - 1024 * bgScale) / 2;
-    const offsetY = (winH - 2280 * bgScale) / 2;
-
-    const toX = (x: number) => offsetX + x * bgScale;
-    const toY = (y: number) => offsetY + y * bgScale;
-    const toW = (w: number) => w * bgScale;
-    const toH = (h: number) => h * bgScale;
-
-    // Exact PIN dot center positions in the 1024x2280 background
-    const DOT_CENTERS_X = [284, 375, 466, 557, 648, 739];
-    const DOT_CENTER_Y = 840;
-
-    // Keypad layout definition locked over each pill in the artwork
-    const KEY_GRID = [
-        // Row 1
-        { key: '1', x: 180, y: 920 },
-        { key: '2', x: 412, y: 920 },
-        { key: '3', x: 644, y: 920 },
-
-        // Row 2
-        { key: '4', x: 180, y: 1025 },
-        { key: '5', x: 412, y: 1025 },
-        { key: '6', x: 644, y: 1025 },
-
-        // Row 3
-        { key: '7', x: 180, y: 1130 },
-        { key: '8', x: 412, y: 1130 },
-        { key: '9', x: 644, y: 1130 },
-
-        // Row 4
-        { key: 'fingerprint', x: 180, y: 1235 },
-        { key: '0',           x: 412, y: 1235 },
-        { key: 'delete',      x: 644, y: 1235 },
+    const KEYS = [
+        ['1', '2', '3'],
+        ['4', '5', '6'],
+        ['7', '8', '9'],
+        ['', '0', '⌫'],
     ];
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+            <StatusBar barStyle="light-content" backgroundColor={COLORS.bg1} />
+            <LinearGradient
+                colors={[COLORS.bg1, COLORS.bg2, COLORS.bg3]}
+                style={StyleSheet.absoluteFillObject}
+            />
 
-            {/* ════ 100% FIT 20:9 PHONE BACKGROUND WITH EXACT SCENERY & CURVY CARD ════ */}
-            <ImageBackground
-                source={ASSETS.loginBgPhone}
-                style={styles.bgImage}
-                resizeMode="cover"
-            >
-                <Animated.View
-                    style={[
-                        StyleSheet.absoluteFillObject,
-                        { transform: [{ translateX: shakeAnim }] },
-                    ]}
-                >
-                    {/* Error Banner (floating gracefully in clear space above PIN dots) */}
-                    {error ? (
-                        <View style={[styles.errorBanner, { top: toY(760) }]}>
-                            <Text style={styles.errorText}>⚠️ {error}</Text>
+            {/* License Gate — shown when access is revoked */}
+            {licenseRevoked && (
+                <View style={styles.gateContainer}>
+                    <LinearGradient colors={['#1e1b4b', '#312e81', '#1e1b4b']} style={StyleSheet.absoluteFillObject} />
+                    <View style={styles.gateContent}>
+                        <View style={styles.gateIconWrap}>
+                            <Text style={{ fontSize: 40 }}>🔒</Text>
+                        </View>
+                        <Text style={styles.gateTitle}>Access Revoked</Text>
+                        <Text style={styles.gateMessage}>
+                            Your access has been revoked.{'\n'}Please contact your landlord.
+                        </Text>
+                        {revokeReason ? (
+                            <View style={styles.gateReasonBox}>
+                                <Text style={styles.gateReasonLabel}>Reason:</Text>
+                                <Text style={styles.gateReasonText}>{revokeReason}</Text>
+                            </View>
+                        ) : null}
+                        <TouchableOpacity
+                            style={styles.gateBackBtn}
+                            onPress={() => { setLicenseRevoked(false); setRevokeReason(undefined); setPin(''); }}
+                        >
+                            <Text style={styles.gateBackText}>← Back to Login</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+
+            {/* License checking overlay */}
+            {checkingLicense && !licenseRevoked && (
+                <View style={styles.gateContainer}>
+                    <LinearGradient colors={['#0f172a', '#1e1b4b', '#0f172a']} style={StyleSheet.absoluteFillObject} />
+                    <View style={{ alignItems: 'center', gap: 16 }}>
+                        <ActivityIndicator color="#6366f1" size="large" />
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' }}>
+                            Verifying access...
+                        </Text>
+                    </View>
+                </View>
+            )}
+
+            {/* Decorative glows */}
+            <View style={styles.glow1} />
+            <View style={styles.glow2} />
+
+            {/* Floating icons */}
+            <Animated.Text style={[styles.floatIcon, styles.fi1, { transform: [{ translateY: floatY }] }]}>🏠</Animated.Text>
+            <Animated.Text style={[styles.floatIcon, styles.fi2, { transform: [{ translateY: floatY }] }]}>🔐</Animated.Text>
+            <Animated.Text style={[styles.floatIcon, styles.fi3, { transform: [{ translateY: floatY }] }]}>💳</Animated.Text>
+
+            <SafeAreaView style={styles.safe}>
+                {/* Logo + Title */}
+                <View style={styles.header}>
+                    <Animated.View style={[styles.logoWrap, { transform: [{ translateY: floatY }] }]}>
+                        <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.logoGrad}>
+                            <Text style={styles.logoEmoji}>🏢</Text>
+                        </LinearGradient>
+                        <View style={styles.logoBadge}>
+                            <Text style={styles.logoBadgeText}>ARMS</Text>
+                        </View>
+                    </Animated.View>
+                    <Text style={styles.title}>Tenant Portal</Text>
+                    <Text style={styles.subtitle}>Alpha Rental Management</Text>
+                    {license?.clientName ? (
+                        <View style={styles.licensedBadge}>
+                            <Text style={styles.licensedText}>Licensed to: </Text>
+                            <Text style={styles.licensedName}>{license.clientName}</Text>
                         </View>
                     ) : null}
+                    <View style={styles.secBadge}>
+                        <Text style={styles.secIcon}>🔒</Text>
+                        <Text style={styles.secText}>Secure PIN Login</Text>
+                    </View>
+                </View>
 
-                    {/* ════ 6 ACTIVE PIN INDICATOR DOTS (Locked over empty circle rings) ════ */}
-                    {DOT_CENTERS_X.map((cx, i) => {
-                        const isFilled = i < pin.length;
-                        return (
+                {/* PIN Dots */}
+                <Animated.View style={[styles.pinArea, { transform: [{ translateX: shakeAnim }, { scale: pulseAnim }] }]}>
+                    <Text style={styles.pinLabel}>Enter Your PIN</Text>
+                    <View style={styles.dotRow}>
+                        {Array.from({ length: 6 }).map((_, i) => (
                             <View
                                 key={i}
                                 style={[
-                                    styles.pinDotWrapper,
-                                    {
-                                        left: toX(cx) - toW(12),
-                                        top: toY(DOT_CENTER_Y) - toH(12),
-                                        width: toW(24),
-                                        height: toH(24),
-                                    },
+                                    styles.dot,
+                                    i < pin.length ? styles.dotFilled : styles.dotEmpty,
+                                    i === pin.length - 1 && styles.dotActive,
                                 ]}
-                                pointerEvents="none"
-                            >
-                                {isFilled && (
-                                    <View
-                                        style={[
-                                            styles.pinDotActiveGlow,
-                                            {
-                                                width: toW(16),
-                                                height: toH(16),
-                                                borderRadius: toW(8),
-                                            },
-                                        ]}
-                                    />
-                                )}
-                            </View>
-                        );
-                    })}
+                            />
+                        ))}
+                    </View>
 
-                    {/* ════ 12 INTERACTIVE KEYPAD TOUCH TARGETS (Locked over each pill) ════ */}
-                    {KEY_GRID.map((item, index) => (
-                        <TouchableOpacity
-                            key={index}
-                            style={[
-                                styles.keypadTouchTarget,
-                                {
-                                    left: toX(item.x),
-                                    top: toY(item.y),
-                                    width: toW(200),
-                                    height: toH(92),
-                                    borderRadius: toW(26),
-                                },
-                            ]}
-                            activeOpacity={0.35}
-                            onPress={() => {
-                                if (item.key === 'fingerprint') handleKeyPress('fingerprint');
-                                else if (item.key === 'delete') handleDelete();
-                                else handleKeyPress(item.key);
-                            }}
-                            disabled={isLoading || lockoutSeconds > 0}
-                        />
-                    ))}
-
-                    {/* ════ "LOGIN TO PORTAL" CTA TOUCH TARGET (Locked over green button) ════ */}
-                    <TouchableOpacity
-                        style={[
-                            styles.loginBtnTouchTarget,
-                            {
-                                left: toX(150),
-                                top: toY(1355),
-                                width: toW(724),
-                                height: toH(110),
-                                borderRadius: toW(55),
-                            },
-                        ]}
-                        activeOpacity={0.65}
-                        onPress={handleLogin}
-                        disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
-                    >
-                        {isLoading && (
-                            <View style={styles.verifyingOverlay}>
-                                <ActivityIndicator color="#ffffff" size="small" />
-                                <Text style={styles.verifyingText}>Verifying…</Text>
-                            </View>
-                        )}
-                    </TouchableOpacity>
-
-                    {/* ════ SUPPORT TOUCH TARGET (Locked over "Need Help? Contact Support") ════ */}
-                    <TouchableOpacity
-                        style={[
-                            styles.supportTouchTarget,
-                            {
-                                left: toX(160),
-                                top: toY(1505),
-                                width: toW(704),
-                                height: toH(70),
-                                borderRadius: toW(35),
-                            },
-                        ]}
-                        activeOpacity={0.5}
-                        onPress={() => {
-                            Alert.alert(
-                                'Property Support',
-                                `${displayCompanyName}\n📞 Phone: ${businessInfo.phone}\n📧 Email: ${businessInfo.email}`,
-                                [{ text: 'OK' }]
-                            );
-                        }}
-                    />
+                    {/* Error / Lockout message */}
+                    {error ? (
+                        <View style={styles.errorRow}>
+                            <Text style={styles.errorIcon}>⚠️</Text>
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    ) : (
+                        <Text style={styles.pinHint}>
+                            {pin.length === 0 ? 'Ask your landlord for your PIN' : `${pin.length} digit${pin.length !== 1 ? 's' : ''} entered`}
+                        </Text>
+                    )}
                 </Animated.View>
 
-                {/* ════ LICENSE GATE MODAL (If Revoked) ════ */}
-                {licenseRevoked && (
-                    <View style={styles.gateContainer}>
-                        <View style={styles.gateContent}>
-                            <Text style={{ fontSize: 44, marginBottom: 12 }}>🔒</Text>
-                            <Text style={styles.gateTitle}>Access Revoked</Text>
-                            <Text style={styles.gateMessage}>
-                                Your account access has been revoked.{'\n'}Please contact property management.
-                            </Text>
-                            {revokeReason ? (
-                                <View style={styles.gateReasonBox}>
-                                    <Text style={styles.gateReasonLabel}>Reason:</Text>
-                                    <Text style={styles.gateReasonText}>{revokeReason}</Text>
-                                </View>
-                            ) : null}
-                            <TouchableOpacity
-                                style={styles.gateBackBtn}
-                                onPress={() => { setLicenseRevoked(false); setRevokeReason(undefined); setPin(''); }}
-                            >
-                                <Text style={styles.gateBackText}>← Back to Login</Text>
-                            </TouchableOpacity>
+                {/* Keypad */}
+                <View style={styles.keypad}>
+                    {KEYS.map((row, ri) => (
+                        <View key={ri} style={styles.keyRow}>
+                            {row.map((key, ki) => (
+                                <TouchableOpacity
+                                    key={ki}
+                                    style={[
+                                        styles.key,
+                                        key === '' && styles.keyEmpty,
+                                        key === '⌫' && styles.keyBack,
+                                        lockoutSeconds > 0 && styles.keyDisabled,
+                                    ]}
+                                    onPress={() => key === '⌫' ? handleDelete() : key !== '' ? handleKeyPress(key) : undefined}
+                                    disabled={key === '' || isLoading || lockoutSeconds > 0}
+                                    activeOpacity={0.7}
+                                >
+                                    {key === '⌫' ? (
+                                        <Text style={styles.keyBackText}>⌫</Text>
+                                    ) : key !== '' ? (
+                                        <Text style={[styles.keyText, lockoutSeconds > 0 && styles.keyTextDisabled]}>{key}</Text>
+                                    ) : null}
+                                </TouchableOpacity>
+                            ))}
                         </View>
-                    </View>
-                )}
+                    ))}
+                </View>
 
-                {/* ════ VERIFYING ACCESS OVERLAY ════ */}
-                {checkingLicense && !licenseRevoked && (
-                    <View style={styles.gateContainer}>
-                        <View style={{ alignItems: 'center', gap: 16 }}>
-                            <ActivityIndicator color="#00E676" size="large" />
-                            <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '700' }}>
-                                Verifying secure account access…
-                            </Text>
-                        </View>
-                    </View>
-                )}
+                {/* Login Button */}
+                <TouchableOpacity
+                    style={[styles.loginBtn, (pin.length < 4 || isLoading || lockoutSeconds > 0) && styles.loginBtnDisabled]}
+                    onPress={handleLogin}
+                    disabled={pin.length < 4 || isLoading || lockoutSeconds > 0}
+                    activeOpacity={0.85}
+                >
+                    <LinearGradient
+                        colors={pin.length >= 4 && lockoutSeconds === 0 ? [COLORS.accent, COLORS.accentDark] : ['#374151', '#1f2937']}
+                        style={styles.loginBtnGrad}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                    >
+                        {isLoading ? (
+                            <>
+                                <ActivityIndicator color="#fff" size="small" />
+                                <Text style={styles.loginBtnText}> Verifying…</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Text style={styles.loginBtnEmoji}>🚀</Text>
+                                <Text style={styles.loginBtnText}>Login to Portal</Text>
+                                <Text style={styles.loginBtnArrow}>→</Text>
+                            </>
+                        )}
+                    </LinearGradient>
+                </TouchableOpacity>
 
-                {/* Bottom App Version Footer */}
-                <Text style={styles.versionFooterText}>
-                    ARMS Mobile {APP_VERSION} • Developed by Jimhawkins Korir
-                </Text>
-            </ImageBackground>
+                {/* Footer */}
+                <View style={styles.footer}>
+                    <View style={styles.footerDivider}>
+                        <View style={styles.divLine} />
+                        <Text style={styles.divText}>Powered by</Text>
+                        <View style={styles.divLine} />
+                    </View>
+                    <Text style={styles.footerTitle}>💎 Alpha Solutions</Text>
+                    <Text style={styles.footerSub}>Developed by Jimhawkins Korir · 0720316175</Text>
+                    <Text style={styles.version}>ARMS Tenant App {APP_VERSION} • {new Date().getFullYear()}</Text>
+                </View>
+            </SafeAreaView>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#022c22',
-    },
-    bgImage: {
-        width: '100%',
-        height: '100%',
-    },
-
-    // ── Floating Error Banner ──
-    errorBanner: {
-        position: 'absolute',
-        top: '32.5%',
-        alignSelf: 'center',
-        backgroundColor: '#fee2e2',
-        borderWidth: 1,
-        borderColor: '#fca5a5',
-        borderRadius: 10,
-        paddingVertical: 5,
-        paddingHorizontal: 12,
-        zIndex: 50,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 6,
-    },
-    errorText: {
-        color: '#b91c1c',
-        fontSize: 12,
-        fontWeight: '800',
-    },
-
-    // ── PIN Dot Active Layer ──
-    pinDotWrapper: {
-        position: 'absolute',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    pinDotActiveGlow: {
-        backgroundColor: '#00E676',
-        borderWidth: 1.5,
-        borderColor: '#ffffff',
-        shadowColor: '#00E676',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 1,
-        shadowRadius: 8,
-        elevation: 6,
-    },
-
-    // ── Keypad Pill Touch Targets ──
-    keypadTouchTarget: {
-        position: 'absolute',
-        backgroundColor: 'rgba(255, 255, 255, 0.01)',
-    },
-
-    // ── "Login to Portal" CTA Touch Target ──
-    loginBtnTouchTarget: {
-        position: 'absolute',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0, 230, 118, 0.01)',
-    },
-    verifyingOverlay: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        backgroundColor: 'rgba(0, 200, 83, 0.92)',
-        paddingVertical: 8,
-        paddingHorizontal: 22,
-        borderRadius: 24,
-    },
-    verifyingText: {
-        color: '#ffffff',
-        fontSize: 15,
-        fontWeight: '900',
-        letterSpacing: 0.3,
-    },
-
-    // ── Support Strip Touch Target ──
-    supportTouchTarget: {
-        position: 'absolute',
-        backgroundColor: 'rgba(2, 44, 34, 0.01)',
-    },
-
-    // ── Bottom Version Footer ──
-    versionFooterText: {
-        position: 'absolute',
-        bottom: 10,
-        alignSelf: 'center',
-        fontSize: 10,
-        color: 'rgba(255, 255, 255, 0.75)',
-        fontWeight: '700',
-    },
-
-    // ── Gate & Verification Overlays ──
+    container: { flex: 1, backgroundColor: COLORS.bg1 },
+    safe: { flex: 1, alignItems: 'center', paddingHorizontal: 24 },
+    // License Gate styles
     gateContainer: {
-        ...StyleSheet.absoluteFillObject,
-        zIndex: 999,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 24,
-        backgroundColor: 'rgba(2, 44, 34, 0.95)',
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+        zIndex: 100, justifyContent: 'center', alignItems: 'center',
     },
-    gateContent: {
-        backgroundColor: '#1e293b',
-        borderRadius: 24,
-        padding: 24,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#475569',
-        width: '100%',
-        maxWidth: 340,
+    gateContent: { alignItems: 'center', paddingHorizontal: 32 },
+    gateIconWrap: {
+        width: 80, height: 80, borderRadius: 24,
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        borderWidth: 2, borderColor: 'rgba(239,68,68,0.3)',
+        justifyContent: 'center', alignItems: 'center', marginBottom: 20,
     },
-    gateTitle: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: '#f87171',
-        marginBottom: 8,
-    },
-    gateMessage: {
-        fontSize: 13,
-        color: '#94a3b8',
-        textAlign: 'center',
-        lineHeight: 18,
-        marginBottom: 16,
-    },
+    gateTitle: { color: '#fff', fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 12 },
+    gateMessage: { color: 'rgba(255,255,255,0.7)', fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 20 },
     gateReasonBox: {
-        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-        borderWidth: 1,
-        borderColor: 'rgba(239, 68, 68, 0.3)',
-        borderRadius: 12,
-        padding: 12,
-        width: '100%',
-        marginBottom: 16,
+        backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 14, marginBottom: 24,
+        borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)', width: '100%',
     },
-    gateReasonLabel: {
-        fontSize: 10,
-        color: '#f87171',
-        fontWeight: '700',
-        textTransform: 'uppercase',
-        marginBottom: 2,
+    gateReasonLabel: { color: 'rgba(239,68,68,0.8)', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
+    gateReasonText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, lineHeight: 18 },
+    gateBackBtn: { paddingVertical: 12, paddingHorizontal: 24 },
+    gateBackText: { color: 'rgba(255,255,255,0.5)', fontSize: 14 },
+    glow1: {
+        position: 'absolute', top: -80, left: -80,
+        width: 250, height: 250, borderRadius: 125,
+        backgroundColor: 'rgba(99,102,241,0.15)',
     },
-    gateReasonText: {
-        fontSize: 12,
-        color: '#fecdd3',
-        fontWeight: '600',
+    glow2: {
+        position: 'absolute', bottom: -100, right: -80,
+        width: 300, height: 300, borderRadius: 150,
+        backgroundColor: 'rgba(16,185,129,0.1)',
     },
-    gateBackBtn: {
-        backgroundColor: '#3b82f6',
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-        borderRadius: 14,
+    floatIcon: { position: 'absolute', fontSize: 28, opacity: 0.12 },
+    fi1: { top: 100, left: '8%' },
+    fi2: { top: 180, right: '10%' },
+    fi3: { bottom: 240, left: '15%' },
+
+    // Header
+    header: { alignItems: 'center', marginTop: 48, marginBottom: 32 },
+    logoWrap: { alignItems: 'center', marginBottom: 14 },
+    logoGrad: {
+        width: 72, height: 72, borderRadius: 20,
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.5, shadowRadius: 16, elevation: 10,
     },
-    gateBackText: {
-        color: '#ffffff',
-        fontSize: 13,
-        fontWeight: '800',
+    logoEmoji: { fontSize: 34 },
+    logoBadge: {
+        marginTop: -10, backgroundColor: COLORS.gold,
+        paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10,
+        shadowColor: COLORS.gold, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 6,
     },
+    logoBadgeText: { color: '#1f2937', fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
+    title: { fontSize: 26, fontWeight: '900', color: COLORS.text, letterSpacing: 0.5, marginBottom: 4 },
+    subtitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500', marginBottom: 10 },
+    secBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: 20,
+        paddingHorizontal: 14, paddingVertical: 5,
+        borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
+    },
+    secIcon: { fontSize: 12 },
+    secText: { fontSize: 11, color: COLORS.accent, fontWeight: '700' },
+
+    // PIN Area
+    pinArea: { alignItems: 'center', marginBottom: 28 },
+    pinLabel: { fontSize: 14, color: COLORS.textMuted, fontWeight: '600', marginBottom: 16, letterSpacing: 1 },
+    dotRow: { flexDirection: 'row', gap: 14, marginBottom: 12 },
+    dot: {
+        width: DOT_SIZE, height: DOT_SIZE, borderRadius: DOT_SIZE / 2,
+        borderWidth: 2,
+    },
+    dotEmpty: { borderColor: COLORS.textDim, backgroundColor: 'transparent' },
+    dotFilled: { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
+    dotActive: {
+        borderColor: COLORS.primaryLight, backgroundColor: COLORS.primaryLight,
+        shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 6,
+    },
+    pinHint: { fontSize: 12, color: COLORS.textDim, textAlign: 'center' },
+    errorRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+    errorIcon: { fontSize: 14 },
+    errorText: { fontSize: 12, color: COLORS.danger, fontWeight: '600', textAlign: 'center' },
+
+    // Keypad
+    keypad: { width: '100%', maxWidth: 300, gap: 12, marginBottom: 24 },
+    keyRow: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
+    key: {
+        width: 80, height: 68, borderRadius: 20,
+        backgroundColor: COLORS.keyBg,
+        borderWidth: 1, borderColor: COLORS.cardBorder,
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2, shadowRadius: 4, elevation: 3,
+    },
+    keyEmpty: { backgroundColor: 'transparent', borderColor: 'transparent', elevation: 0 },
+    keyBack: {
+        backgroundColor: 'rgba(239,68,68,0.12)',
+        borderColor: 'rgba(239,68,68,0.2)',
+    },
+    keyDisabled: { opacity: 0.3 },
+    keyText: { fontSize: 24, fontWeight: '700', color: COLORS.text },
+    keyTextDisabled: { color: COLORS.textDim },
+    keyBackText: { fontSize: 22, color: COLORS.danger },
+
+    // Login Button
+    loginBtn: { width: '100%', maxWidth: 300, borderRadius: 16, overflow: 'hidden', marginBottom: 24 },
+    loginBtnDisabled: { opacity: 0.5 },
+    loginBtnGrad: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        paddingVertical: 16, paddingHorizontal: 24, gap: 8,
+    },
+    loginBtnEmoji: { fontSize: 18 },
+    loginBtnText: { fontSize: 16, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
+    loginBtnArrow: { fontSize: 18, color: '#fff', fontWeight: '700' },
+
+    // Footer
+    footer: { alignItems: 'center', paddingBottom: 24, gap: 4 },
+    footerDivider: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+    divLine: { width: 30, height: 1, backgroundColor: COLORS.textDim },
+    divText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
+    footerTitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: '700' },
+    footerSub: { fontSize: 10, color: COLORS.textDim },
+    version: { fontSize: 10, color: COLORS.textDim, marginTop: 4 },
+    licensedBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 },
+    licensedText: { fontSize: 10, color: COLORS.textDim, fontWeight: '500' },
+    licensedName: { fontSize: 10, color: COLORS.gold, fontWeight: '800' },
+
+    // ── Role Selector (NEW) ──────────────────────────────────
+    roleSelector: {
+        flexDirection: 'row', gap: 6,
+        marginBottom: 20, marginTop: 4,
+        width: '100%', maxWidth: 320,
+    },
+    roleBtn: {
+        flex: 1, paddingVertical: 9, paddingHorizontal: 4,
+        borderRadius: 14, alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    },
+    roleBtnActive: {
+        backgroundColor: 'rgba(99,102,241,0.2)',
+        borderColor: 'rgba(99,102,241,0.5)',
+    },
+    roleBtnText: { fontSize: 10, color: COLORS.textDim, fontWeight: '700', textAlign: 'center' },
+    roleBtnTextActive: { color: '#a5b4fc', fontWeight: '900' },
 });
+
+

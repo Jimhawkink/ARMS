@@ -183,12 +183,15 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         if (paymentDoneRef.current) return; // ← already handled, ignore
                         paymentDoneRef.current = true;
                         const finalAmt = confirmedAmount || amtVal;
-                        // Callback already recorded payment on server — just refresh balance
+                        // Callback already recorded payment on server — just refresh balance & penalty
                         setReceipt(kcbReceipt || 'KCB');
                         setPaidAmount(finalAmt);
-                        await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
-                        const newBal = await refreshTenantBalance(session.tenant_id);
+                        const [newBal, newPen] = await Promise.all([
+                            refreshTenantBalance(session.tenant_id),
+                            getTenantActivePenalties(session.tenant_id),
+                        ]);
                         setBalance(newBal);
+                        setPenaltyInfo(newPen);
                         await updateSessionBalance(newBal);
                         setStep('success');
                         setProcessing(false);
@@ -271,10 +274,13 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                     setReceipt(mpesaReceipt);
                     setPaidAmount(finalAmt);
 
-                    // Just refresh the balance from DB (already updated by callback)
-                    await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
-                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    // Just refresh the balance & penalties from DB (already updated by callback)
+                    const [newBal, newPen] = await Promise.all([
+                        refreshTenantBalance(session.tenant_id),
+                        getTenantActivePenalties(session.tenant_id),
+                    ]);
                     setBalance(newBal);
+                    setPenaltyInfo(newPen);
                     await updateSessionBalance(newBal);
                     setStep('success');
                     setProcessing(false);
@@ -350,9 +356,12 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 if (res.ok && data?.success && data?.status === 'Completed') {
                     if (timerRef.current) clearInterval(timerRef.current);
                     paymentDoneRef.current = true;
-                    await markTenantPenaltiesPaid(session.tenant_id).catch(() => {});
-                    const newBal = await refreshTenantBalance(session.tenant_id);
+                    const [newBal, newPen] = await Promise.all([
+                        refreshTenantBalance(session.tenant_id),
+                        getTenantActivePenalties(session.tenant_id),
+                    ]);
                     setBalance(newBal);
+                    setPenaltyInfo(newPen);
                     await updateSessionBalance(newBal);
                     setReceipt(data.receipt || 'KCB');
                     setPaidAmount(data.amount || Math.round(parseFloat(amount)));
@@ -725,9 +734,20 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <ConfirmRow label="Tenant" value={session.tenant_name} emoji="👤" />
                         <ConfirmRow label="Room" value={`${session.unit_name} • ${session.location_name}`} emoji="🏠" />
                         <ConfirmRow label="Amount" value={formatKES(parseFloat(amount))} emoji="💰" highlight />
-                        {penaltyInfo.totalPenalty > 0 && (
-                            <ConfirmRow label="Late Penalty Cleared" value={`+${formatKES(penaltyInfo.totalPenalty)} (${penaltyInfo.penaltyDays}d)`} emoji="⚡" />
-                        )}
+                        {penaltyInfo.totalPenalty > 0 && (() => {
+                            const amt = parseFloat(amount) || 0;
+                            const paysRent = Math.min(amt, balance);
+                            const paysPen = Math.max(0, Math.min(penaltyInfo.totalPenalty, amt - balance));
+                            const remPen = Math.max(0, penaltyInfo.totalPenalty - paysPen);
+                            return (
+                                <>
+                                    <ConfirmRow label="Penalty Paid" value={paysPen > 0 ? `+${formatKES(paysPen)}` : 'KES 0 (Unpaid)'} emoji="⚡" />
+                                    {remPen > 0 && (
+                                        <ConfirmRow label="Unpaid Penalty Remaining" value={formatKES(remPen)} emoji="⚠️" />
+                                    )}
+                                </>
+                            );
+                        })()}
                         <ConfirmRow label="STK Push To" value={maskPhone(phone)} emoji="📱" />
                         {mode === 'payForMe' && (
                             <View style={s.creditNote}>
@@ -812,8 +832,20 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <Text style={[s.resultValue, { color: C.gold, letterSpacing: 1 }]}>{receipt}</Text>
                     </View>
                     <View style={s.resultRow}>
-                        <Text style={s.resultLabel}>📊 New Balance</Text>
+                        <Text style={s.resultLabel}>📊 Rent Balance</Text>
                         <Text style={[s.resultValue, { color: balance > 0 ? C.danger : C.accent }]}>{formatKES(balance)}</Text>
+                    </View>
+                    {penaltyInfo.totalPenalty > 0 && (
+                        <View style={[s.resultRow, { backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginVertical: 3 }]}>
+                            <Text style={[s.resultLabel, { color: '#f87171' }]}>⚡ Unpaid Late Penalty</Text>
+                            <Text style={[s.resultValue, { color: '#f87171', fontWeight: '900' }]}>{formatKES(penaltyInfo.totalPenalty)}</Text>
+                        </View>
+                    )}
+                    <View style={[s.resultRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)', paddingTop: 6, marginTop: 4 }]}>
+                        <Text style={[s.resultLabel, { color: '#f8fafc', fontWeight: '800' }]}>Total Remaining Debt</Text>
+                        <Text style={[s.resultValue, { color: (balance + penaltyInfo.totalPenalty) > 0 ? C.danger : C.accent, fontSize: 16, fontWeight: '900' }]}>
+                            {formatKES(balance + penaltyInfo.totalPenalty)}
+                        </Text>
                     </View>
                     <TouchableOpacity onPress={() => { resetFlow(); onPaymentComplete(); }} activeOpacity={0.85}>
                         <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
