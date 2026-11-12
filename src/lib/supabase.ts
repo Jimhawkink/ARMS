@@ -280,23 +280,44 @@ export interface TenantPenaltyInfo {
     totalPenalty: number;
     penaltyDays: number;
     penaltyDates: string[];
-    dailyRate: number;
+    dailyRate?: number;
+    rateLabel?: string;
 }
 
 export async function getTenantActivePenalties(tenantId: number): Promise<TenantPenaltyInfo> {
     try {
         const res = await fetch(`https://arms-opal.vercel.app/api/penalties?tenantId=${tenantId}`);
-        if (!res.ok) throw new Error('Failed to fetch penalties');
-        const data = await res.json();
-        return {
-            totalPenalty: Number(data.total_penalty) || 0,
-            penaltyDays: Number(data.penalty_days) || 0,
-            penaltyDates: Array.isArray(data.penalty_dates) ? data.penalty_dates : [],
-            dailyRate: Number(data.daily_rate) || 100,
-        };
+        if (res.ok) {
+            const data = await res.json();
+            return {
+                totalPenalty: Number(data.total_penalty) || 0,
+                penaltyDays: Number(data.penalty_days) || 0,
+                penaltyDates: Array.isArray(data.penalty_dates) ? data.penalty_dates : [],
+                rateLabel: '10% Flat',
+            };
+        }
     } catch (e: any) {
-        console.log('[ARMS APK] getTenantActivePenalties error:', e.message);
-        return { totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 };
+        console.log('[ARMS APK] getTenantActivePenalties API error, trying direct DB:', e.message);
+    }
+
+    try {
+        const { data: pens } = await supabase
+            .from('arms_penalties')
+            .select('amount, penalty_date')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'Active');
+        
+        const activePens = pens || [];
+        const total = activePens.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+        return {
+            totalPenalty: total,
+            penaltyDays: activePens.length,
+            penaltyDates: activePens.map((p: any) => p.penalty_date),
+            rateLabel: '10% Flat',
+        };
+    } catch (dbErr: any) {
+        console.log('[ARMS APK] getTenantActivePenalties fallback error:', dbErr.message);
+        return { totalPenalty: 0, penaltyDays: 0, penaltyDates: [], rateLabel: '10% Flat' };
     }
 }
 

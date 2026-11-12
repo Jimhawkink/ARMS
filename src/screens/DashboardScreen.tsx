@@ -65,7 +65,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
     const [allBills, setAllBills] = useState<BillingRecord[]>([]);
     const [balance, setBalance] = useState(session.balance);
     const [effectiveRent, setEffectiveRent] = useState(session.monthly_rent);
-    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 });
+    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], rateLabel: '10%' });
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [showAll, setShowAll] = useState(false);
@@ -182,11 +182,11 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                                 <Text style={styles.penaltyTitle}>Late Rent Penalty Applied</Text>
                             </View>
                             <View style={styles.penaltyDaysBadge}>
-                                <Text style={styles.penaltyDaysText}>{penaltyInfo.penaltyDays} Days Overdue</Text>
+                                <Text style={styles.penaltyDaysText}>10% Late Fee</Text>
                             </View>
                         </View>
                         <Text style={styles.penaltySub}>
-                            Daily penalty of KES 100/day applied starting from 6th of the month.
+                            Late fee of 10% monthly rent applied on 6th of the month.
                         </Text>
                         <View style={styles.penaltyDivider} />
                         <View style={styles.penaltyDetailsRow}>
@@ -194,7 +194,7 @@ export default function DashboardScreen({ session, onPayRent, onSessionUpdate }:
                             <Text style={styles.penaltyDetailVal}>{formatKES(balance)}</Text>
                         </View>
                         <View style={styles.penaltyDetailsRow}>
-                            <Text style={styles.penaltyDetailLabel}>⚡ Accrued Penalty:</Text>
+                            <Text style={styles.penaltyDetailLabel}>⚡ 10% Late Penalty:</Text>
                             <Text style={[styles.penaltyDetailVal, { color: '#f87171', fontWeight: '800' }]}>
                                 +{formatKES(penaltyInfo.totalPenalty)}
                             </Text>

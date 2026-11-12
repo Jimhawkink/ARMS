@@ -36,7 +36,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [amount, setAmount] = useState('');
     const [payerPhone, setPayerPhone] = useState('');
     const [balance, setBalance] = useState(session.balance);
-    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], dailyRate: 100 });
+    const [penaltyInfo, setPenaltyInfo] = useState<TenantPenaltyInfo>({ totalPenalty: 0, penaltyDays: 0, penaltyDates: [], rateLabel: '10%' });
     const [processing, setProcessing] = useState(false);
     const [statusMsg, setStatusMsg] = useState('');
     const [error, setError] = useState('');
@@ -473,7 +473,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         </Text>
                         {penaltyInfo.totalPenalty > 0 && (
                             <Text style={{ fontSize: 11, color: '#fca5a5', marginTop: 4 }}>
-                                Rent: {formatKES(balance)} • ⚡ Penalty: +{formatKES(penaltyInfo.totalPenalty)} ({penaltyInfo.penaltyDays}d)
+                                Rent: {formatKES(balance)} • ⚡ 10% Penalty: +{formatKES(penaltyInfo.totalPenalty)}
                             </Text>
                         )}
                     </View>
@@ -487,18 +487,18 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                                     <Text style={s.penaltyTitle}>Late Rent Penalty Applied</Text>
                                 </View>
                                 <View style={s.penaltyDaysBadge}>
-                                    <Text style={s.penaltyDaysText}>{penaltyInfo.penaltyDays} Days Overdue</Text>
+                                    <Text style={s.penaltyDaysText}>10% Late Fee</Text>
                                 </View>
                             </View>
                             <Text style={s.penaltyDesc}>
-                                KES 100/day penalty applied after the 5th grace period.
+                                10% late rent penalty applied after the 5th grace period.
                             </Text>
                             <View style={s.penaltyRow}>
                                 <Text style={s.penaltyLabel}>Unpaid Rent:</Text>
                                 <Text style={s.penaltyVal}>{formatKES(balance)}</Text>
                             </View>
                             <View style={s.penaltyRow}>
-                                <Text style={s.penaltyLabel}>⚡ Accrued Penalty:</Text>
+                                <Text style={s.penaltyLabel}>⚡ 10% Late Penalty:</Text>
                                 <Text style={[s.penaltyVal, { color: '#f87171' }]}>+{formatKES(penaltyInfo.totalPenalty)}</Text>
                             </View>
                             <View style={[s.penaltyRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.15)', paddingTop: 4, marginTop: 4 }]}>
@@ -645,7 +645,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                             </Text>
                             {penaltyInfo.totalPenalty > 0 && (
                                 <Text style={{ fontSize: 11, color: '#fca5a5', marginTop: 4 }}>
-                                    Rent: {formatKES(balance)} • ⚡ Penalty: +{formatKES(penaltyInfo.totalPenalty)} ({penaltyInfo.penaltyDays}d)
+                                    Rent: {formatKES(balance)} • ⚡ 10% Penalty: +{formatKES(penaltyInfo.totalPenalty)}
                                 </Text>
                             )}
                         </View>
