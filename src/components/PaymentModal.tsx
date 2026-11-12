@@ -372,7 +372,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                     </span>
                                                 )}
                                                 <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
-                                                    ⚡ {penaltyDaysCount}d Penalty: +{fmt(penaltyAmount)}
+                                                    ⚡ 10% Penalty: +{fmt(penaltyAmount)}
                                                 </span>
                                                 <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">
                                                     Total Due: {fmt(totalToPayWithPenalty)}
@@ -453,7 +453,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             ⚡
                                         </span>
                                         <span className="text-[11px] font-black text-rose-900">
-                                            Late Rent Penalty Accrued ({penaltyDaysCount} Days Overdue)
+                                            Late Rent Penalty Accrued (10% Monthly Flat Fee)
                                         </span>
                                     </div>
                                     <span className="text-[11px] font-black text-rose-700 bg-white px-2 py-0.5 rounded-md border border-rose-200">
@@ -462,12 +462,12 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                 </div>
                                 <div className="grid grid-cols-4 gap-1.5 mt-2 text-center text-[10px]">
                                     <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Penalty Days</p>
-                                        <p className="font-black text-rose-700">⚡ {penaltyDaysCount} Days</p>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Penalty Rate</p>
+                                        <p className="font-black text-rose-700">⚡ 10% Flat</p>
                                     </div>
                                     <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Daily Rate</p>
-                                        <p className="font-extrabold text-slate-700">KES 100/d</p>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Effective</p>
+                                        <p className="font-extrabold text-slate-700">6th of Month</p>
                                     </div>
                                     <div className="bg-white/90 p-1.5 rounded-lg border border-rose-100">
                                         <p className="text-[9px] font-bold text-slate-400 uppercase">Unpaid Rent</p>
@@ -479,7 +479,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                     </div>
                                 </div>
                                 <p className="text-[10px] text-slate-600 mt-1.5 leading-tight">
-                                    Auto-applied from the 6th onwards. Total required to fully clear rent & penalty: <b className="text-emerald-700">{fmt(totalToPayWithPenalty)}</b>.
+                                    Auto-applied on the 6th if rent is uncleared. Total required to fully clear rent & penalty: <b className="text-emerald-700">{fmt(totalToPayWithPenalty)}</b>.
                                 </p>
                             </div>
                         )}

@@ -2124,8 +2124,8 @@ export default function DashboardPage() {
                                             <td className="py-3 px-3 text-right font-mono font-black text-rose-600">
                                                 <div>{fmt(b.balance)}</div>
                                                 {b.status !== 'Paid' && (
-                                                    <span className="text-[9px] font-black text-rose-600 block mt-0.5" title="Overdue rent penalty">
-                                                        ⚡ +KES 300 pen
+                                                    <span className="text-[9px] font-black text-rose-600 block mt-0.5" title="Overdue rent penalty (10% flat)">
+                                                        ⚡ +{fmt(Math.round(Number(b.rent_amount || 0) * 0.10))} (10%)
                                                     </span>
                                                 )}
                                             </td>

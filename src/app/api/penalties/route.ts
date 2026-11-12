@@ -16,7 +16,7 @@ function localMonthStr(d: Date = getNairobiNow()) {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-// ─── POST /api/penalties  → generate penalties starting from 6th ────────────────
+// ─── POST /api/penalties  → generate penalties starting from 6th (10% flat monthly rent) ──────
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json().catch(() => ({}));
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         const todayDay = today.getUTCDate();
         const currentMonth = localMonthStr(today);
 
-        // Rent is due by 5th. Daily penalties of KES 100 begin strictly on 6th!
+        // Rent is due by 5th. 10% flat penalty begins strictly on 6th!
         if (todayDay < 6) {
             return NextResponse.json({ 
                 generated: 0, 
@@ -35,24 +35,17 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // Clean up any stray penalties generated for the 5th (since grace period covers the 5th)
+        // Clean up any stray penalties generated before the 6th
         await supabaseAdmin
             .from('arms_penalties')
             .delete()
             .eq('billing_month', currentMonth)
-            .eq('penalty_date', `${currentMonth}-05`);
-
-        // Build penalty dates starting from 6th of this month through today (Nairobi time)
-        const penaltyDates: string[] = [];
-        for (let d = 6; d <= todayDay; d++) {
-            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
-            penaltyDates.push(`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
-        }
+            .lt('penalty_date', `${currentMonth}-06`);
 
         // Fetch unpaid/partial bills for CURRENT month only (November 2026 onwards)
         let q = supabaseAdmin
             .from('arms_billing')
-            .select('billing_id, tenant_id, location_id, balance, status, billing_month')
+            .select('billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month')
             .eq('billing_month', currentMonth)
             .in('status', ['Unpaid', 'Partial'])
             .gt('balance', 0)
@@ -65,20 +58,22 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ generated: 0, skipped: 0, message: 'No unpaid bills found for ' + currentMonth });
         }
 
-        // Build one row per tenant per penalty day
-        const rows = bills.flatMap((bill: any) =>
-            penaltyDates.map(date => ({
+        // Build one 10% flat penalty row per overdue tenant (dated 6th of the month)
+        const rows = bills.map((bill: any) => {
+            const rent = Number(bill.rent_amount) || 0;
+            const penaltyAmt = Math.round(rent * 0.10);
+            return {
                 tenant_id:     bill.tenant_id,
                 billing_id:    bill.billing_id,
                 billing_month: currentMonth,
-                penalty_date:  date,
-                amount:        100,
+                penalty_date:  `${currentMonth}-06`,
+                amount:        penaltyAmt,
                 status:        'Active',
-                reason:        `Late rent penalty — ${currentMonth} (after 5th grace period)`,
-            }))
-        );
+                reason:        `Late rent penalty (10% flat) — ${currentMonth} (after 5th grace period)`,
+            };
+        }).filter(r => r.amount > 0);
 
-        // Upsert in batches of 200 — duplicates are safely skipped by unique constraint
+        // Upsert in batches of 200 — duplicates are safely handled by unique constraint
         let generated = 0, skipped = 0;
         for (let i = 0; i < rows.length; i += 200) {
             const batch = rows.slice(i, i + 200);
@@ -94,8 +89,8 @@ export async function POST(req: NextRequest) {
             generated, 
             skipped, 
             bills: bills.length, 
-            days: penaltyDates.length,
-            penaltyDates
+            penalty_rate: '10%',
+            penalty_date: `${currentMonth}-06`
         });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -114,12 +109,12 @@ export async function GET(req: NextRequest) {
             const todayDay = today.getUTCDate();
             const currentMonth = localMonthStr(today);
 
-            // Auto-generate penalty for tenant if today >= 6th and tenant has unpaid bill for current month
+            // Auto-generate 10% flat penalty for tenant if today >= 6th and tenant has unpaid bill for current month
             if (todayDay >= 6) {
                 try {
                     const { data: curBill } = await supabaseAdmin
                         .from('arms_billing')
-                        .select('billing_id, balance, status')
+                        .select('billing_id, rent_amount, balance, status')
                         .eq('tenant_id', tenantId)
                         .eq('billing_month', currentMonth)
                         .in('status', ['Unpaid', 'Partial'])
@@ -127,24 +122,20 @@ export async function GET(req: NextRequest) {
                         .maybeSingle();
 
                     if (curBill) {
-                        const neededRows = [];
-                        for (let d = 6; d <= todayDay; d++) {
-                            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
-                            const dateStr = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                            neededRows.push({
-                                tenant_id: tenantId,
-                                billing_id: curBill.billing_id,
-                                billing_month: currentMonth,
-                                penalty_date: dateStr,
-                                amount: 100,
-                                status: 'Active',
-                                reason: `Late rent penalty — ${currentMonth} (after 5th grace period)`,
-                            });
-                        }
-                        if (neededRows.length > 0) {
+                        const rent = Number(curBill.rent_amount) || 0;
+                        const penAmt = Math.round(rent * 0.10);
+                        if (penAmt > 0) {
                             await supabaseAdmin
                                 .from('arms_penalties')
-                                .upsert(neededRows, { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: false });
+                                .upsert([{
+                                    tenant_id: tenantId,
+                                    billing_id: curBill.billing_id,
+                                    billing_month: currentMonth,
+                                    penalty_date: `${currentMonth}-06`,
+                                    amount: penAmt,
+                                    status: 'Active',
+                                    reason: `Late rent penalty (10% flat) — ${currentMonth} (after 5th grace period)`,
+                                }], { onConflict: 'tenant_id,billing_month,penalty_date', ignoreDuplicates: false });
                         }
                     }
                 } catch {
@@ -173,7 +164,8 @@ export async function GET(req: NextRequest) {
                 penalty_dates: penDates,
                 active_penalties: activePens,
                 penalties: allPens,
-                daily_rate: 100
+                penalty_rate: '10%',
+                daily_rate: 0
             });
         }
 
@@ -201,22 +193,20 @@ export async function GET(req: NextRequest) {
             try {
                 const unpaidBills = bills.filter((b: any) => (b.balance || 0) > 0 && b.status !== 'Paid');
                 if (unpaidBills.length > 0) {
-                    const syncRows: any[] = [];
-                    for (const b of unpaidBills) {
-                        for (let d = 6; d <= todayDay; d++) {
-                            const yr = today.getUTCFullYear(), mo = today.getUTCMonth() + 1;
-                            const dateStr = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                            syncRows.push({
-                                tenant_id: b.tenant_id,
-                                billing_id: b.billing_id,
-                                billing_month: month,
-                                penalty_date: dateStr,
-                                amount: 100,
-                                status: 'Active',
-                                reason: `Late rent penalty — ${month} (after 5th grace period)`,
-                            });
-                        }
-                    }
+                    const syncRows = unpaidBills.map((b: any) => {
+                        const rent = Number(b.rent_amount) || 0;
+                        const penAmt = Math.round(rent * 0.10);
+                        return {
+                            tenant_id: b.tenant_id,
+                            billing_id: b.billing_id,
+                            billing_month: month,
+                            penalty_date: `${month}-06`,
+                            amount: penAmt,
+                            status: 'Active',
+                            reason: `Late rent penalty (10% flat) — ${month} (after 5th grace period)`,
+                        };
+                    }).filter(r => r.amount > 0);
+
                     if (syncRows.length > 0) {
                         for (let i = 0; i < syncRows.length; i += 200) {
                             await supabaseAdmin
@@ -329,7 +319,7 @@ export async function GET(req: NextRequest) {
                     rent_balance: rentBalance,
                     billing_status: b.status,
                     penalty_days: activePens.length,
-                    penalty_rate: 100,
+                    penalty_rate: '10%',
                     total_penalty: activePenaltyAmt,
                     total_rent_plus_penalty: totalDue,
                     overall_arrears: overallArrears,
@@ -362,7 +352,8 @@ export async function GET(req: NextRequest) {
             total_waived_amount: totalWaived,
             total_paid_amount: totalPaid,
             month: month,
-            daily_rate: 100,
+            penalty_rate: '10%',
+            daily_rate: 0,
             grace_period_until: '5th'
         };
 

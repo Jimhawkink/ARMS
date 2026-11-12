@@ -103,7 +103,7 @@ export default function RentReceipt({ payment, onClose }: ReceiptProps) {
             `For Month: ${monthLabel}`,
             `Monthly Rent: ${fmt(rent)}`,
             arrears > 0 ? `Previous Arrears: ${fmt(arrears)}` : '',
-            payment.penalty_amount && payment.penalty_amount > 0 ? `⚡ Late Penalty (${payment.penalty_days || 3}d): ${fmt(payment.penalty_amount)}` : '',
+            payment.penalty_amount && payment.penalty_amount > 0 ? `⚡ Late Rent Penalty (10%): ${fmt(payment.penalty_amount)}` : '',
             arrears > 0 || (payment.penalty_amount && payment.penalty_amount > 0) ? `Total Due: ${fmt(totalDue)}` : '',
             ``,
             `✅ *AMOUNT PAID: ${fmt(amountPaid)}*`,

@@ -1881,7 +1881,6 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
         const nowLocal = new Date();
         const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}`;
         const currentDay = nowLocal.getDate();
-        const autoCurPenalty = currentDay >= 6 ? (currentDay - 5) * 100 : 0;
 
         const results = activeTenants.map(tenant => {
             // billing_start_month is authoritative; fall back to move_in_date
@@ -1956,7 +1955,8 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
 
                 if (ma.balance > 0) {
                     const isCurrent = ma.month === currentMonth;
-                    // Daily late penalty KES 100/day starting 6th
+                    // 10% flat monthly late penalty starting on 6th
+                    const autoCurPenalty = currentDay >= 6 ? Math.round(Number(ma.rent || monthlyRent || 0) * 0.10) : 0;
                     const monthPenalty = isCurrent ? (dbPenalty > 0 ? dbPenalty : autoCurPenalty) : 0;
 
                     unpaidMonths.push({
@@ -1971,7 +1971,8 @@ export async function calculateUnpaidRent(locationId?: number, forceRefresh = fa
                 }
             }
 
-            // Accurate total penalty: use database active penalties if present or KES 100/day from 6th
+            // Accurate total penalty: use database active penalties if present or 10% flat from 6th
+            const autoCurPenalty = currentDay >= 6 ? Math.round(Number(monthlyRent || 0) * 0.10) : 0;
             const totalPenalty = dbPenalty > 0 
                 ? dbPenalty 
                 : (unpaidMonths.length > 0 && currentDay >= 6 ? autoCurPenalty : 0);
@@ -2951,7 +2952,7 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
 }
 
 // ============================================================
-// PENALTIES — KES 100/day after 5th of month if unpaid
+// PENALTIES — 10% of monthly rent after 5th of month if unpaid
 // ============================================================
 
 function localDateStr(d: Date = new Date()): string {
@@ -2961,7 +2962,7 @@ function localMonthStr(d: Date = new Date()): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Generate KES 100/day penalties for every unpaid/partial tenant past the 5th.
+/** Generate 10% flat monthly rent penalties for every unpaid/partial tenant past the 5th.
  *  ONLY applies to the current month onwards (November 2026+).
  *  Safe to call repeatedly — unique constraint prevents duplicates. */
 export async function generatePenalties(locationId?: number): Promise<{ generated: number; skipped: number }> {
@@ -2972,15 +2973,9 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
     // No penalties on or before the 5th of the month (5th is the payment due date grace)
     if (todayDay < 6) return { generated: 0, skipped: 0 };
 
-    // Build penalty dates: 6th of this month → today (KES 100/day starting 6th)
-    const penaltyDates: string[] = [];
-    for (let d = 6; d <= todayDay; d++) {
-        penaltyDates.push(localDateStr(new Date(today.getFullYear(), today.getMonth(), d)));
-    }
-
     // Only look at CURRENT month bills (November 2026 onwards by nature of running now)
     let q = supabaseAdmin.from('arms_billing')
-        .select('billing_id, tenant_id, location_id, balance, status, billing_month')
+        .select('billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month')
         .eq('billing_month', currentMonth)
         .in('status', ['Unpaid', 'Partial'])
         .gt('balance', 0);
@@ -2988,20 +2983,22 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
     const { data: bills } = await q;
     if (!bills || bills.length === 0) return { generated: 0, skipped: 0 };
 
-    // Build one penalty row per tenant per day they haven't paid
-    const rows = bills.flatMap((bill: any) =>
-        penaltyDates.map(date => ({
+    // Build one 10% flat penalty row per overdue tenant (dated 6th of the month)
+    const rows = bills.map((bill: any) => {
+        const rent = Number(bill.rent_amount) || 0;
+        const penaltyAmt = Math.round(rent * 0.10);
+        return {
             tenant_id:     bill.tenant_id,
             billing_id:    bill.billing_id,
             billing_month: currentMonth,
-            penalty_date:  date,
-            amount:        100,
+            penalty_date:  `${currentMonth}-06`,
+            amount:        penaltyAmt,
             status:        'Active',
-            reason:        `Late payment penalty — ${currentMonth} (after 5th)`,
-        }))
-    );
+            reason:        `Late payment penalty (10% flat) — ${currentMonth} (after 5th)`,
+        };
+    }).filter(r => r.amount > 0);
 
-    // Upsert in batches of 200 — conflict = skip (safe to call daily/on every page load)
+    // Upsert in batches of 200 — conflict = skip (safe to call repeatedly)
     let generated = 0, skipped = 0;
     for (let i = 0; i < rows.length; i += 200) {
         const batch = rows.slice(i, i + 200);

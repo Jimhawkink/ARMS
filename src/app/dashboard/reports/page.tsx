@@ -459,7 +459,7 @@ export default function ReportsPage() {
                     date: pen.penalty_date,
                     type: 'penalty',
                     amount: Number(pen.amount) || 100,
-                    desc: `Late Rent Penalty (KES 100/day) · ${pen.penalty_date}`
+                    desc: `Late Rent Penalty (10% Flat Fee) · ${pen.penalty_date}`
                 });
             }
         });
@@ -1839,7 +1839,7 @@ export default function ReportsPage() {
                                         {
                                             label: '⚡ Late Penalty',
                                             value: stmtPenaltiesBilled > 0
-                                                ? `+${fmt(stmtPenaltiesBilled)} (${statement.penalties?.filter((p: any) => p.status === 'Active').length || 0}d)`
+                                                ? `+${fmt(stmtPenaltiesBilled)} (10% Late Fee)`
                                                 : '✓ None'
                                         },
                                         {

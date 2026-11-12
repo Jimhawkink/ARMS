@@ -39,7 +39,7 @@ export default function PenaltiesPage() {
         days_elapsed: 0,
         total_waived_amount: 0,
         total_paid_amount: 0,
-        daily_rate: 100
+        penalty_rate: '10%'
     });
 
     const [loading, setLoading] = useState(true);
@@ -113,7 +113,7 @@ export default function PenaltiesPage() {
             .then(r => r.json())
             .then(res => {
                 if (res.generated > 0) {
-                    toast.success(`⚡ Auto-applied ${res.generated} penalties across unpaid tenants`);
+                    toast.success(`⚡ Auto-applied ${res.generated} penalties (10% flat) across unpaid tenants`);
                 }
             })
             .catch(() => {})
@@ -143,7 +143,7 @@ export default function PenaltiesPage() {
             }).then(r => r.json());
 
             if (res.error) throw new Error(res.error);
-            toast.success(`✅ Scanned! ${res.days || 0} penalty days verified (KES 100/day starting 6th).`);
+            toast.success(`✅ Scanned! 10% flat late penalties verified (applied from 6th).`);
             await loadData();
         } catch (e: any) {
             toast.error(e.message || 'Recalculation error');
@@ -291,7 +291,7 @@ export default function PenaltiesPage() {
         { label: '🏠 Unit / Estate', bg: '#f0fdfa', color: '#0f766e' },
         { label: '💰 Base Rent', bg: '#f0fdf4', color: '#15803d' },
         { label: '⚠️ Unpaid Rent', bg: '#eff6ff', color: '#1d4ed8' },
-        { label: '⚡ Penalty Days', bg: '#fff7ed', color: '#c2410c' },
+        { label: '⚡ Penalty Overdue', bg: '#fff7ed', color: '#c2410c' },
         { label: '⏱️ Rate', bg: '#f8fafc', color: '#64748b' },
         { label: '🚨 Total Penalty', bg: '#fff1f2', color: '#be123c' },
         { label: '💵 Rent + Penalty', bg: '#ecfdf5', color: '#047857' },
@@ -309,11 +309,11 @@ export default function PenaltiesPage() {
                     <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                         <span>⚡ Late Rent Penalties</span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
-                            KES 100/day starting 6th
+                            10% of monthly rent starting 6th
                         </span>
                     </h1>
                     <p className="text-[11px] text-gray-400 mt-0.5">
-                        Automatic penalty calculation from 6th of each month for unpaid rent · Grace period ends 5th midnight
+                        Automatic 10% penalty calculation from 6th of each month for unpaid rent · Grace period ends 5th midnight
                     </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -338,8 +338,8 @@ export default function PenaltiesPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
                     { label: 'Penalized Tenants', value: summary.total_tenants_penalized.toLocaleString(), icon: FiAlertTriangle, color: '#ef4444', bg: '#fef2f2', sub: 'Uncleared past 5th' },
-                    { label: 'Days Elapsed', value: `${summary.days_elapsed} Days`, icon: FiClock, color: '#f59e0b', bg: '#fffbeb', sub: 'Since 6th Nov' },
-                    { label: 'Total Penalties', value: fmt(summary.total_penalty_accrued), icon: FiZap, color: '#c2410c', bg: '#fff7ed', sub: '@ KES 100/day' },
+                    { label: 'Policy Status', value: `10% Flat Fee`, icon: FiClock, color: '#f59e0b', bg: '#fffbeb', sub: 'Since 6th of month' },
+                    { label: 'Total Penalties', value: fmt(summary.total_penalty_accrued), icon: FiZap, color: '#c2410c', bg: '#fff7ed', sub: '@ 10% of Rent' },
                     { label: 'Unpaid Rent (Nov)', value: fmt(summary.total_rent_owed), icon: FiDollarSign, color: '#2563eb', bg: '#eff6ff', sub: 'Base rent balance' },
                     { label: 'Rent + Penalty', value: fmt(summary.grand_total_due), icon: FiTrendingUp, color: '#059669', bg: '#f0fdf4', sub: 'Nov total due' },
                     { label: 'Total Debt (All-Time)', value: fmt(summary.total_debt_accrued || totals.overall_arrears), icon: FiShield, color: '#9333ea', bg: '#faf5ff', sub: 'Cumulative + Penalties' },
@@ -542,15 +542,15 @@ export default function PenaltiesPage() {
                                                 {fmt(t.rent_balance)}
                                             </td>
 
-                                            {/* Penalty Days */}
+                                            {/* Penalty Overdue */}
                                             <td className="px-2.5 py-2 text-center whitespace-nowrap">
                                                 {hasPenalty ? (
                                                     <button
                                                         onClick={() => setSelectedTenantDetails(t)}
                                                         className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition cursor-pointer"
-                                                        title="Click to view dates"
+                                                        title="Click to view fee breakdown"
                                                     >
-                                                        ⚡ {t.penalty_days} Days
+                                                        ⚡ 10% Late Fee
                                                     </button>
                                                 ) : (
                                                     <span className="text-gray-400 text-[10px]">—</span>
@@ -558,8 +558,8 @@ export default function PenaltiesPage() {
                                             </td>
 
                                             {/* Rate */}
-                                            <td className="px-2.5 py-2 text-gray-400 text-[10px] whitespace-nowrap">
-                                                {hasPenalty ? 'KES 100/d' : '—'}
+                                            <td className="px-2.5 py-2 text-gray-500 font-semibold text-[10px] whitespace-nowrap">
+                                                {hasPenalty ? '10% Flat' : '—'}
                                             </td>
 
                                             {/* Total Penalty */}
@@ -739,8 +739,8 @@ export default function PenaltiesPage() {
                         {/* Ledger */}
                         <div className="space-y-1.5 mb-3">
                             <p className="text-[10px] font-bold uppercase text-gray-500 flex justify-between">
-                                <span>Charged Days (KES 100/day starting 6th)</span>
-                                <span className="text-red-600">{selectedTenantDetails.penalty_days} Days</span>
+                                <span>Charged Penalty (10% flat monthly rent starting 6th)</span>
+                                <span className="text-red-600">10% Late Fee</span>
                             </p>
                             <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-xl bg-white">
                                 {selectedTenantDetails.active_penalties?.map((p: any, i: number) => (
@@ -751,10 +751,10 @@ export default function PenaltiesPage() {
                                             </span>
                                             <div>
                                                 <p className="font-bold text-gray-800">{fmtDate(p.penalty_date)}</p>
-                                                <p className="text-[9px] text-gray-400">Late rent penalty</p>
+                                                <p className="text-[9px] text-gray-400">Late rent penalty (10% flat)</p>
                                             </div>
                                         </div>
-                                        <span className="font-mono font-bold text-red-600">+KES 100.00</span>
+                                        <span className="font-mono font-bold text-red-600">+{fmt(p.amount)}</span>
                                     </div>
                                 ))}
                             </div>

@@ -81,7 +81,7 @@ export default function AllocationPreviewPanel({
                 </div>
                 {penaltyOwed > 0 && (
                     <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-200">
-                        ⚡ {penaltyDays}d Penalty: +{fmt(penaltyOwed)}
+                        ⚡ 10% Late Fee: +{fmt(penaltyOwed)}
                     </span>
                 )}
             </div>
