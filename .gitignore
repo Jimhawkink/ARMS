@@ -42,3 +42,5 @@ next-env.d.ts
 android/app/build/
 
 .env.local
+public/ARMSTenantApp-v4.*.apk
+public/ARMSTenantApp-v5.*.apk
