@@ -1297,11 +1297,11 @@ export async function recordPayment(payment: {
         )
     );
 
-    // Mark penalties as Paid for any billing month fully cleared by this payment
-    for (const alloc of allocations) {
-        if (alloc.newStatus === 'Paid') {
-            await markPenaltiesPaid(payment.tenant_id, alloc.billing_month).catch(() => {});
-        }
+    // ── Only mark penalties as Paid if payment EXCEEDED rent bills and covered penalties ──
+    const rentPaidTotal = (allocations || []).reduce((s, a) => s + (a.amountAllocated || 0), 0);
+    const excessForPenalties = Math.max(0, Math.round((paymentAmount - rentPaidTotal) * 100) / 100);
+    if (excessForPenalties > 0) {
+        await markPenaltiesPaid(payment.tenant_id, undefined, excessForPenalties).catch(() => {});
     }
 
     const { data: freshTenant } = await supabase
@@ -1312,11 +1312,6 @@ export async function recordPayment(payment: {
         balance: newTenantBalance,
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', payment.tenant_id);
-
-    // If tenant balance is fully settled (zero remaining), clear all remaining active penalties
-    if (newTenantBalance <= 0) {
-        await markPenaltiesPaid(payment.tenant_id).catch(() => {});
-    }
 
     invalidateCache('payments');
     invalidateCache('unpaid');
@@ -3095,14 +3090,14 @@ export async function waiveTenantPenalties(tenantId: number, month: string, waiv
     return data?.length || 0;
 }
 
-/** Mark all active penalties for a tenant as Paid (called after payment recorded) */
-export async function markPenaltiesPaid(tenantId: number, month?: string): Promise<void> {
+/** Mark active penalties for a tenant as Paid up to an explicit excess payment amount (called after payment recorded) */
+export async function markPenaltiesPaid(tenantId: number, month?: string, amount?: number): Promise<void> {
     try {
         if (typeof window !== 'undefined') {
             await fetch('/api/penalties', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'mark_paid', tenantId, month }),
+                body: JSON.stringify({ action: 'mark_paid', tenantId, month, amount }),
             });
             return;
         }
@@ -3111,12 +3106,40 @@ export async function markPenaltiesPaid(tenantId: number, month?: string): Promi
     }
 
     try {
-        let q = supabaseAdmin.from('arms_penalties').update({
-            status:     'Paid',
-            updated_at: new Date().toISOString(),
-        }).eq('tenant_id', tenantId).eq('status', 'Active');
+        let q = supabaseAdmin.from('arms_penalties')
+            .select('penalty_id, amount')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'Active')
+            .order('penalty_date', { ascending: true });
         if (month) q = q.eq('billing_month', month);
-        await q;
+        const { data: activePens } = await q;
+
+        if (!activePens || activePens.length === 0) return;
+
+        let pensToClear: number[] = [];
+        if (typeof amount === 'number') {
+            if (amount <= 0) return; // zero excess, do NOT clear
+            let rem = amount;
+            for (const p of activePens) {
+                const cost = p.amount || 100;
+                if (rem >= cost) {
+                    pensToClear.push(p.penalty_id);
+                    rem -= cost;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // If amount omitted, do NOT clear silently
+            return;
+        }
+
+        if (pensToClear.length > 0) {
+            await supabaseAdmin.from('arms_penalties').update({
+                status:     'Paid',
+                updated_at: new Date().toISOString(),
+            }).in('penalty_id', pensToClear);
+        }
     } catch {
         // non-fatal
     }

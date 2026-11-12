@@ -245,9 +245,10 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 location_id: tenant.location_id,
             });
 
-            // Mark active penalties as Paid in database if tenant had active penalties
-            if (penaltyAmount > 0) {
-                await markPenaltiesPaid(selectedTenantId).catch(() => {});
+            // Only mark active penalties as Paid if payment EXCEEDED rent arrears and covered penalties
+            const excessForPenalties = Math.max(0, Math.round((parsedAmount - rentArrearsBalance) * 100) / 100);
+            if (penaltyAmount > 0 && excessForPenalties > 0) {
+                await markPenaltiesPaid(selectedTenantId, undefined, excessForPenalties).catch(() => {});
             }
 
             // 🎆 Play beautiful celebratory audio & show fireworks for ANY payment method

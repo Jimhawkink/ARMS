@@ -175,11 +175,38 @@ export async function POST(req: NextRequest) {
             balance: newBalance, updated_at: new Date().toISOString(),
         }).eq("tenant_id", tenantIdNum);
 
-        // 11. Mark active penalties as Paid if debt is settled
-        if (newBalance <= 0) {
-            await supabase.from("arms_penalties").update({
-                status: "Paid", updated_at: new Date().toISOString(),
-            }).eq("tenant_id", tenantIdNum).eq("status", "Active");
+        // 11. Only clear penalties if the payment EXCEEDED unpaid rent and covered penalties
+        const rentPaidTotal = (allocations || []).reduce((s, a) => s + (a.amount || 0), 0);
+        const excessForPenalties = Math.max(0, Math.round((txnAmount - rentPaidTotal) * 100) / 100);
+
+        if (excessForPenalties > 0) {
+            const { data: activePens } = await supabase
+                .from("arms_penalties")
+                .select("penalty_id, amount")
+                .eq("tenant_id", tenantIdNum)
+                .eq("status", "Active")
+                .order("penalty_date", { ascending: true });
+
+            let penRem = excessForPenalties;
+            const pensToClear: number[] = [];
+            for (const p of (activePens || [])) {
+                const cost = p.amount || 100;
+                if (penRem >= cost) {
+                    pensToClear.push(p.penalty_id);
+                    penRem -= cost;
+                } else {
+                    break;
+                }
+            }
+            if (pensToClear.length > 0) {
+                await supabase
+                    .from("arms_penalties")
+                    .update({
+                        status: "Paid", updated_at: new Date().toISOString(),
+                    })
+                    .in("penalty_id", pensToClear);
+                console.log(`[KCB Confirm] Cleared ${pensToClear.length} penalty records for tenant ${tenantIdNum} from excess KES ${excessForPenalties}`);
+            }
         }
 
         return NextResponse.json({

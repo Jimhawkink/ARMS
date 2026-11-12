@@ -385,14 +385,55 @@ export async function PATCH(req: NextRequest) {
 
         if (action === 'mark_paid') {
             if (!tenantId) return NextResponse.json({ error: 'tenantId is required' }, { status: 400 });
-            let q = supabaseAdmin.from('arms_penalties').update({
-                status: 'Paid',
-                updated_at: now,
-            }).eq('tenant_id', Number(tenantId)).eq('status', 'Active');
-            if (month) q = (q as any).eq('billing_month', month);
-            const { data, error } = await q.select('penalty_id');
-            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-            return NextResponse.json({ ok: true, count: data?.length || 0 });
+            const amountToPay = typeof body.amount === 'number' ? body.amount : null;
+
+            // If an explicit amount is passed, allocate FIFO up to that amount only!
+            if (amountToPay !== null) {
+                if (amountToPay <= 0) {
+                    return NextResponse.json({ ok: true, count: 0, message: 'No excess payment amount to cover penalties' });
+                }
+                let q = supabaseAdmin.from('arms_penalties')
+                    .select('penalty_id, amount')
+                    .eq('tenant_id', Number(tenantId))
+                    .eq('status', 'Active')
+                    .order('penalty_date', { ascending: true });
+                if (month) q = (q as any).eq('billing_month', month);
+                const { data: activePens, error: fetchErr } = await q;
+                if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+
+                let penRem = amountToPay;
+                const paidIds: number[] = [];
+                for (const p of (activePens || [])) {
+                    const cost = p.amount || 100;
+                    if (penRem >= cost) {
+                        paidIds.push(p.penalty_id);
+                        penRem -= cost;
+                    } else {
+                        break;
+                    }
+                }
+                if (paidIds.length > 0) {
+                    const { error } = await supabaseAdmin.from('arms_penalties')
+                        .update({ status: 'Paid', updated_at: now })
+                        .in('penalty_id', paidIds);
+                    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+                }
+                return NextResponse.json({ ok: true, count: paidIds.length, amountCovered: amountToPay - penRem });
+            }
+
+            // Only mark all paid if explicitly forced by admin (force === true)
+            if (body.force === true) {
+                let q = supabaseAdmin.from('arms_penalties').update({
+                    status: 'Paid',
+                    updated_at: now,
+                }).eq('tenant_id', Number(tenantId)).eq('status', 'Active');
+                if (month) q = (q as any).eq('billing_month', month);
+                const { data, error } = await q.select('penalty_id');
+                if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+                return NextResponse.json({ ok: true, count: data?.length || 0 });
+            }
+
+            return NextResponse.json({ ok: true, count: 0, message: 'Amount required to mark penalties paid' });
         }
 
         if (action === 'waive_single') {

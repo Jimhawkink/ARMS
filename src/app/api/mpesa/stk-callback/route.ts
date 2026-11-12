@@ -269,19 +269,53 @@ export async function POST(request: NextRequest) {
                             }
                         }
 
-                        // Update tenant balance
-                        const newBalance = Math.max(0, (tenant.balance || 0) - paymentAmount);
+                        // Update tenant balance from actual remaining bills
+                        const { data: freshBills } = await supabase
+                            .from('arms_billing')
+                            .select('balance')
+                            .eq('tenant_id', tenantId)
+                            .gt('balance', 0);
+                        const trueTenantBalance = Math.round(
+                            (freshBills || []).reduce((s: number, b: any) => s + (b.balance || 0), 0) * 100
+                        ) / 100;
                         await supabase.from('arms_tenants').update({
-                            balance: newBalance,
+                            balance: trueTenantBalance,
                             updated_at: new Date().toISOString()
                         }).eq('tenant_id', tenantId);
 
-                        // Mark active penalties as Paid if debt is settled
-                        if (newBalance <= 0) {
-                            await supabase.from('arms_penalties').update({
-                                status: 'Paid',
-                                updated_at: new Date().toISOString()
-                            }).eq('tenant_id', tenantId).eq('status', 'Active');
+                        // Only clear penalties if the payment EXCEEDED unpaid rent and covered penalties
+                        const totalRentOwedBefore = (unpaidBills || []).reduce((s: number, b: any) => s + (b.balance || 0), 0);
+                        const excessForPenalties = Math.max(0, Math.round((paymentAmount - totalRentOwedBefore) * 100) / 100);
+
+                        if (excessForPenalties > 0) {
+                            const { data: activePens } = await supabase
+                                .from('arms_penalties')
+                                .select('penalty_id, amount')
+                                .eq('tenant_id', tenantId)
+                                .eq('status', 'Active')
+                                .order('penalty_date', { ascending: true });
+
+                            let penRem = excessForPenalties;
+                            const pensToClear: number[] = [];
+                            for (const p of (activePens || [])) {
+                                const cost = p.amount || 100;
+                                if (penRem >= cost) {
+                                    pensToClear.push(p.penalty_id);
+                                    penRem -= cost;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (pensToClear.length > 0) {
+                                await supabase
+                                    .from('arms_penalties')
+                                    .update({
+                                        status: 'Paid',
+                                        updated_at: new Date().toISOString()
+                                    })
+                                    .in('penalty_id', pensToClear);
+                                console.log(`[STK Callback] Cleared ${pensToClear.length} penalty records for tenant ${tenantId} from excess KES ${excessForPenalties}`);
+                            }
                         }
 
                         // Store in arms_mpesa_transactions for tracking
