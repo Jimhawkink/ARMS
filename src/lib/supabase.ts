@@ -271,15 +271,204 @@ export function parseComradesFromNotes(notes?: string | null): ComradeInfo[] {
     return comrades;
 }
 
+export interface TenantAdjustment {
+    amount: number;
+    reason: string;
+    month?: string; // e.g. "2026-11"
+    rawTag?: string;
+}
+
+export function parseAdjustmentsFromNotes(notes?: string | null): TenantAdjustment[] {
+    if (!notes || !notes.includes('[ADJUSTMENT:')) return [];
+    const regex = /\[ADJUSTMENT:\s*([+-]?\d+(?:\.\d+)?)\s*\|\s*([^|\]]+)(?:\s*\|\s*(\d{4}-\d{2}))?\]/gi;
+    const adjustments: TenantAdjustment[] = [];
+    let match;
+    while ((match = regex.exec(notes)) !== null) {
+        adjustments.push({
+            amount: parseFloat(match[1]),
+            reason: match[2]?.trim() || 'Adjustment',
+            month: match[3]?.trim() || undefined,
+            rawTag: match[0],
+        });
+    }
+    return adjustments;
+}
+
 export function getTenantMonthlyRentForMonth(monthlyRent: number, notes: string | null | undefined, targetMonth: string): number {
     const comrades = parseComradesFromNotes(notes);
-    if (!comrades.length) return monthlyRent;
-    const totalComradeSurcharge = comrades.reduce((s, c) => s + (c.amount || 0), 0);
-    const baseRent = Math.max(0, monthlyRent - totalComradeSurcharge);
-    const activeAmt = comrades
-        .filter(c => !c.start_month || c.start_month <= targetMonth)
-        .reduce((s, c) => s + (c.amount || 0), 0);
-    return baseRent + activeAmt;
+    let effectiveRent = monthlyRent;
+    if (comrades.length > 0) {
+        const totalComradeSurcharge = comrades.reduce((s, c) => s + (c.amount || 0), 0);
+        const baseRent = Math.max(0, monthlyRent - totalComradeSurcharge);
+        const activeAmt = comrades
+            .filter(c => !c.start_month || c.start_month <= targetMonth)
+            .reduce((s, c) => s + (c.amount || 0), 0);
+        effectiveRent = baseRent + activeAmt;
+    }
+    // Also include one-off or recurring adjustments targeting this specific month
+    const adjustments = parseAdjustmentsFromNotes(notes);
+    for (const adj of adjustments) {
+        if (!adj.month || adj.month === targetMonth) {
+            effectiveRent = Math.max(0, effectiveRent + adj.amount);
+        }
+    }
+    return effectiveRent;
+}
+
+export interface AddTenantChargeParams {
+    tenantId: number;
+    amount: number;
+    type: string;        // 'Water' | 'Electricity' | 'Garbage' | 'Repairs' | 'Roommate' | 'Balance Adjustment' | 'Other'
+    month?: string;      // 'YYYY-MM'
+    description?: string;
+    recordedBy?: string;
+}
+
+export async function addTenantCharge({
+    tenantId,
+    amount,
+    type,
+    month,
+    description = '',
+    recordedBy = 'Admin'
+}: AddTenantChargeParams): Promise<{ success: boolean; newBalance: number; billId?: number; message: string }> {
+    if (!tenantId || !amount || isNaN(amount) || amount === 0) {
+        throw new Error('A valid tenant and non-zero amount are required.');
+    }
+    const chargeMonth = month || new Date().toISOString().slice(0, 7);
+    const cleanDesc = description.trim() || type;
+    const adjTag = `[ADJUSTMENT: ${amount} | ${type}: ${cleanDesc} | ${chargeMonth}]`;
+
+    // 1. Fetch current tenant
+    const { data: tenant, error: tErr } = await supabase
+        .from('arms_tenants')
+        .select('tenant_id, tenant_name, unit_id, location_id, balance, notes, monthly_rent')
+        .eq('tenant_id', tenantId)
+        .single();
+    if (tErr || !tenant) throw new Error(tErr?.message || 'Tenant not found');
+
+    const prevBalance = Number(tenant.balance || 0);
+    const newBalance = Math.round((prevBalance + amount) * 100) / 100;
+    const existingNotes = tenant.notes ? tenant.notes.trim() : '';
+    const updatedNotes = existingNotes ? `${existingNotes} ${adjTag}` : adjTag;
+
+    // 2. Update tenant row
+    const { error: tUpErr } = await supabase
+        .from('arms_tenants')
+        .update({
+            balance: newBalance,
+            notes: updatedNotes,
+            updated_at: new Date().toISOString()
+        })
+        .eq('tenant_id', tenantId);
+    if (tUpErr) throw tUpErr;
+
+    // 3. Update or create bill in arms_billing for that month
+    const { data: existingBill } = await supabase
+        .from('arms_billing')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('billing_month', chargeMonth)
+        .maybeSingle();
+
+    let billId: number | undefined;
+
+    if (existingBill) {
+        billId = existingBill.billing_id;
+        const currentRent = Number(existingBill.rent_amount || 0);
+        const currentPaid = Number(existingBill.amount_paid || 0);
+        const currentBillBal = Number(existingBill.balance || 0);
+
+        const updatedRent = Math.max(0, currentRent + amount);
+        const updatedBillBal = Math.max(0, currentBillBal + amount);
+        const updatedStatus = updatedBillBal <= 0 ? 'Paid' : (currentPaid > 0 ? 'Partial' : 'Unpaid');
+        const billNote = existingBill.notes
+            ? `${existingBill.notes} | [${type}: +${amount} (${cleanDesc})]`
+            : `[${type}: +${amount} (${cleanDesc})]`;
+
+        const { error: bUpErr } = await supabase
+            .from('arms_billing')
+            .update({
+                rent_amount: updatedRent,
+                balance: updatedBillBal,
+                status: updatedStatus,
+                notes: billNote,
+                updated_at: new Date().toISOString()
+            })
+            .eq('billing_id', billId);
+        if (bUpErr) console.warn('Could not update bill row:', bUpErr.message);
+    } else {
+        const rentAmt = Math.max(0, (tenant.monthly_rent || 0) + amount);
+        const billBal = Math.max(0, (tenant.monthly_rent || 0) + amount);
+        const billNote = `[${type}: +${amount} (${cleanDesc})]`;
+
+        const { data: newBill, error: bInsErr } = await supabase
+            .from('arms_billing')
+            .insert({
+                tenant_id: tenant.tenant_id,
+                unit_id: tenant.unit_id,
+                location_id: tenant.location_id,
+                billing_month: chargeMonth,
+                billing_date: new Date().toISOString().slice(0, 10),
+                due_date: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
+                rent_amount: rentAmt,
+                amount_paid: 0,
+                balance: billBal,
+                status: 'Unpaid',
+                notes: billNote,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+            .select('billing_id')
+            .single();
+        if (bInsErr) console.warn('Could not insert bill row:', bInsErr.message);
+        if (newBill) billId = newBill.billing_id;
+    }
+
+    // 4. Invalidate caches
+    invalidateCache('unpaid');
+    invalidateCache('payments');
+    invalidateCache('tenants');
+    invalidateCache('billing');
+    invalidateCache('stats');
+
+    return {
+        success: true,
+        newBalance,
+        billId,
+        message: `Successfully applied ${amount >= 0 ? '+' : ''}KES ${amount.toLocaleString()} to ${tenant.tenant_name}. New balance is KES ${newBalance.toLocaleString()}.`
+    };
+}
+
+export async function removeTenantAdjustment(tenantId: number, rawTag: string): Promise<boolean> {
+    const { data: tenant, error: tErr } = await supabase
+        .from('arms_tenants')
+        .select('tenant_id, balance, notes')
+        .eq('tenant_id', tenantId)
+        .single();
+    if (tErr || !tenant) throw new Error(tErr?.message || 'Tenant not found');
+
+    const m = rawTag.match(/\[ADJUSTMENT:\s*([+-]?\d+(?:\.\d+)?)/i);
+    const adjAmount = m ? parseFloat(m[1]) : 0;
+    const newNotes = (tenant.notes || '').replace(rawTag, '').trim();
+    const newBalance = Math.max(0, Math.round(((tenant.balance || 0) - adjAmount) * 100) / 100);
+
+    const { error: upErr } = await supabase
+        .from('arms_tenants')
+        .update({
+            balance: newBalance,
+            notes: newNotes,
+            updated_at: new Date().toISOString()
+        })
+        .eq('tenant_id', tenantId);
+    if (upErr) throw upErr;
+
+    invalidateCache('unpaid');
+    invalidateCache('payments');
+    invalidateCache('tenants');
+    invalidateCache('billing');
+    invalidateCache('stats');
+    return true;
 }
 
 // ==================== REPAIR VACATION BILLS ====================

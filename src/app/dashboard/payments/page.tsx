@@ -16,6 +16,7 @@ import {
 import RentReceipt from '@/components/RentReceipt';
 import VacationBanner from '@/components/VacationBanner';
 import PaymentModal from '@/components/PaymentModal';
+import AddChargeModal from '@/components/AddChargeModal';
 import { topProgress } from '@/components/TopProgressBar';
 import {
     Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement
@@ -394,6 +395,8 @@ export default function PaymentsPage() {
     const [penaltyBalances, setPenaltyBalances] = useState<Record<number, { total: number; count: number; total_debt?: number }>>({});
     const [loading, setLoading] = useState(true);
     const [showPayModal, setShowPayModal] = useState(false);
+    const [showAddChargeModal, setShowAddChargeModal] = useState(false);
+    const [addChargeTenantId, setAddChargeTenantId] = useState<number | null>(null);
     const [locationId, setLocationId] = useState<number | null>(null);
     const [showReceipt, setShowReceipt] = useState<any>(null);
     const [editingPayment, setEditingPayment] = useState<any>(null);
@@ -766,6 +769,13 @@ export default function PaymentsPage() {
                         style={{ background: '#059669' }}
                     >
                         <FiPlus size={14} /> Record Payment
+                    </button>
+                    <button
+                        onClick={() => { setAddChargeTenantId(null); setShowAddChargeModal(true); }}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-white shadow-md shadow-amber-600/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                        style={{ background: '#d97706' }}
+                    >
+                        <FiPlus size={14} /> + Add Charge / Adjust Balance
                     </button>
                     <button
                         onClick={() => setShowPayModal(true)}
@@ -1367,6 +1377,17 @@ export default function PaymentsPage() {
                 locationId={locationId}
                 onPaymentRecorded={() => loadData(locationId)}
             />
+
+            {/* ════════════════ ADD CHARGE / ARREARS ADJUSTMENT MODAL ════════════════ */}
+            {showAddChargeModal && (
+                <AddChargeModal
+                    isOpen={showAddChargeModal}
+                    onClose={() => { setShowAddChargeModal(false); setAddChargeTenantId(null); }}
+                    tenants={tenants}
+                    initialTenantId={addChargeTenantId}
+                    onSuccess={() => loadData(locationId)}
+                />
+            )}
 
             {/* ════════════════ EDIT PAYMENT MODAL ════════════════ */}
             {editingPayment && (() => {

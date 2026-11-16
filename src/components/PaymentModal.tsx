@@ -3,12 +3,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     recordPayment, getAccumulatedArrearsForTenant,
-    getEffectiveRent, c2bSupabase, getMpesaTransactions, markPenaltiesPaid
+    getEffectiveRent, c2bSupabase, getMpesaTransactions, markPenaltiesPaid,
+    addTenantCharge
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
     FiX, FiRefreshCw, FiCheck, FiDollarSign, FiCalendar, FiUser,
-    FiSmartphone, FiCreditCard, FiZap, FiList
+    FiSmartphone, FiCreditCard, FiZap, FiList, FiEdit3, FiPlusCircle, FiArrowRight
 } from 'react-icons/fi';
 import RentReceipt from '@/components/RentReceipt';
 import SearchableTenantSelector from '@/components/SearchableTenantSelector';
@@ -74,6 +75,15 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const [c2bPayments, setC2bPayments] = useState<any[]>([]);
     const [loadingCallbacks, setLoadingCallbacks] = useState(false);
 
+    // ── Update Arrears / Add Charge directly in Pay Rent Modal ──
+    const [showAdjustBalance, setShowAdjustBalance] = useState(false);
+    const [adjustMode, setAdjustMode] = useState<'add' | 'set'>('add');
+    const [adjustAmount, setAdjustAmount] = useState('200');
+    const [adjustTargetBalance, setAdjustTargetBalance] = useState('');
+    const [adjustCategory, setAdjustCategory] = useState('Water');
+    const [adjustNote, setAdjustNote] = useState('');
+    const [adjusting, setAdjusting] = useState(false);
+
     const selectedTenant = useMemo(() => {
         return tenants.find((t: any) => t.tenant_id === selectedTenantId) ?? null;
     }, [tenants, selectedTenantId]);
@@ -92,6 +102,73 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const penaltyDaysCount = tenantPenalty?.penalty_days || 0;
     const totalToPayWithPenalty = rentArrearsBalance + penaltyAmount;
     const totalTenantDebt = totalToPayWithPenalty;
+
+    // Arrears update math
+    const parsedAdjustAmt = parseFloat(adjustAmount) || 0;
+    const parsedTargetBal = parseFloat(adjustTargetBalance) || 0;
+    const effectiveDiff = adjustMode === 'set'
+        ? Math.round((parsedTargetBal - rentArrearsBalance) * 100) / 100
+        : adjustCategory === 'Credit'
+            ? -Math.abs(parsedAdjustAmt)
+            : Math.abs(parsedAdjustAmt);
+    const calculatedTargetBalance = Math.max(0, Math.round((rentArrearsBalance + effectiveDiff) * 100) / 100);
+
+    const reloadTenantArrears = useCallback(async (tenantId: number) => {
+        setLoadingArrears(true);
+        try {
+            const [arrears, pen] = await Promise.all([
+                getAccumulatedArrearsForTenant(tenantId),
+                fetch(`/api/penalties?tenantId=${tenantId}`).then(r => r.json()).catch(() => null)
+            ]);
+            setTenantArrearData(arrears);
+            if (pen && typeof pen.total_penalty === 'number') {
+                setTenantPenalty(pen);
+            } else {
+                setTenantPenalty(null);
+            }
+        } catch {
+            // non-fatal
+        } finally {
+            setLoadingArrears(false);
+        }
+    }, []);
+
+    const handleApplyArrearsUpdate = async () => {
+        if (!selectedTenantId) {
+            toast.error('Please select a tenant first');
+            return;
+        }
+        if (effectiveDiff === 0) {
+            toast.error('Adjustment amount is 0 (no change)');
+            return;
+        }
+
+        setAdjusting(true);
+        try {
+            const res = await addTenantCharge({
+                tenantId: selectedTenantId,
+                amount: effectiveDiff,
+                type: adjustCategory,
+                month: paymentMonth,
+                description: adjustNote.trim() || `${adjustCategory} adjustment`,
+                recordedBy: 'Admin'
+            });
+
+            toast.success(res.message || `Rent arrears updated to KES ${calculatedTargetBalance.toLocaleString()}!`);
+            if (selectedTenant) {
+                selectedTenant.balance = calculatedTargetBalance;
+            }
+            await reloadTenantArrears(selectedTenantId);
+            setShowAdjustBalance(false);
+            setAdjustTargetBalance('');
+            onPaymentRecorded();
+        } catch (err: any) {
+            console.error('Failed to update rent arrears:', err);
+            toast.error(err.message || 'Failed to update arrears');
+        } finally {
+            setAdjusting(false);
+        }
+    };
 
     // KCB STK Push integration
     const { status: stkStatus, error: stkError, send: stkSend, retry: stkRetry, reset: stkReset } = useStkPush({
@@ -387,6 +464,20 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                 ✓ Up to Date
                                             </span>
                                         )}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowAdjustBalance(!showAdjustBalance);
+                                                if (!adjustTargetBalance) {
+                                                    setAdjustTargetBalance(String(rentArrearsBalance + 200));
+                                                }
+                                            }}
+                                            className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white transition shadow-xs flex items-center gap-1 active:scale-95 cursor-pointer ml-1"
+                                            title="Update or add to this tenant's rent arrears"
+                                        >
+                                            <FiEdit3 size={11} />
+                                            <span>Update Arrears</span>
+                                        </button>
                                     </div>
                                 </div>
 
@@ -441,6 +532,172 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         </button>
                                     )}
                                 </div>
+
+                                {/* ── Inline Arrears Update / Adjustment Panel ── */}
+                                {showAdjustBalance && (
+                                    <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100/70 border border-amber-300 shadow-sm animate-fadeIn">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="font-extrabold text-amber-950 flex items-center gap-1.5 text-xs">
+                                                <span>⚡ Update Rent Arrears</span>
+                                                <span className="text-[10px] bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                                                    Current: {fmt(rentArrearsBalance)}
+                                                </span>
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowAdjustBalance(false)}
+                                                className="text-amber-800 hover:text-amber-950 text-xs font-bold px-1"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+
+                                        {/* Mode selector */}
+                                        <div className="flex rounded-xl bg-amber-200/60 p-0.5 mb-2.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setAdjustMode('add')}
+                                                className={`flex-1 py-1 rounded-lg text-[10px] font-black transition ${
+                                                    adjustMode === 'add'
+                                                        ? 'bg-white text-amber-900 shadow-xs'
+                                                        : 'text-amber-800 hover:text-amber-950'
+                                                }`}
+                                            >
+                                                ➕ Add Extra Fee (+KES 200)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAdjustMode('set');
+                                                    if (!adjustTargetBalance) setAdjustTargetBalance(String(rentArrearsBalance + 200));
+                                                }}
+                                                className={`flex-1 py-1 rounded-lg text-[10px] font-black transition ${
+                                                    adjustMode === 'set'
+                                                        ? 'bg-white text-amber-900 shadow-xs'
+                                                        : 'text-amber-800 hover:text-amber-950'
+                                                }`}
+                                            >
+                                                🎯 Set Exact Balance (e.g. 4,950)
+                                            </button>
+                                        </div>
+
+                                        {adjustMode === 'add' ? (
+                                            <div className="space-y-2">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-amber-900 uppercase block">Category</label>
+                                                        <select
+                                                            value={adjustCategory}
+                                                            onChange={(e) => setAdjustCategory(e.target.value)}
+                                                            className="w-full mt-0.5 px-2 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-slate-800"
+                                                        >
+                                                            <option value="Water">💧 Water Bill</option>
+                                                            <option value="Electricity">⚡ Electricity</option>
+                                                            <option value="Garbage">🗑️ Garbage</option>
+                                                            <option value="Repairs">🔧 Repairs</option>
+                                                            <option value="Roommate">👥 Roommate</option>
+                                                            <option value="Balance Adjustment">⚖️ Arrears Adjust</option>
+                                                            <option value="Credit">🎁 Credit (Deduct)</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-amber-900 uppercase block">Amount (KES)</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            step="1"
+                                                            value={adjustAmount}
+                                                            onChange={(e) => setAdjustAmount(e.target.value)}
+                                                            placeholder="e.g. 200"
+                                                            className="w-full mt-0.5 px-2 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-black text-slate-900"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {/* Quick Chips */}
+                                                <div className="flex items-center gap-1 flex-wrap">
+                                                    <span className="text-[9px] font-bold text-amber-800">Quick:</span>
+                                                    {[100, 200, 300, 500, 1000, 1500, 2000].map(amt => (
+                                                        <button
+                                                            key={amt}
+                                                            type="button"
+                                                            onClick={() => setAdjustAmount(String(amt))}
+                                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition border ${
+                                                                adjustAmount === String(amt)
+                                                                    ? 'bg-amber-600 text-white border-amber-700'
+                                                                    : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100'
+                                                            }`}
+                                                        >
+                                                            +{amt}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-1.5">
+                                                <label className="text-[10px] font-bold text-amber-900 uppercase block">
+                                                    New Desired Total Arrears (KES)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="1"
+                                                    value={adjustTargetBalance}
+                                                    onChange={(e) => setAdjustTargetBalance(e.target.value)}
+                                                    placeholder="e.g. 4950"
+                                                    className="w-full px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-sm font-black text-slate-900"
+                                                />
+                                                <p className="text-[10px] text-amber-800">
+                                                    Enter desired balance (e.g. 4950). Adjustment required: <b>{effectiveDiff >= 0 ? `+KES ${effectiveDiff.toLocaleString()}` : `-KES ${Math.abs(effectiveDiff).toLocaleString()}`}</b>
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* Optional Note */}
+                                        <div className="mt-2">
+                                            <input
+                                                type="text"
+                                                value={adjustNote}
+                                                onChange={(e) => setAdjustNote(e.target.value)}
+                                                placeholder="Note (e.g. October meter reading, broken tap...)"
+                                                className="w-full px-2.5 py-1.5 bg-white/90 border border-amber-200 rounded-lg text-[11px] text-slate-800 placeholder:text-slate-400"
+                                            />
+                                        </div>
+
+                                        {/* Calculation Preview */}
+                                        <div className="mt-2 p-2 bg-white/90 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
+                                            <div>
+                                                <span className="text-slate-500 text-[10px] block">Current: {fmt(rentArrearsBalance)}</span>
+                                                <span className="font-extrabold text-amber-800 text-[11px]">
+                                                    Adjustment: {effectiveDiff >= 0 ? '+' : ''}KES {effectiveDiff.toLocaleString()}
+                                                </span>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-[9px] text-slate-500 uppercase font-bold block">New Balance</span>
+                                                <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                                                    {fmt(calculatedTargetBalance)}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Action Button */}
+                                        <button
+                                            type="button"
+                                            disabled={adjusting || effectiveDiff === 0}
+                                            onClick={handleApplyArrearsUpdate}
+                                            className="w-full mt-2 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-black text-xs shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                                        >
+                                            {adjusting ? (
+                                                <>Applying Update...</>
+                                            ) : (
+                                                <>
+                                                    <FiCheck size={14} />
+                                                    <span>Save New Arrears ({fmt(calculatedTargetBalance)})</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 

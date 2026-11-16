@@ -2,8 +2,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getBilling, generateMonthlyBills, getLocations, getTenants, calculateUnpaidRent, isVacationMonth, repairVacationBills } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { FiFileText, FiRefreshCw, FiDollarSign, FiCheckCircle, FiAlertTriangle, FiPhone, FiCalendar, FiZap, FiInfo } from 'react-icons/fi';
+import { FiFileText, FiRefreshCw, FiDollarSign, FiCheckCircle, FiAlertTriangle, FiPhone, FiCalendar, FiZap, FiInfo, FiPlus } from 'react-icons/fi';
 import { topProgress } from '@/components/TopProgressBar';
+import AddChargeModal from '@/components/AddChargeModal';
 
 // ── WhatsApp reminder helper ──────────────────────────────────────────────────
 function buildWhatsAppLink(phone: string, tenantName: string, amount: number, months: string[], locationName: string) {
@@ -46,6 +47,8 @@ export default function BillingPage() {
     const [showCatchupInfo, setShowCatchupInfo] = useState(false);
     const [unpaidData, setUnpaidData] = useState<any[]>([]);
     const [repairing, setRepairing] = useState(false);
+    const [showAddChargeModal, setShowAddChargeModal] = useState(false);
+    const [addChargeTenantId, setAddChargeTenantId] = useState<number | null>(null);
 
     // ── Pagination ────────────────────────────────────────────────────────────
     const [billPage, setBillPage] = useState(1);
@@ -138,9 +141,16 @@ export default function BillingPage() {
                     <h1 className="page-title">📄 Billing</h1>
                     <p className="text-sm text-gray-500 mt-1">Monthly rent bills, catch-up arrears &amp; WhatsApp reminders</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                     <button onClick={() => loadData(locationId)} className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition">
                         <FiRefreshCw size={16} />
+                    </button>
+                    <button
+                        onClick={() => { setAddChargeTenantId(null); setShowAddChargeModal(true); }}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold text-white shadow-md shadow-amber-600/20 hover:scale-[1.02] active:scale-[0.98] transition flex items-center gap-2"
+                        style={{ background: '#d97706' }}
+                    >
+                        <FiPlus size={15} /> + Add Charge / Adjust Balance
                     </button>
                     <button onClick={handleGenerate} disabled={generating}
                         className="btn-success flex items-center gap-2 shadow-md">
@@ -567,6 +577,16 @@ export default function BillingPage() {
                     </div>
                 );
             })()}
+            {/* Add Charge / Adjust Balance Modal */}
+            {showAddChargeModal && (
+                <AddChargeModal
+                    isOpen={showAddChargeModal}
+                    onClose={() => { setShowAddChargeModal(false); setAddChargeTenantId(null); }}
+                    tenants={tenants}
+                    initialTenantId={addChargeTenantId}
+                    onSuccess={() => loadData(locationId)}
+                />
+            )}
         </div>
     );
 }
