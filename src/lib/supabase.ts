@@ -179,7 +179,22 @@ export async function getLocations(forceRefresh = false) {
 }
 
 export async function addLocation(location: { location_name: string; address?: string; description?: string }) {
-    const { data, error } = await supabase.from('arms_locations').insert([location]).select().single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/locations/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'create', location }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to add location');
+        }
+        const json = await res.json();
+        invalidateCache('locations');
+        invalidateCache('stats');
+        return json.location;
+    }
+    const { data, error } = await supabaseAdmin.from('arms_locations').insert([location]).select().single();
     if (error) throw error;
     invalidateCache('locations');
     invalidateCache('stats');
@@ -187,7 +202,22 @@ export async function addLocation(location: { location_name: string; address?: s
 }
 
 export async function updateLocation(id: number, updates: any) {
-    const { data, error } = await supabase.from('arms_locations').update({ ...updates, updated_at: new Date().toISOString() }).eq('location_id', id).select().single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/locations/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update', id, updates }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to update location');
+        }
+        const json = await res.json();
+        invalidateCache('locations');
+        invalidateCache('stats');
+        return json.location;
+    }
+    const { data, error } = await supabaseAdmin.from('arms_locations').update({ ...updates, updated_at: new Date().toISOString() }).eq('location_id', id).select().single();
     if (error) throw error;
     invalidateCache('locations');
     invalidateCache('stats');
@@ -195,7 +225,21 @@ export async function updateLocation(id: number, updates: any) {
 }
 
 export async function deleteLocation(id: number) {
-    const { error } = await supabase.from('arms_locations').update({ active: false }).eq('location_id', id);
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/locations/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to delete location');
+        }
+        invalidateCache('locations');
+        invalidateCache('stats');
+        return;
+    }
+    const { error } = await supabaseAdmin.from('arms_locations').update({ active: false }).eq('location_id', id);
     if (error) throw error;
     invalidateCache('locations');
     invalidateCache('stats');
@@ -214,7 +258,22 @@ export async function getUnits(locationId?: number, forceRefresh = false) {
 }
 
 export async function addUnit(unit: { location_id: number; unit_name: string; unit_type?: string; monthly_rent: number; deposit_amount?: number; floor_number?: string; description?: string }) {
-    const { data, error } = await supabase.from('arms_units').insert([unit]).select().single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/units/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'create', unit }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to add unit');
+        }
+        const json = await res.json();
+        invalidateCache('units');
+        invalidateCache('stats');
+        return json.unit;
+    }
+    const { data, error } = await supabaseAdmin.from('arms_units').insert([unit]).select().single();
     if (error) throw error;
     invalidateCache('units');
     invalidateCache('stats');
@@ -222,7 +281,22 @@ export async function addUnit(unit: { location_id: number; unit_name: string; un
 }
 
 export async function updateUnit(id: number, updates: any) {
-    const { data, error } = await supabase.from('arms_units').update({ ...updates, updated_at: new Date().toISOString() }).eq('unit_id', id).select().single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/units/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update', id, updates }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to update unit');
+        }
+        const json = await res.json();
+        invalidateCache('units');
+        invalidateCache('stats');
+        return json.unit;
+    }
+    const { data, error } = await supabaseAdmin.from('arms_units').update({ ...updates, updated_at: new Date().toISOString() }).eq('unit_id', id).select().single();
     if (error) throw error;
     invalidateCache('units');
     invalidateCache('stats');
@@ -230,7 +304,21 @@ export async function updateUnit(id: number, updates: any) {
 }
 
 export async function deleteUnit(id: number) {
-    const { error } = await supabase.from('arms_units').update({ active: false }).eq('unit_id', id);
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/units/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to delete unit');
+        }
+        invalidateCache('units');
+        invalidateCache('stats');
+        return;
+    }
+    const { error } = await supabaseAdmin.from('arms_units').update({ active: false }).eq('unit_id', id);
     if (error) throw error;
     invalidateCache('units');
     invalidateCache('stats');
@@ -652,24 +740,39 @@ export async function addTenant(tenant: {
     is_on_vacation?: boolean; initial_payment?: number;
     additional_units?: { unit_id: number; rent: number }[];
 }) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/tenants/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'create', tenant }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to add tenant');
+        }
+        const json = await res.json();
+        invalidateCache('tenants');
+        invalidateCache('units');
+        invalidateCache('unpaid');
+        invalidateCache('stats');
+        return json.tenant;
+    }
+
     const initialPayment = tenant.initial_payment || 0;
     const isOnVacation = tenant.is_on_vacation || false;
     const additionalUnits = tenant.additional_units || [];
     // Remove non-DB fields before insert
     const { initial_payment: _ip, additional_units: _au, location_name: _ln, ...tenantData } = tenant as any;
 
-    // IMPORTANT: Always store the FULL/BASE monthly rent in arms_tenants.
-    // monthly_rent = total across ALL rooms (primary + additional)
-    // Vacation half-rent is computed dynamically per bill — never store halved rent.
-    const { data, error } = await supabase.from('arms_tenants').insert([{
+    const { data, error } = await supabaseAdmin.from('arms_tenants').insert([{
         ...tenantData,
-        monthly_rent: tenant.monthly_rent, // total across all rooms
+        monthly_rent: tenant.monthly_rent,
         status: 'Active',
         balance: 0,
         is_on_vacation: isOnVacation,
     }]).select().single();
     if (error) throw error;
-    await supabase.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
+    await supabaseAdmin.from('arms_units').update({ status: 'Occupied' }).eq('unit_id', tenant.unit_id);
 
     // Save multi-room assignments to arms_tenant_units
     const primaryRent = additionalUnits.length > 0
@@ -768,6 +871,24 @@ export async function addTenant(tenant: {
 }
 
 export async function updateTenant(id: number, updates: any) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/tenants/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update', id, updates }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to update tenant');
+        }
+        const json = await res.json();
+        invalidateCache('tenants');
+        invalidateCache('units');
+        invalidateCache('unpaid');
+        invalidateCache('stats');
+        return json.tenant;
+    }
+
     // Strip fields that don't exist in arms_tenants to avoid schema cache errors
     const { initial_payment: _ip, location_name: _ln, ...safeUpdates } = updates;
 
@@ -1060,6 +1181,23 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
 }
 
 export async function deactivateTenant(id: number) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/tenants/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'vacate', id }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to deactivate tenant');
+        }
+        invalidateCache('tenants');
+        invalidateCache('units');
+        invalidateCache('unpaid');
+        invalidateCache('stats');
+        return;
+    }
+
     // Safely fetch tenant (may fail if related table has issues)
     let tenant: any = null;
     try {
@@ -1101,6 +1239,23 @@ export async function deactivateTenant(id: number) {
 }
 
 export async function deleteTenantPermanently(id: number) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/tenants/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to delete tenant');
+        }
+        invalidateCache('tenants');
+        invalidateCache('units');
+        invalidateCache('unpaid');
+        invalidateCache('stats');
+        return;
+    }
+
     // 1. Vacate primary unit
     try {
         const { data: tenant } = await supabase.from('arms_tenants').select('tenant_id, unit_id').eq('tenant_id', id).single();
