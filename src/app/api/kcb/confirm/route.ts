@@ -29,6 +29,24 @@ export async function POST(req: NextRequest) {
             .eq("checkout_request_id", checkoutRequestId)
             .maybeSingle();
 
+        if (!stkReq) {
+            return NextResponse.json({
+                success: false,
+                status: "Failed",
+                reason: "STK request not found or invalid",
+            }, { status: 404 });
+        }
+
+        // ── HARD SECURITY GATE: Verify STK request belongs to the authenticated tenant ──
+        if (Number(stkReq.tenant_id) !== tenantIdNum) {
+            console.error(`[KCB Confirm SECURITY ALERT] Tenant mismatch: request tenant=${stkReq.tenant_id}, caller=${tenantIdNum}`);
+            return NextResponse.json({
+                success: false,
+                status: "Failed",
+                reason: "Unauthorized: Request does not match tenant",
+            }, { status: 403 });
+        }
+
         // ── 2. HARD GATE: if STK record shows a known failure — reject immediately ──
         //    Never record a payment for insufficient balance, wrong PIN, cancelled, timed out
         if (stkReq) {

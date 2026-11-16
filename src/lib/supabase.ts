@@ -56,7 +56,24 @@ export const c2bSupabase = new Proxy({} as SupabaseClient, {
 
 // ==================== AUTHENTICATION ====================
 export async function loginUser(username: string, password: string) {
-    const { data, error } = await supabase
+    if (typeof window !== 'undefined') {
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data?.user || null;
+        } catch (err) {
+            console.error('Login error:', err);
+            return null;
+        }
+    }
+
+    // Server-side execution using supabaseAdmin (bypasses RLS safely)
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .select('*')
         .eq('user_name', username)
@@ -70,7 +87,7 @@ export async function loginUser(username: string, password: string) {
     // Auto-upgrade legacy plain-text password to bcrypt on successful login
     if (!data.password_hash.startsWith('$2')) {
         const hashed = await hashPassword(password);
-        await supabase.from('arms_users').update({ password_hash: hashed }).eq('user_id', data.user_id);
+        await supabaseAdmin.from('arms_users').update({ password_hash: hashed }).eq('user_id', data.user_id);
     }
 
     return data;
@@ -335,12 +352,27 @@ export async function addTenantCharge({
     if (!tenantId || !amount || isNaN(amount) || amount === 0) {
         throw new Error('A valid tenant and non-zero amount are required.');
     }
+
+    // Client-side execution routes through secure server API
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/billing/charge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tenantId, amount, type, month, description, recordedBy }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to apply charge');
+        }
+        return await res.json();
+    }
+
     const chargeMonth = month || new Date().toISOString().slice(0, 7);
     const cleanDesc = description.trim() || type;
     const adjTag = `[ADJUSTMENT: ${amount} | ${type}: ${cleanDesc} | ${chargeMonth}]`;
 
-    // 1. Fetch current tenant
-    const { data: tenant, error: tErr } = await supabase
+    // 1. Fetch current tenant using supabaseAdmin
+    const { data: tenant, error: tErr } = await supabaseAdmin
         .from('arms_tenants')
         .select('tenant_id, tenant_name, unit_id, location_id, balance, notes, monthly_rent')
         .eq('tenant_id', tenantId)
@@ -1357,7 +1389,22 @@ export async function recordPayment(payment: {
     const paymentAmount = Math.round(payment.amount * 100) / 100;
     if (paymentAmount <= 0) throw new Error('Payment amount must be greater than zero');
 
-    const { data: tenant, error: tenantErr } = await supabase
+    // Client-side execution routes through secure server API
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/payments/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payment),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to record payment');
+        }
+        const data = await res.json();
+        return data.payment ? { ...data.payment, arrearsPaid: data.arrearsPaid, currentRentPaid: data.currentRentPaid } : data;
+    }
+
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
         .from('arms_tenants').select('*').eq('tenant_id', payment.tenant_id).single();
     if (tenantErr || !tenant) throw new Error('Tenant not found');
 

@@ -16,6 +16,11 @@ export const dynamic = "force-dynamic";
 const lastPushTime = new Map<string, number>();
 const KCB_COOLDOWN_MS = 90_000;
 
+// ── IP Rate Limiting: Max 10 pushes per 10 minutes per IP ──
+const ipPushHistory = new Map<string, number[]>();
+const IP_WINDOW_MS = 10 * 60 * 1000;
+const IP_MAX_PUSHES = 10;
+
 // Endpoints — resolved PER REQUEST based on the unit's environment field in DB.
 // Production units  → api.buni.kcbgroup.com   (set via KCB_TOKEN_URL / KCB_STK_URL env vars)
 // Sandbox units     → accounts.buni.kcbgroup.com / sandbox.buni.kcbgroup.com (hard-coded KCB sandbox URLs)
@@ -165,11 +170,29 @@ async function fireKCBSTK(token: string, stkUrl: string, params: {
 /* ── Main handler ── */
 export async function POST(req: NextRequest) {
     try {
+        // ── IP Rate Limit Guard ──
+        const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+        const nowMs = Date.now();
+        const timestamps = (ipPushHistory.get(clientIp) || []).filter(t => nowMs - t < IP_WINDOW_MS);
+        if (timestamps.length >= IP_MAX_PUSHES) {
+            return NextResponse.json({
+                error: "Too many payment requests from this device. Please wait a few minutes before trying again.",
+            }, { status: 429 });
+        }
+
         const { phone, amount, tenantId, description } = await req.json();
 
         if (!phone || !amount || !tenantId) {
             return NextResponse.json({ error: "Missing required fields: phone, amount, tenantId" }, { status: 400 });
         }
+
+        const numericAmount = Math.round(Number(amount));
+        if (isNaN(numericAmount) || numericAmount < 1 || numericAmount > 300000) {
+            return NextResponse.json({ error: "Payment amount must be between KES 1 and KES 300,000" }, { status: 400 });
+        }
+
+        timestamps.push(nowMs);
+        ipPushHistory.set(clientIp, timestamps);
 
         // ── Resolve credentials from DB ──
         const creds = await resolveKcbCredentials(Number(tenantId));

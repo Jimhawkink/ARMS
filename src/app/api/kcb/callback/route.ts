@@ -83,7 +83,8 @@ export async function POST(req: NextRequest) {
             return kcbResponse();
         }
 
-        // 1. Find our original STK request
+        // 1. HARD SECURITY GATE: Find our original STK request
+        // Any callback without a valid pre-existing STK request initiated by ARMS is strictly REJECTED
         const { data: stkReq, error: stkErr } = await supabase
             .from("arms_kcb_stk_requests")
             .select("*")
@@ -92,7 +93,27 @@ export async function POST(req: NextRequest) {
 
         if (stkErr) console.error("[KCB Callback] STK lookup error:", stkErr.message);
 
-        // 2. Update arms_kcb_stk_requests status
+        if (!stkReq) {
+            console.error("[KCB Callback ARMS SECURITY ALERT] Rejected untrusted callback: CheckoutRequestID not found:", checkoutRequestId);
+            return kcbResponse();
+        }
+
+        // 2. Check if already completed (prevent replay attacks)
+        if (stkReq.status === "Completed") {
+            console.log("[KCB Callback ARMS] Request already completed. Skipping replay:", checkoutRequestId);
+            return kcbResponse();
+        }
+
+        // 3. Check expiration (STK requests older than 30 minutes are invalid)
+        if (stkReq.created_at) {
+            const ageMs = Date.now() - new Date(stkReq.created_at).getTime();
+            if (ageMs > 30 * 60 * 1000) {
+                console.warn("[KCB Callback ARMS] Rejected expired STK request (>30m old):", checkoutRequestId);
+                return kcbResponse();
+            }
+        }
+
+        // 4. Update arms_kcb_stk_requests status
         const newStatus = isSuccess ? "Completed" : (resultCode === 1032 ? "Cancelled" : "Failed");
         await supabase
             .from("arms_kcb_stk_requests")
@@ -106,27 +127,18 @@ export async function POST(req: NextRequest) {
             })
             .eq("checkout_request_id", checkoutRequestId);
 
-        // 3. Resolve tenantId
-        let tenantId: number | null = stkReq?.tenant_id || null;
-        if (!tenantId && invoiceNumber) {
-            const parts = String(invoiceNumber).split("-");
-            const parsed = parts.length >= 2 ? Number(parts[parts.length - 1]) : NaN;
-            if (!isNaN(parsed) && parsed > 0) {
-                tenantId = parsed;
-                console.log("[KCB Callback ARMS] Resolved tenantId from invoiceNumber:", tenantId);
-            }
-        }
-
-        const txnAmount = paidAmount || Number(stkReq?.amount || 0);
+        // 5. Strict Tenant & Amount resolution from verified STK record only
+        const tenantId: number = stkReq.tenant_id;
+        const txnAmount = paidAmount > 0 ? paidAmount : Number(stkReq.amount || 0);
         const finalReceipt = receiptNo || `KCB-${checkoutRequestId}`;
 
         if (!isSuccess) {
-            console.log("[KCB Callback ARMS] Payment FAILED. Code:", resultCode);
+            console.log("[KCB Callback ARMS] Payment FAILED or Cancelled. Code:", resultCode);
             return kcbResponse();
         }
 
         if (!tenantId || txnAmount <= 0) {
-            console.warn("[KCB Callback ARMS] Missing tenant or amount - skipping.", { tenantId, txnAmount });
+            console.warn("[KCB Callback ARMS] Invalid tenant or amount from verified STK record:", { tenantId, txnAmount });
             return kcbResponse();
         }
 
