@@ -684,8 +684,6 @@ export async function recordTenantPayment(params: {
     console.log('🔒 recordTenantPayment: All payments are processed server-side via bank webhook.');
     return { success: true };
 }
-}
-
 
 // ============================================================
 // AUTO-GENERATE MISSING BILLING RECORDS

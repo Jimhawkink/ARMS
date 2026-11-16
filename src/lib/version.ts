@@ -1,2 +1,2 @@
 // Single source of truth for APK version
-export const APP_VERSION = 'v5.0';
+export const APP_VERSION = 'v5.1';
