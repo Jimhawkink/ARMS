@@ -73,54 +73,41 @@ export interface STKResult {
 
 // ============================================================
 // AUTH — PIN LOGIN
-// Fetch active tenants and match PIN locally (avoid exposing PIN in query params)
+// Ultra Secure: Verifies PIN server-side via API or SECURITY DEFINER RPC
+// Never downloads all tenants or exposes PINs to the client device
 // ============================================================
 
 export async function loginTenantByPin(pin: string): Promise<TenantSession | null> {
     try {
-        // Fetch all active tenants with unit + location join
-        const { data, error } = await supabase
-            .from('arms_tenants')
-            .select(`
-                tenant_id, tenant_name, phone, id_number, email,
-                unit_id, location_id, monthly_rent, deposit_paid,
-                move_in_date, balance, mobile_pin,
-                arms_units(unit_name),
-                arms_locations(location_name)
-            `)
-            .eq('status', 'Active');
+        const pinStr = String(pin).trim();
+        if (!pinStr) return null;
 
-        if (error) {
-            console.error('ARMS login fetch error:', error.message);
-            return null;
+        // 1. Primary: Verify via ARMS secure server API (shielded by service_role)
+        try {
+            const apiRes = await fetch(`${ARMS_API_URL}/auth/tenant-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({ pin: pinStr }),
+            });
+            if (apiRes.ok) {
+                const apiData = await apiRes.json();
+                if (apiData?.success && apiData?.tenant) {
+                    return apiData.tenant as TenantSession;
+                }
+            } else if (apiRes.status === 401) {
+                return null; // Invalid PIN
+            }
+        } catch (apiErr: any) {
+            console.warn('Tenant login API unreachable, falling back to secure RPC:', apiErr?.message);
         }
 
-        if (!data || data.length === 0) return null;
+        // 2. Fallback: Verify via Supabase SECURITY DEFINER RPC
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('tenant_login_secure', { p_pin: pinStr });
+        if (!rpcErr && rpcData?.success && rpcData?.tenant) {
+            return rpcData.tenant as TenantSession;
+        }
 
-        // Match PIN (string comparison to avoid type mismatch)
-        const pinStr = String(pin).trim();
-        const matched = data.find(
-            (t: any) => t.mobile_pin && String(t.mobile_pin).trim() === pinStr
-        );
-
-        if (!matched) return null;
-
-        return {
-            tenant_id: matched.tenant_id,
-            tenant_name: matched.tenant_name,
-            phone: matched.phone || '',
-            id_number: matched.id_number || '',
-            email: matched.email || '',
-            unit_id: matched.unit_id,
-            unit_name: (matched as any).arms_units?.unit_name || 'N/A',
-            location_id: matched.location_id,
-            location_name: (matched as any).arms_locations?.location_name || 'N/A',
-            monthly_rent: matched.monthly_rent || 0,
-            deposit_paid: matched.deposit_paid || 0,
-            move_in_date: matched.move_in_date || '',
-            balance: matched.balance || 0,
-            loggedInAt: Date.now(),
-        };
+        return null;
     } catch (err: any) {
         console.error('loginTenantByPin exception:', err);
         return null;
@@ -680,8 +667,9 @@ export function pollSTKResult(params: {
 }
 
 // ============================================================
-// RECORD PAYMENT — After confirmed STK push
-// CRITICAL: tenant_id is always the logged-in tenant, NOT payer
+// RECORD PAYMENT — Handled 100% Server-Side
+// Client-side direct payment insertion is strictly disabled for security.
+// All payments are recorded automatically by the bank callback on Vercel.
 // ============================================================
 
 export async function recordTenantPayment(params: {
@@ -689,121 +677,13 @@ export async function recordTenantPayment(params: {
     locationId: number;
     amount: number;
     mpesaReceipt: string;
-    payerPhone: string;       // may differ from tenant phone
+    payerPhone: string;
     checkoutRequestId: string;
     billingMonth: string;
 }): Promise<{ success: boolean; error?: string }> {
-    try {
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        const paymentAmount = Math.round(params.amount * 100) / 100;
-
-        // 1. Ensure all missing billing records exist (auto-generate)
-        await ensureBillingRecords(params.tenantId);
-
-        // 2. Fetch oldest unpaid bills (FIFO)
-        const { data: bills, error: billsErr } = await supabase
-            .from('arms_billing')
-            .select('*')
-            .eq('tenant_id', params.tenantId)
-            .gt('balance', 0)
-            .order('billing_date', { ascending: true });
-
-        if (billsErr) throw billsErr;
-
-        // 3. FIFO allocation
-        let remaining = paymentAmount;
-        const allocations: any[] = [];
-        for (const bill of (bills || [])) {
-            if (remaining <= 0) break;
-            const billBalance = Math.round((bill.balance || 0) * 100) / 100;
-            if (billBalance <= 0) continue;
-            const allocAmount = Math.min(remaining, billBalance);
-            const newPaid = Math.round(((bill.amount_paid || 0) + allocAmount) * 100) / 100;
-            const newBal = Math.max(0, Math.round((bill.rent_amount - newPaid) * 100) / 100);
-            const newStatus = newBal <= 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
-            allocations.push({
-                billingId: bill.billing_id,
-                billing_month: bill.billing_month,
-                allocAmount, newPaid, newBal, newStatus,
-            });
-            remaining = Math.round((remaining - allocAmount) * 100) / 100;
-        }
-
-        // 4. Insert payment record — check for duplicate first (server callback may have already recorded it)
-        const { data: existingPayment } = await supabase
-            .from('arms_payments')
-            .select('payment_id, amount')
-            .eq('mpesa_receipt', params.mpesaReceipt)
-            .maybeSingle();
-
-        if (existingPayment) {
-            // Server-side callback already recorded this payment — just refresh balance and return success
-            console.log('✅ Payment already recorded by server callback (receipt:', params.mpesaReceipt, '). Skipping duplicate insert.');
-            return { success: true };
-        }
-
-        const notes = `Mobile App Payment via M-Pesa. Payer: ${params.payerPhone}. Ref: ${params.checkoutRequestId}`;
-        const { data: paymentRecord, error: payErr } = await supabase
-            .from('arms_payments')
-            .insert([{
-                tenant_id: params.tenantId,
-                billing_id: allocations.length > 0 ? allocations[0].billingId : null,
-                location_id: params.locationId,
-                amount: paymentAmount,
-                payment_method: 'M-Pesa',
-                mpesa_receipt: params.mpesaReceipt,
-                mpesa_phone: params.payerPhone,
-                reference_no: params.checkoutRequestId,
-                recorded_by: 'Tenant Mobile App',
-                notes,
-                payment_date: new Date().toISOString(),
-            }])
-            .select()
-            .single();
-
-        if (payErr) throw payErr;
-
-        // 5. Update billing records
-        await Promise.all(
-            allocations.map((alloc) =>
-                supabase.from('arms_billing').update({
-                    amount_paid: alloc.newPaid,
-                    balance: alloc.newBal,
-                    status: alloc.newStatus,
-                    updated_at: new Date().toISOString(),
-                }).eq('billing_id', alloc.billingId)
-            )
-        );
-
-        // 6. Update tenant balance
-        const { data: freshTenant } = await supabase
-            .from('arms_tenants')
-            .select('balance')
-            .eq('tenant_id', params.tenantId)
-            .single();
-        const newBalance = Math.max(0, Math.round(((freshTenant?.balance || 0) - paymentAmount) * 100) / 100);
-        await supabase
-            .from('arms_tenants')
-            .update({ balance: newBalance, updated_at: new Date().toISOString() })
-            .eq('tenant_id', params.tenantId);
-
-        // 7. Mark mpesa_transaction as matched if found
-        await supabase
-            .from('arms_mpesa_transactions')
-            .update({
-                matched: true,
-                tenant_id: params.tenantId,
-                payment_id: paymentRecord.payment_id,
-                matched_at: new Date().toISOString(),
-            })
-            .eq('trans_id', params.mpesaReceipt);
-
-        console.log('✅ Payment recorded:', paymentRecord.payment_id, 'Balance now:', newBalance);
-        return { success: true };
-    } catch (err: any) {
-        console.error('recordTenantPayment error:', err.message);
-        return { success: false, error: err.message || 'Failed to record payment' };
-    }
+    console.log('🔒 recordTenantPayment: All payments are processed server-side via bank webhook.');
+    return { success: true };
+}
 }
 
 
@@ -811,53 +691,9 @@ export async function recordTenantPayment(params: {
 // AUTO-GENERATE MISSING BILLING RECORDS
 // ============================================================
 
-async function ensureBillingRecords(tenantId: number): Promise<void> {
-    try {
-        const { data: tenant } = await supabase
-            .from('arms_tenants')
-            .select('monthly_rent, move_in_date, location_id, unit_id')
-            .eq('tenant_id', tenantId)
-            .single();
-        if (!tenant || !tenant.monthly_rent) return;
-
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        const moveIn = tenant.move_in_date;
-        if (!moveIn) return;
-
-        const earliestMonth = moveIn.slice(0, 7);
-        const { data: existing } = await supabase
-            .from('arms_billing')
-            .select('billing_month')
-            .eq('tenant_id', tenantId);
-        const existingSet = new Set((existing || []).map((b: any) => b.billing_month));
-
-        const toInsert: any[] = [];
-        let cursor = new Date(earliestMonth + '-01');
-        const end = new Date(currentMonth + '-01');
-        while (cursor <= end) {
-            const m = cursor.toISOString().slice(0, 7);
-            if (!existingSet.has(m)) {
-                toInsert.push({
-                    tenant_id: tenantId,
-                    location_id: tenant.location_id,
-                    unit_id: tenant.unit_id,
-                    billing_month: m,
-                    billing_date: `${m}-01`,
-                    due_date: `${m}-05`,
-                    rent_amount: tenant.monthly_rent,
-                    amount_paid: 0,
-                    balance: tenant.monthly_rent,
-                    status: 'Unpaid',
-                });
-            }
-            cursor.setMonth(cursor.getMonth() + 1);
-        }
-        if (toInsert.length > 0) {
-            await supabase.from('arms_billing').insert(toInsert);
-        }
-    } catch (err: any) {
-        console.warn('ensureBillingRecords warning:', err.message);
-    }
+async function ensureBillingRecords(_tenantId: number): Promise<void> {
+    // Billing records are generated and managed server-side.
+    return;
 }
 
 // ============================================================
