@@ -1530,7 +1530,6 @@ export async function updatePaymentFull(
             reference_no: updates.reference_no || null,
             notes: finalNotes,
             recorded_by: updates.recorded_by || oldPayment.recorded_by,
-            updated_at: new Date().toISOString(),
         }).eq('payment_id', paymentId).select().single();
     if (updateErr) throw updateErr;
 
