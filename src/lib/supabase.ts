@@ -379,7 +379,7 @@ export async function addTenantCharge({
         const currentPaid = Number(existingBill.amount_paid || 0);
         const currentBillBal = Number(existingBill.balance || 0);
 
-        const updatedRent = Math.max(0, currentRent + amount);
+        // Keep base rent_amount pristine so 10% late fee is strictly calculated on monthly rent
         const updatedBillBal = Math.max(0, currentBillBal + amount);
         const updatedStatus = updatedBillBal <= 0 ? 'Paid' : (currentPaid > 0 ? 'Partial' : 'Unpaid');
         const billNote = existingBill.notes
@@ -389,7 +389,6 @@ export async function addTenantCharge({
         const { error: bUpErr } = await supabase
             .from('arms_billing')
             .update({
-                rent_amount: updatedRent,
                 balance: updatedBillBal,
                 status: updatedStatus,
                 notes: billNote,
@@ -398,8 +397,8 @@ export async function addTenantCharge({
             .eq('billing_id', billId);
         if (bUpErr) console.warn('Could not update bill row:', bUpErr.message);
     } else {
-        const rentAmt = Math.max(0, (tenant.monthly_rent || 0) + amount);
-        const billBal = Math.max(0, (tenant.monthly_rent || 0) + amount);
+        const rentAmt = Number(tenant.monthly_rent || 0);
+        const billBal = Math.max(0, amount);
         const billNote = `[${type}: +${amount} (${cleanDesc})]`;
 
         const { data: newBill, error: bInsErr } = await supabase

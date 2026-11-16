@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         // Fetch unpaid/partial bills for CURRENT month only (November 2026 onwards)
         let q = supabaseAdmin
             .from('arms_billing')
-            .select('billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month')
+            .select('billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month, arms_tenants(monthly_rent)')
             .eq('billing_month', currentMonth)
             .in('status', ['Unpaid', 'Partial'])
             .gt('balance', 0)
@@ -59,8 +59,9 @@ export async function POST(req: NextRequest) {
         }
 
         // Build one 10% flat penalty row per overdue tenant (dated 6th of the month)
+        // Strictly based on tenant's base monthly_rent, NOT inflated by utility adjustments
         const rows = bills.map((bill: any) => {
-            const rent = Number(bill.rent_amount) || 0;
+            const rent = Number(bill.arms_tenants?.monthly_rent || bill.rent_amount) || 0;
             const penaltyAmt = Math.round(rent * 0.10);
             return {
                 tenant_id:     bill.tenant_id,
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
                 try {
                     const { data: curBill } = await supabaseAdmin
                         .from('arms_billing')
-                        .select('billing_id, rent_amount, balance, status')
+                        .select('billing_id, rent_amount, balance, status, arms_tenants(monthly_rent)')
                         .eq('tenant_id', tenantId)
                         .eq('billing_month', currentMonth)
                         .in('status', ['Unpaid', 'Partial'])
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
                         .maybeSingle();
 
                     if (curBill) {
-                        const rent = Number(curBill.rent_amount) || 0;
+                        const rent = Number((curBill as any).arms_tenants?.monthly_rent || curBill.rent_amount) || 0;
                         const penAmt = Math.round(rent * 0.10);
                         if (penAmt > 0) {
                             await supabaseAdmin
@@ -175,7 +176,7 @@ export async function GET(req: NextRequest) {
         // 1. Fetch bills for the month
         let billQ = supabaseAdmin
             .from('arms_billing')
-            .select('billing_id, tenant_id, location_id, unit_id, rent_amount, amount_paid, balance, status, billing_month')
+            .select('billing_id, tenant_id, location_id, unit_id, rent_amount, amount_paid, balance, status, billing_month, arms_tenants(monthly_rent)')
             .eq('billing_month', month)
             .limit(10000);
         if (locationId) billQ = (billQ as any).eq('location_id', locationId);
@@ -194,7 +195,7 @@ export async function GET(req: NextRequest) {
                 const unpaidBills = bills.filter((b: any) => (b.balance || 0) > 0 && b.status !== 'Paid');
                 if (unpaidBills.length > 0) {
                     const syncRows = unpaidBills.map((b: any) => {
-                        const rent = Number(b.rent_amount) || 0;
+                        const rent = Number((b as any).arms_tenants?.monthly_rent || b.rent_amount) || 0;
                         const penAmt = Math.round(rent * 0.10);
                         return {
                             tenant_id: b.tenant_id,

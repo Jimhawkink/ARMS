@@ -105,13 +105,20 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
 
     // Arrears update math
     const parsedAdjustAmt = parseFloat(adjustAmount) || 0;
+    // Preserve negative numbers entered by user, or enforce negative for Credit
+    const rawAdjustSigned = adjustCategory === 'Credit' ? -Math.abs(parsedAdjustAmt) : parsedAdjustAmt;
+
+    // What the user sees as current balance in the folio:
+    // If penalty > 0, Total Due = rentArrearsBalance + penaltyAmount (e.g. 6,750 + 850 = 7,600)
+    const currentBaseForSet = penaltyAmount > 0 ? totalToPayWithPenalty : rentArrearsBalance;
     const parsedTargetBal = parseFloat(adjustTargetBalance) || 0;
+
     const effectiveDiff = adjustMode === 'set'
-        ? Math.round((parsedTargetBal - rentArrearsBalance) * 100) / 100
-        : adjustCategory === 'Credit'
-            ? -Math.abs(parsedAdjustAmt)
-            : Math.abs(parsedAdjustAmt);
-    const calculatedTargetBalance = Math.max(0, Math.round((rentArrearsBalance + effectiveDiff) * 100) / 100);
+        ? Math.round((parsedTargetBal - currentBaseForSet) * 100) / 100
+        : Math.round(rawAdjustSigned * 100) / 100;
+
+    const calculatedNewRentBalance = Math.max(0, Math.round((rentArrearsBalance + effectiveDiff) * 100) / 100);
+    const calculatedNewTotalDue = Math.max(0, Math.round((totalToPayWithPenalty + effectiveDiff) * 100) / 100);
 
     const reloadTenantArrears = useCallback(async (tenantId: number) => {
         setLoadingArrears(true);
@@ -150,13 +157,14 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                 amount: effectiveDiff,
                 type: adjustCategory,
                 month: paymentMonth,
-                description: adjustNote.trim() || `${adjustCategory} adjustment`,
+                description: adjustNote.trim() || (effectiveDiff < 0 ? `Credit / Arrears Reduction` : `${adjustCategory} adjustment`),
                 recordedBy: 'Admin'
             });
 
-            toast.success(res.message || `Rent arrears updated to KES ${calculatedTargetBalance.toLocaleString()}!`);
+            const newTotal = penaltyAmount > 0 ? calculatedNewTotalDue : calculatedNewRentBalance;
+            toast.success(`Updated! New total is KES ${newTotal.toLocaleString()}`);
             if (selectedTenant) {
-                selectedTenant.balance = calculatedTargetBalance;
+                selectedTenant.balance = calculatedNewRentBalance;
             }
             await reloadTenantArrears(selectedTenantId);
             setShowAdjustBalance(false);
@@ -469,7 +477,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             onClick={() => {
                                                 setShowAdjustBalance(!showAdjustBalance);
                                                 if (!adjustTargetBalance) {
-                                                    setAdjustTargetBalance(String(rentArrearsBalance + 200));
+                                                    setAdjustTargetBalance(String(currentBaseForSet));
                                                 }
                                             }}
                                             className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white transition shadow-xs flex items-center gap-1 active:scale-95 cursor-pointer ml-1"
@@ -540,7 +548,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             <span className="font-extrabold text-amber-950 flex items-center gap-1.5 text-xs">
                                                 <span>⚡ Update Rent Arrears</span>
                                                 <span className="text-[10px] bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
-                                                    Current: {fmt(rentArrearsBalance)}
+                                                    Current {penaltyAmount > 0 ? 'Total Due' : 'Rent'}: {fmt(currentBaseForSet)}
                                                 </span>
                                             </span>
                                             <button
@@ -563,13 +571,13 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                         : 'text-amber-800 hover:text-amber-950'
                                                 }`}
                                             >
-                                                ➕ Add Extra Fee (+KES 200)
+                                                ➕ Add / Deduct (+KES 200 or -KES 400)
                                             </button>
                                             <button
                                                 type="button"
                                                 onClick={() => {
                                                     setAdjustMode('set');
-                                                    if (!adjustTargetBalance) setAdjustTargetBalance(String(rentArrearsBalance + 200));
+                                                    if (!adjustTargetBalance) setAdjustTargetBalance(String(currentBaseForSet));
                                                 }}
                                                 className={`flex-1 py-1 rounded-lg text-[10px] font-black transition ${
                                                     adjustMode === 'set'
@@ -577,7 +585,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                         : 'text-amber-800 hover:text-amber-950'
                                                 }`}
                                             >
-                                                🎯 Set Exact Balance (e.g. 4,950)
+                                                🎯 Set Exact {penaltyAmount > 0 ? 'Total Due' : 'Balance'}
                                             </button>
                                         </div>
 
@@ -601,14 +609,15 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                         </select>
                                                     </div>
                                                     <div>
-                                                        <label className="text-[10px] font-bold text-amber-900 uppercase block">Amount (KES)</label>
+                                                        <label className="text-[10px] font-bold text-amber-900 uppercase block">
+                                                            Amount (KES) <span className="text-slate-500 font-normal">(- to deduct)</span>
+                                                        </label>
                                                         <input
                                                             type="number"
-                                                            min="1"
-                                                            step="1"
+                                                            step="any"
                                                             value={adjustAmount}
                                                             onChange={(e) => setAdjustAmount(e.target.value)}
-                                                            placeholder="e.g. 200"
+                                                            placeholder="e.g. -400 or +200"
                                                             className="w-full mt-0.5 px-2 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-black text-slate-900"
                                                         />
                                                     </div>
@@ -617,7 +626,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                 {/* Quick Chips */}
                                                 <div className="flex items-center gap-1 flex-wrap">
                                                     <span className="text-[9px] font-bold text-amber-800">Quick:</span>
-                                                    {[100, 200, 300, 500, 1000, 1500, 2000].map(amt => (
+                                                    {[-500, -200, 100, 200, 300, 500, 1000, 2000].map(amt => (
                                                         <button
                                                             key={amt}
                                                             type="button"
@@ -628,7 +637,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                                                     : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100'
                                                             }`}
                                                         >
-                                                            +{amt}
+                                                            {amt > 0 ? `+${amt}` : amt}
                                                         </button>
                                                     ))}
                                                 </div>
@@ -636,19 +645,19 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         ) : (
                                             <div className="space-y-1.5">
                                                 <label className="text-[10px] font-bold text-amber-900 uppercase block">
-                                                    New Desired Total Arrears (KES)
+                                                    Desired {penaltyAmount > 0 ? 'Total Due (Rent + 10% Penalty)' : 'Total Balance'} (KES)
                                                 </label>
                                                 <input
                                                     type="number"
                                                     min="0"
-                                                    step="1"
+                                                    step="any"
                                                     value={adjustTargetBalance}
                                                     onChange={(e) => setAdjustTargetBalance(e.target.value)}
-                                                    placeholder="e.g. 4950"
+                                                    placeholder={`e.g. ${currentBaseForSet}`}
                                                     className="w-full px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-sm font-black text-slate-900"
                                                 />
                                                 <p className="text-[10px] text-amber-800">
-                                                    Enter desired balance (e.g. 4950). Adjustment required: <b>{effectiveDiff >= 0 ? `+KES ${effectiveDiff.toLocaleString()}` : `-KES ${Math.abs(effectiveDiff).toLocaleString()}`}</b>
+                                                    Current is <b>{fmt(currentBaseForSet)}</b>. Adjustment required: <b className={effectiveDiff < 0 ? 'text-emerald-700' : 'text-amber-900'}>{effectiveDiff >= 0 ? `+KES ${effectiveDiff.toLocaleString()}` : `-KES ${Math.abs(effectiveDiff).toLocaleString()}`}</b>
                                                 </p>
                                             </div>
                                         )}
@@ -665,19 +674,40 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                         </div>
 
                                         {/* Calculation Preview */}
-                                        <div className="mt-2 p-2 bg-white/90 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
-                                            <div>
-                                                <span className="text-slate-500 text-[10px] block">Current: {fmt(rentArrearsBalance)}</span>
-                                                <span className="font-extrabold text-amber-800 text-[11px]">
-                                                    Adjustment: {effectiveDiff >= 0 ? '+' : ''}KES {effectiveDiff.toLocaleString()}
+                                        <div className="mt-2 p-2.5 bg-white/95 rounded-xl border border-amber-300 space-y-1 text-xs">
+                                            <div className="flex items-center justify-between text-slate-600">
+                                                <span className="text-[11px]">
+                                                    Current {penaltyAmount > 0 ? 'Total Due:' : 'Balance:'}
+                                                </span>
+                                                <span className="font-extrabold text-slate-800">
+                                                    {fmt(currentBaseForSet)}
+                                                    {penaltyAmount > 0 && (
+                                                        <span className="text-[10px] text-slate-400 font-normal ml-1">
+                                                            (Rent {fmt(rentArrearsBalance)} + 10% Pen. {fmt(penaltyAmount)})
+                                                        </span>
+                                                    )}
                                                 </span>
                                             </div>
-                                            <div className="text-right">
-                                                <span className="text-[9px] text-slate-500 uppercase font-bold block">New Balance</span>
-                                                <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
-                                                    {fmt(calculatedTargetBalance)}
+                                            <div className="flex items-center justify-between font-extrabold text-[11px]">
+                                                <span className="text-amber-800">Adjustment to Apply:</span>
+                                                <span className={effectiveDiff < 0 ? 'text-emerald-700' : 'text-amber-700'}>
+                                                    {effectiveDiff >= 0 ? '+' : ''}{fmt(effectiveDiff)}
                                                 </span>
                                             </div>
+                                            <div className="pt-1.5 border-t border-amber-200 flex items-center justify-between">
+                                                <span className="text-[11px] font-black uppercase text-slate-800 tracking-wider">
+                                                    {penaltyAmount > 0 ? 'New Total Due:' : 'New Balance:'}
+                                                </span>
+                                                <span className="text-sm font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                                                    {fmt(penaltyAmount > 0 ? calculatedNewTotalDue : calculatedNewRentBalance)}
+                                                </span>
+                                            </div>
+                                            {penaltyAmount > 0 && (
+                                                <div className="text-[10px] text-slate-500 flex justify-between pt-0.5">
+                                                    <span>New Rent: <b>{fmt(calculatedNewRentBalance)}</b></span>
+                                                    <span>10% Penalty (unchanged): <b>{fmt(penaltyAmount)}</b></span>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Action Button */}
@@ -692,7 +722,9 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             ) : (
                                                 <>
                                                     <FiCheck size={14} />
-                                                    <span>Save New Arrears ({fmt(calculatedTargetBalance)})</span>
+                                                    <span>
+                                                        Save New {penaltyAmount > 0 ? 'Total Due' : 'Arrears'} ({fmt(penaltyAmount > 0 ? calculatedNewTotalDue : calculatedNewRentBalance)})
+                                                    </span>
                                                 </>
                                             )}
                                         </button>
