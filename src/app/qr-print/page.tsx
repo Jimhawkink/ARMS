@@ -2,7 +2,7 @@
 import { useEffect } from 'react';
 
 // ── Single source of truth for APK version displayed on this page ──
-const APK_VERSION = 'v5.3'; // bump this every release
+const APK_VERSION = 'v5.4'; // bump this every release
 const DOWNLOAD_URL = 'https://arms-opal.vercel.app/api/dl';
 
 // QR points to hidden server-side redirect — APK URL never exposed
