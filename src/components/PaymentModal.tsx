@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     recordPayment, getAccumulatedArrearsForTenant,
     getEffectiveRent, c2bSupabase, getMpesaTransactions, markPenaltiesPaid,
-    addTenantCharge
+    addTenantCharge, getTenantPrepaymentStatus
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
@@ -30,14 +30,18 @@ interface PaymentModalProps {
     onPaymentRecorded: () => void;
 }
 
-// Clean month generator without vacation tags
+// Clean month generator without vacation tags (includes future advance months)
 function getMonthOptions() {
     const options: { value: string; label: string }[] = [];
     const now = new Date();
-    for (let i = -12; i <= 3; i++) {
+    const currentMonthVal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    for (let i = -12; i <= 6; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
         const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        let label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        if (val > currentMonthVal) {
+            label += ' (Advance / Prepay)';
+        }
         options.push({ value: val, label });
     }
     return options;
@@ -56,6 +60,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
     const [tenantArrearData, setTenantArrearData] = useState<any>(null);
     const [tenantPenalty, setTenantPenalty] = useState<{ total_penalty: number; penalty_days: number; penalty_dates: string[]; daily_rate?: number } | null>(null);
+    const [prepaymentStatus, setPrepaymentStatus] = useState<any>(null);
     const [loadingArrears, setLoadingArrears] = useState(false);
     const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
     // Cash is default on web app
@@ -123,9 +128,10 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
     const reloadTenantArrears = useCallback(async (tenantId: number) => {
         setLoadingArrears(true);
         try {
-            const [arrears, pen] = await Promise.all([
+            const [arrears, pen, prep] = await Promise.all([
                 getAccumulatedArrearsForTenant(tenantId),
-                fetch(`/api/penalties?tenantId=${tenantId}`).then(r => r.json()).catch(() => null)
+                fetch(`/api/penalties?tenantId=${tenantId}`).then(r => r.json()).catch(() => null),
+                getTenantPrepaymentStatus(tenantId)
             ]);
             setTenantArrearData(arrears);
             if (pen && typeof pen.total_penalty === 'number') {
@@ -133,6 +139,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
             } else {
                 setTenantPenalty(null);
             }
+            setPrepaymentStatus(prep || null);
         } catch {
             // non-fatal
         } finally {
@@ -193,6 +200,7 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
             setSelectedTenantId(null);
             setTenantArrearData(null);
             setTenantPenalty(null);
+            setPrepaymentStatus(null);
             setSelectedMonths(new Set());
             setPaymentMethod('Cash');
             setAmount('');
@@ -214,25 +222,29 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
         if (!selectedTenantId) {
             setTenantArrearData(null);
             setTenantPenalty(null);
+            setPrepaymentStatus(null);
             setSelectedMonths(new Set());
             return;
         }
         setLoadingArrears(true);
         Promise.all([
             getAccumulatedArrearsForTenant(selectedTenantId),
-            fetch(`/api/penalties?tenantId=${selectedTenantId}`).then(r => r.json()).catch(() => null)
+            fetch(`/api/penalties?tenantId=${selectedTenantId}`).then(r => r.json()).catch(() => null),
+            getTenantPrepaymentStatus(selectedTenantId)
         ])
-            .then(([arrears, pen]) => {
+            .then(([arrears, pen, prep]) => {
                 setTenantArrearData(arrears);
                 if (pen && typeof pen.total_penalty === 'number') {
                     setTenantPenalty(pen);
                 } else {
                     setTenantPenalty(null);
                 }
+                setPrepaymentStatus(prep || null);
             })
             .catch(() => {
                 setTenantArrearData(null);
                 setTenantPenalty(null);
+                setPrepaymentStatus(null);
             })
             .finally(() => setLoadingArrears(false));
     }, [selectedTenantId]);
@@ -489,6 +501,37 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                     </div>
                                 </div>
 
+                                {/* ── Advance Prepayment Highlight Banner (Shown if Tenant has Advance Rent) ── */}
+                                {prepaymentStatus?.hasAdvance && (
+                                    <div className="mt-2.5 p-2.5 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/80 border-2 border-emerald-400/80 shadow-xs flex items-center justify-between flex-wrap gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xl">💰</span>
+                                            <div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[11px] font-black text-emerald-950">
+                                                        Prepayment Active:
+                                                    </span>
+                                                    <span className="font-mono font-black text-emerald-700 bg-white px-2 py-0.2 rounded-md border border-emerald-300 text-xs">
+                                                        +{fmt(prepaymentStatus.totalAdvance)}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[10px] text-emerald-800 font-semibold mt-0.5">
+                                                    {prepaymentStatus.isDecCovered
+                                                        ? '✓ December 2026 rent is 100% fully covered'
+                                                        : prepaymentStatus.decPaidAmount > 0
+                                                        ? `Partial December 2026: ${fmt(prepaymentStatus.decPaidAmount)} paid (Rem: ${fmt(prepaymentStatus.decBalance)})`
+                                                        : prepaymentStatus.latestCredit > 0
+                                                        ? `Overpayment credit: ${fmt(prepaymentStatus.latestCredit)} carried forward`
+                                                        : 'Advance payment recorded'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-600 text-white shadow-2xs">
+                                            {prepaymentStatus.isDecCovered ? 'Dec 2026 Covered' : 'Advance Active'}
+                                        </span>
+                                    </div>
+                                )}
+
                                 {/* 1-Click Quick Fill Chips */}
                                 <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-slate-100 flex-wrap">
                                     <span className="text-[9px] font-black uppercase text-slate-400 flex items-center gap-0.5">
@@ -537,6 +580,22 @@ export default function PaymentModal({ isOpen, onClose, tenants, locationId, onP
                                             className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition"
                                         >
                                             1 Mo. Rent ({fmt(effectiveRent)})
+                                        </button>
+                                    )}
+                                    {/* 📅 Quick Prepay Next Month */}
+                                    {effectiveRent > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setAmount(effectiveRent.toString());
+                                                const nextM = prepaymentStatus?.isDecCovered ? '2027-01' : '2026-12';
+                                                setPaymentMonth(nextM);
+                                                toast.success(`Selected ${nextM === '2027-01' ? 'January 2027' : 'December 2026'} Advance Rent (${fmt(effectiveRent)})`);
+                                            }}
+                                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 transition flex items-center gap-1"
+                                            title="Prepay next month in advance"
+                                        >
+                                            <span>📅 Prepay {prepaymentStatus?.isDecCovered ? 'Jan 2027' : 'Dec 2026'} ({fmt(effectiveRent)})</span>
                                         </button>
                                     )}
                                 </div>

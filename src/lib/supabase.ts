@@ -2119,6 +2119,99 @@ export async function getTenantStatement(tenantId: number) {
     return { tenant, bills, payments, penalties: penaltiesList };
 }
 
+// ==================== PREPAYMENTS & ADVANCE RENT ====================
+export async function getPrepayments(locationId?: number | null) {
+    try {
+        const url = locationId ? `/api/prepayments?locationId=${locationId}` : '/api/prepayments';
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Failed to load prepayments data');
+        const json = await res.json();
+        return json;
+    } catch (err: any) {
+        console.error('getPrepayments error:', err);
+        return {
+            success: false,
+            records: [],
+            advanceBills: [],
+            creditRecords: [],
+            metrics: {
+                totalPrepaymentSum: 0,
+                totalAdvanceBillsAmount: 0,
+                totalCreditAmount: 0,
+                totalTenantsCount: 0,
+                fullyPaidMonthsCount: 0,
+                partialAdvanceCount: 0,
+                decemberTotal: 0,
+                decemberCount: 0,
+                decemberFullyPaid: 0,
+            },
+        };
+    }
+}
+
+export async function getTenantPrepaymentStatus(tenantId: number) {
+    try {
+        const { data: bills } = await supabase
+            .from('arms_billing')
+            .select('billing_id, tenant_id, billing_month, rent_amount, amount_paid, balance, status')
+            .eq('tenant_id', tenantId)
+            .gte('billing_month', '2026-12')
+            .gt('amount_paid', 0)
+            .order('billing_month', { ascending: true });
+
+        const { data: creditPayments } = await supabase
+            .from('arms_payments')
+            .select('amount, notes, payment_date')
+            .eq('tenant_id', tenantId)
+            .ilike('notes', '%Credit%')
+            .order('payment_date', { ascending: false })
+            .limit(1);
+
+        let latestCredit = 0;
+        if (creditPayments && creditPayments.length > 0) {
+            const m = creditPayments[0].notes?.match(/\[Credit:(\d+(?:\.\d+)?)\]/);
+            if (m) latestCredit = parseFloat(m[1]);
+        }
+
+        const advanceSum = (bills || []).reduce((sum: number, b: any) => sum + (b.amount_paid || 0), 0);
+        const totalAdvance = advanceSum + latestCredit;
+        const advanceMonths = (bills || []).map((b: any) => ({
+            month: b.billing_month,
+            paid: b.amount_paid,
+            balance: b.balance,
+            status: b.status,
+            rent: b.rent_amount,
+        }));
+
+        const isDecCovered = (bills || []).some((b: any) => b.billing_month === '2026-12' && b.status === 'Paid');
+        const decBill = (bills || []).find((b: any) => b.billing_month === '2026-12');
+
+        return {
+            hasAdvance: totalAdvance > 0,
+            totalAdvance,
+            advanceSum,
+            latestCredit,
+            advanceMonths,
+            isDecCovered,
+            decPaidAmount: decBill?.amount_paid || 0,
+            decRentAmount: decBill?.rent_amount || 0,
+            decBalance: decBill?.balance || 0,
+        };
+    } catch {
+        return {
+            hasAdvance: false,
+            totalAdvance: 0,
+            advanceSum: 0,
+            latestCredit: 0,
+            advanceMonths: [],
+            isDecCovered: false,
+            decPaidAmount: 0,
+            decRentAmount: 0,
+            decBalance: 0,
+        };
+    }
+}
+
 export async function getLocationSummary(locationId?: number) {
     let tenantQuery = supabase.from('arms_tenants').select('*');
     let unitQuery = supabase.from('arms_units').select('*').eq('active', true);

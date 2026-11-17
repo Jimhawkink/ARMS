@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation';
 import {
     getPayments, recordPayment, deletePayment, updatePaymentNotes, updatePaymentFull,
     getTenants, getLocations, getMpesaTransactions, getKcbStkRequests, autoMatchMpesa, autoMatchAllUnmatched,
-    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth, getTenantPenaltyBalance, getActivePenaltiesMap
+    c2bSupabase, getAccumulatedArrearsForTenant, isVacationMonth, getTenantPenaltyBalance, getActivePenaltiesMap,
+    supabase
 } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
@@ -416,6 +417,7 @@ export default function PaymentsPage() {
         { label: '💵 Total Paid', bg: '#ecfdf5', color: '#047857', align: 'right' },
         { label: '⏳ Arrears Paid', bg: '#fff7ed', color: '#c2410c', align: 'right' },
         { label: '🏠 Current Rent', bg: '#eff6ff', color: '#1d4ed8', align: 'right' },
+        { label: '💰 Prepayment / Advance', bg: '#f0fdf4', color: '#15803d', align: 'center' },
         { label: '⚠️ Rem. Rent Debt', bg: '#fff1f2', color: '#be123c', align: 'right' },
         { label: '⚡ Late Penalty', bg: '#fff1f2', color: '#be123c', align: 'right' },
         { label: '🏦 Final Debt', bg: '#fef9c3', color: '#92400e', align: 'right' },
@@ -424,6 +426,9 @@ export default function PaymentsPage() {
         { label: '👤 By', bg: '#f8fafc', color: '#64748b', align: 'left' },
         { label: '⚙️ Actions', bg: '#f1f5f9', color: '#475569', align: 'center' },
     ];
+
+    // ── Prepayment & Advance Rent state ──────────────────────────────────────
+    const [advanceBillsMap, setAdvanceBillsMap] = useState<Record<number, { amount_paid: number; month: string; status: string }>>({});
 
     // ── Filter State ──────────────────────────────────────────────────────────
     const [filterMethodTab, setFilterMethodTab] = useState<'all' | 'kcb' | 'cash' | 'mpesa' | 'bank'>('all');
@@ -465,6 +470,23 @@ export default function PaymentsPage() {
                 });
             }
             setPenaltyBalances(balMap);
+
+            // Fetch advance bills for December 2026 onwards
+            try {
+                const { data: advBills } = await supabase
+                    .from('arms_billing')
+                    .select('tenant_id, billing_month, amount_paid, status')
+                    .gte('billing_month', '2026-12')
+                    .gt('amount_paid', 0);
+
+                const advMap: Record<number, { amount_paid: number; month: string; status: string }> = {};
+                (advBills || []).forEach((b: any) => {
+                    advMap[b.tenant_id] = { amount_paid: b.amount_paid, month: b.billing_month, status: b.status };
+                });
+                setAdvanceBillsMap(advMap);
+            } catch {
+                // non-fatal
+            }
         } catch {
             toast.error('Failed to load payment records');
         } finally {
@@ -1142,7 +1164,7 @@ export default function PaymentsPage() {
                         <tbody className="divide-y divide-slate-100">
                             {filteredPayments.length === 0 ? (
                                 <tr>
-                                    <td colSpan={14} className="text-center py-14 text-slate-400">
+                                    <td colSpan={15} className="text-center py-14 text-slate-400">
                                         <div className="flex flex-col items-center gap-2">
                                             <span className="text-4xl">{payments.length === 0 ? '📭' : '🔍'}</span>
                                             <p className="text-sm font-bold text-slate-700">
@@ -1225,6 +1247,39 @@ export default function PaymentsPage() {
                                         </td>
                                         <td className="px-2.5 py-2 text-right font-mono font-bold text-blue-600 whitespace-nowrap">
                                             {currentRentPaid > 0 ? fmt(currentRentPaid) : <span className="text-slate-300 font-normal">—</span>}
+                                        </td>
+                                        {/* 💰 Prepayment / Advance Column */}
+                                        <td className="px-2.5 py-2 text-center whitespace-nowrap">
+                                            {(() => {
+                                                const creditAmt = parseNoteTag(p.notes, 'Credit');
+                                                const billingMonth = p.arms_billing?.billing_month;
+                                                const payMonth = billingMonth || (monthMatch ? monthMatch[1] : null) || p.payment_date?.slice(0, 7);
+                                                const isFuture = payMonth && payMonth >= '2026-12';
+                                                const advInfo = tid ? advanceBillsMap[tid] : null;
+
+                                                if (creditAmt > 0) {
+                                                    return (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-50 text-purple-700 border border-purple-200">
+                                                            🎁 +{fmt(creditAmt)} Credit
+                                                        </span>
+                                                    );
+                                                }
+                                                if (isFuture) {
+                                                    return (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-teal-800 border border-teal-200">
+                                                            📅 Dec Advance
+                                                        </span>
+                                                    );
+                                                }
+                                                if (advInfo && advInfo.amount_paid > 0) {
+                                                    return (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                            ✓ Dec Advance ({fmt(advInfo.amount_paid)})
+                                                        </span>
+                                                    );
+                                                }
+                                                return <span className="text-slate-300 font-normal">—</span>;
+                                            })()}
                                         </td>
                                         <td className="px-2.5 py-2 text-right font-mono font-bold whitespace-nowrap">
                                             {arrearsRemaining > 0 ? (
