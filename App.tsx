@@ -416,6 +416,7 @@ function AppShell({ session, onLogout, pendingChat, onChatHandled }: {
                     <DashboardScreen
                         session={currentSession}
                         onPayRent={() => setActiveTab('pay')}
+                        onNavigate={(tab) => setActiveTab(tab as any)}
                         onSessionUpdate={handleSessionUpdate}
                     />
                 );

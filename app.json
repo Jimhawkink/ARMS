@@ -2,7 +2,7 @@
   "expo": {
     "name": "ARMS Tenant",
     "slug": "arms-tenant-app",
-    "version": "5.1",
+    "version": "5.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.alphasolutions.armstenant",
-      "versionCode": 51,
+      "versionCode": 52,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE"

@@ -88,9 +88,18 @@ export default function HistoryScreen({ session }: Props) {
                                     <Text style={s.dateText}>{formatDateTime(p.payment_date)}</Text>
                                     <Text style={s.methodText}>{p.payment_method}</Text>
                                 </View>
-                                <Text style={[s.cell, s.monthCell, { flex: 1.3 }]}>
-                                    {p.billing_month ? formatMonth(p.billing_month) : '—'}
-                                </Text>
+                                <View style={{ flex: 1.3 }}>
+                                    <Text style={[s.cell, s.monthCell]}>
+                                        {p.billing_month ? formatMonth(p.billing_month) : '—'}
+                                    </Text>
+                                    {p.isAdvance && (
+                                        <View style={s.advanceBadge}>
+                                            <Text style={s.advanceBadgeText} numberOfLines={1}>
+                                                {p.advanceMonthLabel ? `⭐ ${p.advanceMonthLabel}` : '⭐ Advance'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <Text style={[s.cell, s.amountCell, { flex: 1.3 }]}>
                                     {formatKES(p.amount)}
                                 </Text>
@@ -139,6 +148,21 @@ const s = StyleSheet.create({
     dateText: { fontSize: 10, color: C.text, fontWeight: '600' },
     methodText: { fontSize: 9, color: C.dim, marginTop: 2 },
     monthCell: { fontSize: 10, color: C.sub, fontWeight: '600' },
+    advanceBadge: {
+        backgroundColor: 'rgba(16,185,129,0.2)',
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(16,185,129,0.4)',
+        marginTop: 2,
+        alignSelf: 'flex-start',
+    },
+    advanceBadgeText: {
+        fontSize: 8,
+        fontWeight: '800',
+        color: '#34d399',
+    },
     amountCell: { fontSize: 12, color: C.accent, fontWeight: '800' },
     receiptText: { fontSize: 10, color: '#f59e0b', fontWeight: '700', fontFamily: 'monospace' },
     phoneText: { fontSize: 9, color: C.dim, marginTop: 2 },

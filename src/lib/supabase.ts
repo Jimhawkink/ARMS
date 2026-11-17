@@ -62,6 +62,27 @@ export interface PaymentRecord {
     payment_date: string;
     created_at: string;
     billing_month?: string; // parsed from notes or billing join
+    isAdvance?: boolean;
+    creditAmount?: number;
+    advanceMonthLabel?: string;
+}
+
+export interface PrepaymentMonthBreakdown {
+    billing_id: number | null;
+    billing_month: string;
+    monthName: string;
+    rent_amount: number;
+    amount_paid: number;
+    balance: number;
+    isFull: boolean;
+}
+
+export interface PrepaymentSummary {
+    hasPrepayment: boolean;
+    totalAdvance: number;
+    coveredMonths: PrepaymentMonthBreakdown[];
+    excessCredit: number;
+    monthsCount: number;
 }
 
 export interface STKResult {
@@ -362,19 +383,166 @@ export async function getTenantPayments(tenantId: number): Promise<PaymentRecord
 
         if (error) throw error;
 
+        const currentMonth = new Date().toISOString().slice(0, 7);
+
         return (data || []).map((p: any) => {
             // Priority: [Month: YYYY-MM] tag in notes (set by recordPayment & KCB callback)
             // This is the actual month the payment was recorded FOR, not just the first allocated bill
             const notesMonth = extractBillingMonth(p.notes);
             const billingJoinMonth = p.arms_billing?.billing_month || '';
+            const resolvedMonth = notesMonth || billingJoinMonth;
+
+            // Detect advance/overpayment credit
+            const creditMatch = p.notes ? p.notes.match(/\[Credit:\s*(\d+(?:\.\d+)?)\]/) : null;
+            const creditAmt = creditMatch ? parseFloat(creditMatch[1]) : 0;
+            const isFutureMonth = resolvedMonth && resolvedMonth > currentMonth;
+            const hasAdvanceWord = p.notes ? /advance|prepay/i.test(p.notes) : false;
+            const isAdvance = isFutureMonth || creditAmt > 0 || hasAdvanceWord;
+
+            let advanceMonthLabel = '';
+            if (isFutureMonth) {
+                advanceMonthLabel = `${formatMonth(resolvedMonth)} Advance`;
+            } else if (creditAmt > 0) {
+                advanceMonthLabel = `Overpayment Credit`;
+            } else if (hasAdvanceWord) {
+                advanceMonthLabel = 'Advance Payment';
+            }
+
             return {
                 ...p,
-                billing_month: notesMonth || billingJoinMonth,
+                billing_month: resolvedMonth,
+                isAdvance,
+                creditAmount: creditAmt,
+                advanceMonthLabel,
             };
         });
     } catch (err: any) {
         console.error('getTenantPayments error:', err.message);
         return [];
+    }
+}
+
+// ============================================================
+// PREPAYMENTS & OVERPAYMENT BREAKDOWN
+// Computes all future months covered and unallocated credit
+// ============================================================
+
+export async function getTenantPrepaymentSummary(
+    tenantId: number,
+    monthlyRent: number
+): Promise<PrepaymentSummary> {
+    try {
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        // Future cutoff: strictly greater than currentMonth or '2026-11'
+        const cutoff = currentMonth >= '2026-11' ? '2026-11' : currentMonth;
+
+        // 1. Fetch advance bills in arms_billing
+        const { data: advanceBills } = await supabase
+            .from('arms_billing')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .gt('billing_month', cutoff)
+            .gt('amount_paid', 0)
+            .order('billing_month', { ascending: true });
+
+        // 2. Fetch payments to check for credit notes
+        const { data: payments } = await supabase
+            .from('arms_payments')
+            .select('notes, amount, payment_date')
+            .eq('tenant_id', tenantId)
+            .order('payment_date', { ascending: false })
+            .limit(10);
+
+        let excessCredit = 0;
+        (payments || []).forEach(p => {
+            if (p.notes && p.notes.includes('[Credit:')) {
+                const m = p.notes.match(/\[Credit:\s*(\d+(?:\.\d+)?)\]/);
+                if (m) excessCredit += parseFloat(m[1]) || 0;
+            }
+        });
+
+        // 3. Check tenant balance (if negative, that represents credit)
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('balance')
+            .eq('tenant_id', tenantId)
+            .single();
+
+        if (tenant && tenant.balance < 0) {
+            const negCredit = Math.abs(tenant.balance);
+            if (negCredit > excessCredit) excessCredit = negCredit;
+        }
+
+        const coveredMonths: PrepaymentMonthBreakdown[] = (advanceBills || []).map((b: any) => ({
+            billing_id: b.billing_id,
+            billing_month: b.billing_month,
+            monthName: formatMonth(b.billing_month),
+            rent_amount: b.rent_amount,
+            amount_paid: b.amount_paid,
+            balance: b.balance,
+            isFull: b.status === 'Paid' || b.balance <= 0,
+        }));
+
+        const totalAdvanceBillsPaid = coveredMonths.reduce((s, m) => s + m.amount_paid, 0);
+        const totalAdvance = totalAdvanceBillsPaid + excessCredit;
+        const hasPrepayment = totalAdvance > 0 || coveredMonths.length > 0;
+
+        let monthsCount = coveredMonths.length;
+        if (excessCredit > 0 && monthlyRent > 0) {
+            const extraMonths = Math.floor(excessCredit / monthlyRent);
+            monthsCount += extraMonths;
+        }
+
+        return {
+            hasPrepayment,
+            totalAdvance,
+            coveredMonths,
+            excessCredit,
+            monthsCount: Math.max(monthsCount, coveredMonths.length > 0 ? coveredMonths.length : (hasPrepayment ? 1 : 0)),
+        };
+    } catch (err: any) {
+        console.error('getTenantPrepaymentSummary error:', err.message);
+        return {
+            hasPrepayment: false,
+            totalAdvance: 0,
+            coveredMonths: [],
+            excessCredit: 0,
+            monthsCount: 0,
+        };
+    }
+}
+
+// ============================================================
+// TENANT PIN CHANGE — Ultra-Secure & Hacker-Proof
+// Executes strictly server-side through ARMS API via service_role
+// ============================================================
+
+export async function changeTenantPin(
+    tenantId: number,
+    oldPin: string,
+    newPin: string,
+    confirmPin: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+        const res = await fetch(`${ARMS_API_URL}/tenants/change-pin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+                tenantId,
+                oldPin: String(oldPin).trim(),
+                newPin: String(newPin).trim(),
+                confirmPin: String(confirmPin).trim(),
+                source: 'mobile_apk',
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            return { success: false, error: data.error || 'Failed to change PIN' };
+        }
+        return { success: true, message: data.message || 'PIN changed successfully!' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Network error updating PIN' };
     }
 }
 
