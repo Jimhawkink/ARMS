@@ -11,11 +11,10 @@ function getServiceClient() {
 }
 
 // ============================================================
-// VERSION GATE — blocks old APKs (v2.0, v2.1) from logging in
-// Old APKs don't send X-App-Version header → blocked
-// v2.2+ sends the header → passes through
+// VERSION GATE — blocks old APKs (< v5.3) from accessing tenant features
+// Old APKs don't send X-App-Version header or are below v5.3 → blocked
 // ============================================================
-const MIN_APK_VERSION = 'v2.2';
+const MIN_APK_VERSION = 'v5.3';
 
 function parseVersion(v: string): number[] {
     return v.replace(/^v/, '').split('.').map(n => parseInt(n) || 0);

@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 
 // ============================================================
 // ARMS Mobile App Version Gate
-// Bump MIN_VERSION here to force all old APKs to update
+// STRICT: Enforce v5.3 for all users.
+// Any version < v5.3 (v5.2, v5.1, v5.0, v4.x) will be forced
+// to update immediately and will be logged out of their session.
 // ============================================================
 
 const LATEST_VERSION = 'v5.3';
-const MIN_VERSION    = 'v4.20'; // Allow v4.20+, encourage latest v4.29
+const MIN_VERSION    = 'v5.3'; 
 const DOWNLOAD_URL   = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL   = 'https://arms-opal.vercel.app/qr-print';
 
@@ -32,14 +34,23 @@ export async function GET(req: Request) {
 
     const outdated = isVersionOutdated(appVersion, MIN_VERSION);
 
-    return NextResponse.json({
-        latestVersion: LATEST_VERSION,
-        minVersion:    MIN_VERSION,
-        forceUpdate:   outdated,
-        downloadUrl:   DOWNLOAD_URL,
-        qrPrintUrl:    QR_PRINT_URL,
-        message: outdated
-            ? `Your app (${appVersion}) is outdated. Please download the latest version (${LATEST_VERSION}).`
-            : `App is up to date (${appVersion})`,
-    });
+    return NextResponse.json(
+        {
+            latestVersion: LATEST_VERSION,
+            minVersion:    MIN_VERSION,
+            forceUpdate:   outdated,
+            downloadUrl:   DOWNLOAD_URL,
+            qrPrintUrl:    QR_PRINT_URL,
+            message: outdated
+                ? `Your app (${appVersion}) is outdated. Please update to the latest version (${LATEST_VERSION}).`
+                : `App is up to date (${appVersion})`,
+        },
+        {
+            headers: {
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+            },
+        }
+    );
 }
