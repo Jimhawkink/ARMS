@@ -1025,6 +1025,29 @@ export interface StatementEntry {
 
 export async function loginStaffByPin(pin: string): Promise<StaffSession | null> {
     try {
+        const pinStr = String(pin).trim();
+        if (!pinStr) return null;
+
+        // 1. Primary: Verify via ARMS secure server API (shielded by service_role)
+        try {
+            const apiRes = await fetch(`${ARMS_API_URL}/auth/staff-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({ pin: pinStr }),
+            });
+            if (apiRes.ok) {
+                const apiData = await apiRes.json();
+                if (apiData?.success && apiData?.staff) {
+                    return apiData.staff as StaffSession;
+                }
+            } else if (apiRes.status === 401) {
+                return null;
+            }
+        } catch (apiErr: any) {
+            console.warn('Staff login API unreachable, falling back to direct query:', apiErr?.message);
+        }
+
+        // 2. Fallback: Direct query to arms_users (if permission granted in Postgres)
         const { data, error } = await supabase
             .from('arms_users')
             .select('user_id, name, phone, user_role, active, mobile_pin, is_super_admin')
@@ -1033,7 +1056,6 @@ export async function loginStaffByPin(pin: string): Promise<StaffSession | null>
         if (error) { console.error('loginStaffByPin error:', error.message); return null; }
         if (!data || data.length === 0) return null;
 
-        const pinStr = String(pin).trim();
         const matched = data.find((u: any) =>
             u.mobile_pin && String(u.mobile_pin).trim() === pinStr
         );
