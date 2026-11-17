@@ -32,7 +32,7 @@ const C = {
 export default function PayRentScreen({ session, onBack, onPaymentComplete }: Props) {
     const [mode, setMode] = useState<PayMode>('self');
     const [step, setStep] = useState<PayStep>('choose');
-    const [payMethod, setPayMethod] = useState<PayMethod>('MPesa'); // auto-set after availability check
+    const [payMethod, setPayMethod] = useState<PayMethod>('KCB'); // KCB Buni primary default
     const [amount, setAmount] = useState('');
     const [payerPhone, setPayerPhone] = useState('');
     const [balance, setBalance] = useState(session.balance);
@@ -46,7 +46,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     const [manualChecking, setManualChecking] = useState(false);
 
     // ── Payment method availability ──
-    const [mpesaAvailable, setMpesaAvailable] = useState(true);
+    const [mpesaAvailable, setMpesaAvailable] = useState(false);
     const [kcbAvailable,   setKcbAvailable]   = useState(true);
     const [methodLoading,  setMethodLoading]   = useState(true);
 
@@ -83,33 +83,35 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                 fetch(`https://arms-opal.vercel.app/api/mpesa/unit-config/by-unit?unit_id=${session.unit_id}`),
             ]);
 
-            let kcbOn   = false;
+            let kcbOn   = true; // default KCB true for ARMS
             let mpesaOn = false;
 
             if (kcbRes.status === 'fulfilled' && kcbRes.value.ok) {
                 const d = await kcbRes.value.json();
-                kcbOn = d?.kcbConfigured === true;
+                kcbOn = d?.kcbConfigured !== false;
             }
             if (mpesaRes.status === 'fulfilled' && mpesaRes.value.ok) {
                 const d = await mpesaRes.value.json();
                 mpesaOn = !!(d?.till_number || d?.shortcode || d?.consumer_key);
             }
 
-            // Do NOT fall back — only show methods that are actually configured
+            // Only show methods that are actually configured
             setKcbAvailable(kcbOn);
             setMpesaAvailable(mpesaOn);
 
-            // Auto-select the only available method; if both available default to MPesa
-            if (kcbOn && !mpesaOn)      setPayMethod('KCB');
-            else if (mpesaOn && !kcbOn) setPayMethod('MPesa');
-            else if (mpesaOn && kcbOn)  setPayMethod('MPesa'); // both on — default MPesa
-            // if neither — leave current selection, UI will show both as "Not configured"
+            // Prioritize KCB Buni as primary payment channel
+            if (kcbOn) {
+                setPayMethod('KCB');
+            } else if (mpesaOn) {
+                setPayMethod('MPesa');
+            }
 
             console.log(`[PayMethod] KCB=${kcbOn} MPesa=${mpesaOn} tenant=${session.tenant_id}`);
         } catch (e) {
-            // Network error — show both
+            // Default to KCB on network error
             setKcbAvailable(true);
-            setMpesaAvailable(true);
+            setMpesaAvailable(false);
+            setPayMethod('KCB');
         }
         setMethodLoading(false);
     };
@@ -449,10 +451,12 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
         setPaidAmount(0);
         setCheckingSeconds(0);
         setManualChecking(false);
-        setPayMethod('MPesa');
+        setPayMethod(kcbAvailable ? 'KCB' : mpesaAvailable ? 'MPesa' : 'KCB');
+        checkoutRef.current = null;
         paymentDoneRef.current = false; // ← reset guard for next payment
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+        loadBalance(); // Refresh balance and amount for consecutive payments
     };
 
     // ── RENDER ──
@@ -858,12 +862,21 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
     }
 
     // Step: Failed / Timeout — smart recovery screen
+    const isTimeout = (error || '').toLowerCase().includes('timed out') || (error || '').toLowerCase().includes('timeout');
+    const isCancelled = (error || '').toLowerCase().includes('cancelled') || (error || '').toLowerCase().includes('canceled');
+    const isCooldown = (error || '').toLowerCase().includes('already sent') || (error || '').toLowerCase().includes('wait');
+    const isConfig = (error || '').toLowerCase().includes('not configured');
+
+    const resultEmoji = isTimeout ? '⏳' : isCancelled ? '🚫' : isCooldown ? '⏱️' : isConfig ? '⚠️' : '❌';
+    const resultTitle = isTimeout ? 'Confirmation Delayed' : isCancelled ? 'Payment Cancelled' : isCooldown ? 'Please Wait A Moment' : isConfig ? 'Configuration Notice' : 'Payment Not Completed';
+    const resultColor = isTimeout ? C.gold : isCancelled ? C.sub : isCooldown ? C.gold : isConfig ? C.gold : C.danger;
+
     return (
         <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
             <StatusBar barStyle="light-content" backgroundColor={C.bg} />
             <View style={s.resultCard}>
-                <Text style={s.resultEmoji}>⚠️</Text>
-                <Text style={[s.resultTitle, { color: C.gold }]}>Confirmation Delayed</Text>
+                <Text style={s.resultEmoji}>{resultEmoji}</Text>
+                <Text style={[s.resultTitle, { color: resultColor }]}>{resultTitle}</Text>
                 <Text style={s.failMsg}>{error || 'Transaction status unclear — check History'}</Text>
                 {/* Smart check: fetch latest payment and show success if found */}
                 <TouchableOpacity
@@ -884,7 +897,7 @@ export default function PayRentScreen({ session, onBack, onPaymentComplete }: Pr
                         <Text style={s.doneBtnText}>🔄 Try Again</Text>
                     </LinearGradient>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={onBack} style={s.cancelLink}>
+                <TouchableOpacity onPress={() => { resetFlow(); onBack(); }} style={s.cancelLink}>
                     <Text style={s.cancelText}>← Back to Dashboard</Text>
                 </TouchableOpacity>
             </View>
