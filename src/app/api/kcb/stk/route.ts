@@ -12,9 +12,10 @@ import { supabaseAdmin as supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-// ── Cooldown: KCB blocks same phone within ~90 seconds ──
+// ── Anti-Spam Debounce: 15 seconds to prevent accidental double-clicks ──
+// Cleared immediately once a payment completes or fails so consecutive payments work seamlessly
 const lastPushTime = new Map<string, number>();
-const KCB_COOLDOWN_MS = 90_000;
+const KCB_COOLDOWN_MS = 15_000;
 
 // ── IP Rate Limiting: Max 10 pushes per 10 minutes per IP ──
 const ipPushHistory = new Map<string, number[]>();
@@ -215,13 +216,40 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
-        // ── Cooldown check ──
+        // ── Smart Cooldown Check: Allow consecutive payments once previous is Completed/Failed ──
+        try {
+            const { data: latestStk } = await supabase
+                .from("arms_kcb_stk_requests")
+                .select("status, created_at")
+                .eq("phone", normalizedPhone)
+                .order("id", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (latestStk) {
+                if (latestStk.status === "Pending") {
+                    const reqAge = Date.now() - new Date(latestStk.created_at).getTime();
+                    if (reqAge < KCB_COOLDOWN_MS) {
+                        const waitSecs = Math.max(1, Math.ceil((KCB_COOLDOWN_MS - reqAge) / 1000));
+                        return NextResponse.json({
+                            error: `STK prompt is on your phone. Please enter your PIN, or wait ${waitSecs}s to retry.`,
+                        }, { status: 429 });
+                    }
+                } else if (latestStk.status === "Completed" || latestStk.status === "Failed" || latestStk.status === "Cancelled") {
+                    // Previous payment is already finished! Clear cooldown immediately for consecutive payments
+                    lastPushTime.delete(normalizedPhone);
+                }
+            }
+        } catch {
+            // fallback to in-memory check
+        }
+
         const now = Date.now();
         const lastPush = lastPushTime.get(normalizedPhone);
         if (lastPush && (now - lastPush) < KCB_COOLDOWN_MS) {
             const waitSecs = Math.ceil((KCB_COOLDOWN_MS - (now - lastPush)) / 1000);
             return NextResponse.json({
-                error: `STK already sent. Check your phone, or wait ${waitSecs}s to retry.`,
+                error: `STK sent. Please check your phone, or wait ${waitSecs}s to retry.`,
             }, { status: 429 });
         }
 
