@@ -3076,26 +3076,54 @@ export async function updateTenantIssue(id: number, updates: any) {
 
 // ==================== ACCESS CONTROL ====================
 export async function getRolePermissions() {
-    const { data, error } = await supabase.from('arms_role_permissions').select('*').order('role_name');
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users?type=roles');
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to fetch roles');
+        return json.roles || [];
+    }
+    const { data, error } = await supabaseAdmin.from('arms_role_permissions').select('*').order('role_name');
     if (error) throw error;
     return data || [];
 }
 
 export async function updateRolePermissions(roleName: string, updates: any) {
-    const { data, error } = await supabase.from('arms_role_permissions').update(updates).eq('role_name', roleName).select().single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update_role_perms', roleName, permissions: updates }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to update role permissions');
+        return json;
+    }
+    const { data, error } = await supabaseAdmin.from('arms_role_permissions').update(updates).eq('role_name', roleName).select().single();
     if (error) throw error;
     return data;
 }
 
 export async function getUserPermissions(userId: number) {
-    const { data: user, error } = await supabase.from('arms_users').select('user_role, allowed_location_ids').eq('user_id', userId).single();
+    if (typeof window !== 'undefined') {
+        const res = await fetch(`/api/users?userId=${userId}`);
+        const json = await res.json();
+        if (!res.ok) return null;
+        return json.custom_permissions;
+    }
+    const { data: user, error } = await supabaseAdmin.from('arms_users').select('user_role, allowed_location_ids').eq('user_id', userId).single();
     if (error || !user) return null;
-    const { data: role } = await supabase.from('arms_role_permissions').select('*').eq('role_name', user.user_role || 'admin').single();
+    const { data: role } = await supabaseAdmin.from('arms_role_permissions').select('*').eq('role_name', user.user_role || 'admin').single();
     return { ...role, allowed_location_ids: user.allowed_location_ids || [] };
 }
 
 export async function getARMSUsers() {
-    const { data, error } = await supabase
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users');
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to fetch users');
+        return json.users || [];
+    }
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .select('user_id, user_name, name, email, phone, user_type, user_role, active, is_super_admin, created_at, updated_at, last_login: updated_at')
         .order('name');
@@ -3107,10 +3135,21 @@ export async function createARMSUser(user: {
     user_name: string; password_hash: string; name: string;
     email?: string; phone?: string; user_type?: string; user_role?: string;
     allowed_location_ids?: number[];
+    mobile_pin?: string;
 }) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to create user');
+        return json.data;
+    }
     // Always hash the password before storing
     const hashed = await hashPassword(user.password_hash);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .insert([{ ...user, password_hash: hashed, active: true, is_super_admin: false }])
         .select()
@@ -3123,13 +3162,24 @@ export async function updateARMSUser(userId: number, updates: {
     name?: string; email?: string; phone?: string;
     user_role?: string; active?: boolean; password_hash?: string;
     allowed_location_ids?: number[];
+    mobile_pin?: string;
 }) {
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, ...updates }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to update user');
+        return json.data;
+    }
     const { is_super_admin: _, ...safeUpdates } = updates as any;
     // Hash the new password if one was provided
     if (safeUpdates.password_hash) {
         safeUpdates.password_hash = await hashPassword(safeUpdates.password_hash);
     }
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .update({ ...safeUpdates, updated_at: new Date().toISOString() })
         .eq('user_id', userId)
@@ -3140,7 +3190,13 @@ export async function updateARMSUser(userId: number, updates: {
 }
 
 export async function deactivateARMSUser(userId: number) {
-    const { data: user } = await supabase
+    if (typeof window !== 'undefined') {
+        const res = await fetch(`/api/users?userId=${userId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to deactivate user');
+        return;
+    }
+    const { data: user } = await supabaseAdmin
         .from('arms_users')
         .select('is_super_admin')
         .eq('user_id', userId)
@@ -3148,7 +3204,7 @@ export async function deactivateARMSUser(userId: number) {
     if (user?.is_super_admin) {
         throw new Error('The Super Admin account cannot be deactivated');
     }
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
         .from('arms_users')
         .update({ active: false, updated_at: new Date().toISOString() })
         .eq('user_id', userId);
@@ -3158,7 +3214,13 @@ export async function deactivateARMSUser(userId: number) {
 // ── Per-user custom permission overrides ─────────────────────
 // Fetches a user's custom_permissions (if any) merged with their role defaults
 export async function getUserCustomPermissions(userId: number): Promise<Record<string, boolean> | null> {
-    const { data, error } = await supabase
+    if (typeof window !== 'undefined') {
+        const res = await fetch(`/api/users?userId=${userId}`);
+        const json = await res.json();
+        if (!res.ok) return null;
+        return json.custom_permissions || null;
+    }
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .select('user_role, custom_permissions')
         .eq('user_id', userId)
@@ -3169,7 +3231,17 @@ export async function getUserCustomPermissions(userId: number): Promise<Record<s
 
 // Saves per-user custom permission overrides (null = revert to role defaults)
 export async function updateUserCustomPermissions(userId: number, permissions: Record<string, boolean> | null) {
-    const { data, error } = await supabase
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update_custom_perms', userId, permissions }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to update custom permissions');
+        return json.data;
+    }
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
         .update({ custom_permissions: permissions, updated_at: new Date().toISOString() })
         .eq('user_id', userId)
@@ -3181,9 +3253,15 @@ export async function updateUserCustomPermissions(userId: number, permissions: R
 
 // Fetch all users with their custom_permissions for the admin UI
 export async function getARMSUsersWithPermissions() {
-    const { data, error } = await supabase
+    if (typeof window !== 'undefined') {
+        const res = await fetch('/api/users');
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to fetch users');
+        return json.users || [];
+    }
+    const { data, error } = await supabaseAdmin
         .from('arms_users')
-        .select('user_id, user_name, name, email, phone, user_type, user_role, active, is_super_admin, custom_permissions, created_at, updated_at')
+        .select('user_id, user_name, name, email, phone, user_type, user_role, active, is_super_admin, custom_permissions, allowed_location_ids, created_at, updated_at')
         .order('name');
     if (error) throw error;
     return data || [];
