@@ -13,9 +13,26 @@ export const dynamic = 'force-dynamic';
 
 function getFirebaseMessaging() {
     if (!getApps().length) {
-        const raw = process.env.FIREBASE_SERVICE_ACCOUNT || '{}';
-        const serviceAccount = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        initializeApp({ credential: cert(serviceAccount) });
+        let serviceAccount: any = null;
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            try {
+                serviceAccount = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+                    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+                    : process.env.FIREBASE_SERVICE_ACCOUNT;
+            } catch (e) {
+                console.error('[Firebase] Error parsing FIREBASE_SERVICE_ACCOUNT:', e);
+            }
+        }
+        if (!serviceAccount && process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL) {
+            serviceAccount = {
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+            };
+        }
+        if (serviceAccount) {
+            initializeApp({ credential: cert(serviceAccount) });
+        }
     }
     return getMessaging();
 }
@@ -64,12 +81,12 @@ export async function POST(req: NextRequest) {
 
             await Promise.all(chunk.map(async (tenant) => {
                 try {
-                    // 1. Insert chat message
+                    // 1. Insert chat message (is_read: false so tenant receives notification/popup)
                     await supabase.from('arms_chats').insert([{
                         tenant_id: tenant.tenant_id,
                         sender: 'admin',
                         message: trimmed,
-                        is_read: true,
+                        is_read: false,
                         created_at: now,
                     }]);
 

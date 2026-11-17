@@ -15,12 +15,28 @@ export const dynamic = 'force-dynamic';
 // Firebase Admin (singleton)
 function getFirebaseMessaging() {
     if (!getApps().length) {
-        // Parse entire service account JSON from one env var
-        const raw = process.env.FIREBASE_SERVICE_ACCOUNT || '{}';
-        const serviceAccount = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        initializeApp({
-            credential: cert(serviceAccount),
-        });
+        let serviceAccount: any = null;
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            try {
+                serviceAccount = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+                    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+                    : process.env.FIREBASE_SERVICE_ACCOUNT;
+            } catch (e) {
+                console.error('[Firebase] Error parsing FIREBASE_SERVICE_ACCOUNT:', e);
+            }
+        }
+        if (!serviceAccount && process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL) {
+            serviceAccount = {
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+            };
+        }
+        if (serviceAccount) {
+            initializeApp({
+                credential: cert(serviceAccount),
+            });
+        }
     }
     return getMessaging();
 }
@@ -125,14 +141,14 @@ export async function POST(req: NextRequest) {
         if (!tenant_id || !sender || !message?.trim())
             return NextResponse.json({ error: 'tenant_id, sender, message required' }, { status: 400 });
 
-        // Save message
+        // Save message (newly sent message is always unread by recipient)
         const { data, error } = await supabase
             .from('arms_chats')
             .insert([{
                 tenant_id,
                 sender,
                 message: message.trim(),
-                is_read: sender === 'admin',
+                is_read: false,
                 created_at: new Date().toISOString(),
             }])
             .select().single();
