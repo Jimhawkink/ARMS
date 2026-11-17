@@ -73,11 +73,21 @@ export async function registerPushToken(tenantId: number): Promise<void> {
 
         console.log('[FCM token]', fcmToken.substring(0, 20) + '...');
 
-        // Save to Supabase so web app can send push notifications
-        await supabase
-            .from('arms_tenants')
-            .update({ push_token: fcmToken })
-            .eq('tenant_id', tenantId);
+        // Save to backend using secure server API (bypasses RLS)
+        try {
+            await fetch('https://arms-opal.vercel.app/api/tenants/push-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tenant_id: tenantId, push_token: fcmToken }),
+            });
+        } catch {
+            try {
+                await supabase
+                    .from('arms_tenants')
+                    .update({ push_token: fcmToken })
+                    .eq('tenant_id', tenantId);
+            } catch { /* silent */ }
+        }
 
         // Listen for foreground FCM messages → show local notification
         messaging().onMessage(async remoteMessage => {

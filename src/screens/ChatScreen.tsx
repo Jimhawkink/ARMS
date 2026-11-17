@@ -95,6 +95,7 @@ export default function ChatScreen({
     const [refreshing, setRefreshing] = useState(false);
     const [message, setMessage] = useState('');
     const [sending, setSending] = useState(false);
+    const sendingRef = useRef(false);
     const flatListRef = useRef<FlatList>(null);
     const channelRef = useRef<any>(null);
     const sendScale = useRef(new Animated.Value(1)).current;
@@ -149,12 +150,15 @@ export default function ChatScreen({
                 .order('created_at', { ascending: true });
 
             if (err) throw err;
-            setMessages(data || []);
+            // Deduplicate by chat_id
+            const uniqueMap = new Map<number, ChatMsg>();
+            (data || []).forEach((m: ChatMsg) => uniqueMap.set(m.chat_id, m));
+            setMessages(Array.from(uniqueMap.values()));
 
             // Mark admin messages as read
             await supabase
                 .from('arms_chats')
-                .update({ is_read: true })
+                .update({ is_read: true, read_at: new Date().toISOString() })
                 .eq('tenant_id', sess.tenant_id)
                 .eq('sender', 'admin')
                 .eq('is_read', false);
@@ -195,7 +199,7 @@ export default function ChatScreen({
         loadMessages(session);
 
         const channel = supabase
-            .channel(`arms_chat_tenant_${session.tenant_id}`)
+            .channel(`arms_chat_tenant_${session.tenant_id}_${Date.now()}`)
             .on('postgres_changes' as any, {
                 event: 'INSERT',
                 schema: 'public',
@@ -204,16 +208,43 @@ export default function ChatScreen({
             }, (payload: any) => {
                 const newMsg = payload.new as ChatMsg;
                 setMessages(prev => {
-                    if (prev.find(m => m.chat_id === newMsg.chat_id)) return prev;
+                    // 1. If message already exists by real chat_id, do not duplicate
+                    if (prev.some(m => m.chat_id === newMsg.chat_id)) return prev;
+
+                    // 2. If sent by tenant, swap out the optimistic pending bubble
+                    if (newMsg.sender === 'tenant') {
+                        const optIndex = prev.findIndex(m =>
+                            (m.chat_id > 1_000_000_000_000 || m.chat_id < 0) &&
+                            m.sender === 'tenant' &&
+                            m.message === newMsg.message
+                        );
+                        if (optIndex !== -1) {
+                            const updated = [...prev];
+                            updated[optIndex] = newMsg;
+                            return updated;
+                        }
+                    }
+
+                    // 3. Otherwise append new message
                     return [...prev, newMsg];
                 });
+
                 if (newMsg.sender === 'admin') {
                     supabase.from('arms_chats')
-                        .update({ is_read: true })
+                        .update({ is_read: true, read_at: new Date().toISOString() })
                         .eq('chat_id', newMsg.chat_id)
                         .then(() => {});
                 }
                 setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+            })
+            .on('postgres_changes' as any, {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'arms_chats',
+                filter: `tenant_id=eq.${session.tenant_id}`,
+            }, (payload: any) => {
+                const updated = payload.new as ChatMsg;
+                setMessages(prev => prev.map(m => (m.chat_id === updated.chat_id ? updated : m)));
             })
             .subscribe();
 
@@ -233,8 +264,9 @@ export default function ChatScreen({
     // Send message
     const handleSend = async (customText?: string) => {
         const text = (customText !== undefined ? customText : message).trim();
-        if (!text || !session || sending) return;
+        if (!text || !session || sending || sendingRef.current) return;
 
+        sendingRef.current = true;
         Animated.sequence([
             Animated.timing(sendScale, { toValue: 0.88, duration: 80, useNativeDriver: true }),
             Animated.timing(sendScale, { toValue: 1, duration: 80, useNativeDriver: true }),
@@ -257,7 +289,7 @@ export default function ChatScreen({
         setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
         try {
-            const { error: err } = await supabase
+            const { data, error: err } = await supabase
                 .from('arms_chats')
                 .insert([{
                     tenant_id: session.tenant_id,
@@ -265,9 +297,22 @@ export default function ChatScreen({
                     message: text,
                     is_read: false,
                     created_at: new Date().toISOString(),
-                }]);
+                }])
+                .select()
+                .single();
 
             if (err) throw err;
+
+            // Replace optimistic tempId with real database record if not already swapped by realtime
+            if (data) {
+                setMessages(prev => {
+                    const alreadyHasReal = prev.some(m => m.chat_id === data.chat_id);
+                    if (alreadyHasReal) {
+                        return prev.filter(m => m.chat_id !== tempId);
+                    }
+                    return prev.map(m => (m.chat_id === tempId ? (data as ChatMsg) : m));
+                });
+            }
         } catch (e: any) {
             setMessages(prev => prev.filter(m => m.chat_id !== tempId));
             if (customText === undefined) setMessage(text);
@@ -277,6 +322,7 @@ export default function ChatScreen({
                 [{ text: 'OK' }]
             );
         } finally {
+            sendingRef.current = false;
             setSending(false);
         }
     };

@@ -159,7 +159,7 @@ function ChatThreadView({
         markRead();
 
         const channel = sb
-            .channel(`staff_thread_${tenantId}`)
+            .channel(`staff_thread_${tenantId}_${Date.now()}`)
             .on('postgres_changes' as any, {
                 event: 'INSERT',
                 schema: 'public',
@@ -168,10 +168,31 @@ function ChatThreadView({
             }, (payload: any) => {
                 const msg = payload.new as ChatMessage;
                 setMessages(prev => {
-                    if (prev.find(m => m.chat_id === msg.chat_id)) return prev;
+                    if (prev.some(m => m.chat_id === msg.chat_id)) return prev;
+                    if (msg.sender === 'admin') {
+                        const optIndex = prev.findIndex(m =>
+                            (m.chat_id < 0 || m.chat_id > 1_000_000_000_000) &&
+                            m.sender === 'admin' &&
+                            m.message === msg.message
+                        );
+                        if (optIndex !== -1) {
+                            const updated = [...prev];
+                            updated[optIndex] = msg;
+                            return updated;
+                        }
+                    }
                     return [...prev, msg];
                 });
                 scrollToBottom();
+            })
+            .on('postgres_changes' as any, {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'arms_chats',
+                filter: `tenant_id=eq.${tenantId}`,
+            }, (payload: any) => {
+                const updated = payload.new as ChatMessage;
+                setMessages(prev => prev.map(m => (m.chat_id === updated.chat_id ? updated : m)));
             })
             .subscribe();
 
@@ -202,11 +223,21 @@ function ChatThreadView({
         scrollToBottom();
 
         try {
-            await fetch(`${API}/chats`, {
+            const res = await fetch(`${API}/chats`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tenant_id: tenantId, sender: 'admin', message: text }),
             });
+            const data = await res.json();
+            if (data?.message) {
+                setMessages(prev => {
+                    const alreadyHasReal = prev.some(m => m.chat_id === data.message.chat_id);
+                    if (alreadyHasReal) {
+                        return prev.filter(m => m.chat_id !== tempId);
+                    }
+                    return prev.map(m => (m.chat_id === tempId ? data.message : m));
+                });
+            }
         } catch {
             Alert.alert('Error', 'Message failed to send. Try again.');
             setReply(text);

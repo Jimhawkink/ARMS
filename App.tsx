@@ -448,6 +448,9 @@ function AppShell({
     }, [session.tenant_id, session.location_id]);
 
     useEffect(() => {
+        let isMounted = true;
+        let realtimeChannel: any = null;
+
         const checkNewMessages = async () => {
             try {
                 const { supabase } = await import('./src/lib/supabase');
@@ -460,6 +463,7 @@ function AppShell({
                     .order('created_at', { ascending: false })
                     .limit(1);
 
+                if (!isMounted) return;
                 setUnreadAdmin(data?.length || 0);
 
                 if (data && data.length > 0) {
@@ -472,7 +476,9 @@ function AppShell({
                                 sender_name: 'Management',
                                 created_at: newest.created_at,
                             });
-                            setTimeout(() => setChatNotif(null), 10000);
+                            setTimeout(() => {
+                                if (isMounted) setChatNotif(null);
+                            }, 12000);
                         }
                     }
                 }
@@ -480,8 +486,51 @@ function AppShell({
         };
 
         checkNewMessages();
-        const interval = setInterval(checkNewMessages, 10000);
-        return () => clearInterval(interval);
+        const interval = setInterval(checkNewMessages, 8000);
+
+        // Immediate Realtime Notification for Tenant
+        import('./src/lib/supabase').then(({ supabase }) => {
+            if (!isMounted) return;
+            realtimeChannel = supabase
+                .channel(`tenant_app_notif_${session.tenant_id}_${Date.now()}`)
+                .on(
+                    'postgres_changes' as any,
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'arms_chats',
+                        filter: `tenant_id=eq.${session.tenant_id}`,
+                    },
+                    (payload: any) => {
+                        const newMsg = payload.new;
+                        if (newMsg && newMsg.sender === 'admin') {
+                            setUnreadAdmin(c => c + 1);
+                            if (activeTab !== 'chat') {
+                                lastMsgIdRef.current = newMsg.chat_id;
+                                setChatNotif({
+                                    message: newMsg.message,
+                                    sender_name: 'Management',
+                                    created_at: newMsg.created_at,
+                                });
+                                setTimeout(() => {
+                                    if (isMounted) setChatNotif(null);
+                                }, 12000);
+                            }
+                        }
+                    }
+                )
+                .subscribe();
+        });
+
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+            if (realtimeChannel) {
+                import('./src/lib/supabase').then(({ supabase }) => {
+                    supabase.removeChannel(realtimeChannel);
+                });
+            }
+        };
     }, [session.tenant_id, activeTab]);
 
     useEffect(() => {
