@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, BackHandler, Linking, Platform, ActivityIndicator,
+    StatusBar, TouchableOpacity, BackHandler, ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -10,7 +10,6 @@ import * as IntentLauncher from 'expo-intent-launcher';
 const { width } = Dimensions.get('window');
 
 const APK_DOWNLOAD_URL = 'https://arms-opal.vercel.app/api/dl';
-const GITHUB_DIRECT_URL = 'https://github.com/Jimhawkink/ARMS/releases/latest/download/ARMSTenantApp.apk';
 
 const COLORS = {
     bg: '#0a0f1d',
@@ -39,6 +38,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
     const fadeIn = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(1)).current;
     const progressAnim = useRef(new Animated.Value(0)).current;
+    const savedApkUriRef = useRef<string | null>(null);
 
     const [phase, setPhase] = useState<Phase>('idle');
     const [progress, setProgress] = useState(0);
@@ -46,7 +46,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
     const [totalMb, setTotalMb] = useState('70.0');
     const [errorMsg, setErrorMsg] = useState('');
 
-    // Disable Android back button — mandatory update
+    // Disable Android back button — mandatory update cannot be skipped
     useEffect(() => {
         const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
         return () => sub.remove();
@@ -65,8 +65,8 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             ])
         ).start();
 
-        // Auto-start download immediately
-        const t = setTimeout(() => startDownload(), 600);
+        // Auto-start download immediately inside the APK
+        const t = setTimeout(() => startDownload(), 500);
         return () => clearTimeout(t);
     }, []);
 
@@ -77,6 +77,31 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             useNativeDriver: false,
         }).start();
     }, [progress]);
+
+    // Open native Android package installer directly from in-app downloaded APK
+    const openInstaller = async (uriToInstall?: string) => {
+        const targetUri = uriToInstall || savedApkUriRef.current;
+        if (!targetUri) {
+            startDownload();
+            return;
+        }
+
+        setPhase('installing');
+        try {
+            const contentUri = await FileSystem.getContentUriAsync(targetUri);
+            // FLAG_GRANT_READ_URI_PERMISSION (1) | FLAG_ACTIVITY_NEW_TASK (268435456)
+            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: contentUri,
+                flags: 1 | 268435456,
+                type: 'application/vnd.android.package-archive',
+            });
+            setPhase('done');
+        } catch (err: any) {
+            console.warn('[ForceUpdate] IntentLauncher error:', err);
+            // Keep in done phase so user can tap install button directly
+            setPhase('done');
+        }
+    };
 
     const startDownload = async () => {
         try {
@@ -112,43 +137,16 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             );
 
             const result = await downloadResumable.downloadAsync();
-            if (!result?.uri) throw new Error('Download failed — no file received');
+            if (!result?.uri) throw new Error('Download failed — no update package received.');
 
+            savedApkUriRef.current = result.uri;
             setProgress(1);
-            setPhase('installing');
 
-            // Immediately invoke Android Package Installer
-            let installed = false;
-            try {
-                const contentUri = await FileSystem.getContentUriAsync(result.uri);
-                await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                    data: contentUri,
-                    flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-                    type: 'application/vnd.android.package-archive',
-                });
-                installed = true;
-            } catch (e1) {
-                console.warn('[ForceUpdate] IntentLauncher failed, trying direct Linking:', e1);
-                try {
-                    const contentUri = await FileSystem.getContentUriAsync(result.uri);
-                    if (await Linking.canOpenURL(contentUri)) {
-                        await Linking.openURL(contentUri);
-                        installed = true;
-                    }
-                } catch (e2) {
-                    console.warn('[ForceUpdate] Direct Linking failed:', e2);
-                }
-            }
-
-            if (!installed) {
-                // Direct fallback browser link
-                await Linking.openURL(GITHUB_DIRECT_URL);
-            }
-
-            setPhase('done');
+            // Automatically launch native Android installer without opening Chrome
+            await openInstaller(result.uri);
         } catch (err: any) {
             console.warn('[ForceUpdate error]', err);
-            setErrorMsg(err?.message || 'Download failed. Please tap button below to update.');
+            setErrorMsg(err?.message || 'Download failed. Please tap retry below.');
             setPhase('error');
         }
     };
@@ -184,7 +182,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
 
                 <Text style={styles.title}>Update Required</Text>
                 <Text style={styles.subtitle}>
-                    A critical security and feature upgrade is available for your ARMS Tenant App.
+                    A critical security and feature upgrade is required to continue using ARMS.
                 </Text>
 
                 {/* Version Comparison Pills */}
@@ -200,11 +198,11 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                     </View>
                 </View>
 
-                {/* Progress Area */}
+                {/* In-App Direct Download Progress */}
                 {phase === 'downloading' && (
                     <View style={styles.progressSection}>
                         <View style={styles.progressHeader}>
-                            <Text style={styles.progressTitle}>Downloading Update...</Text>
+                            <Text style={styles.progressTitle}>Downloading Update In-App...</Text>
                             <Text style={styles.progressPercentText}>{progressPercent}%</Text>
                         </View>
 
@@ -222,34 +220,49 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                             />
                         </View>
 
-                        <Text style={styles.mbText}>
-                            {downloadedMb} MB / {totalMb} MB
-                        </Text>
+                        <View style={styles.progressFooter}>
+                            <Text style={styles.fastTag}>⚡ High-Speed Direct In-App CDN</Text>
+                            <Text style={styles.mbText}>
+                                {downloadedMb} MB / {totalMb} MB
+                            </Text>
+                        </View>
                     </View>
                 )}
 
+                {/* Opening Android Installer */}
                 {phase === 'installing' && (
                     <View style={styles.statusBox}>
                         <ActivityIndicator size="small" color={COLORS.accent} />
-                        <Text style={styles.statusText}>Opening Android package installer...</Text>
+                        <Text style={styles.statusText}>Launching Android Package Installer...</Text>
                     </View>
                 )}
 
+                {/* Download Complete — One-Tap In-App Install */}
                 {phase === 'done' && (
                     <View style={styles.doneBox}>
-                        <Text style={styles.doneEmoji}>✅</Text>
-                        <Text style={styles.doneTitle}>Download Complete!</Text>
-                        <Text style={styles.doneSub}>Follow the on-screen Android prompt to complete install.</Text>
+                        <Text style={styles.doneEmoji}>📦</Text>
+                        <Text style={styles.doneTitle}>Download Complete (100%)</Text>
+                        <Text style={styles.doneSub}>
+                            The v{latestVersion} package is ready. Tap below to complete installation.
+                        </Text>
                         <TouchableOpacity
                             activeOpacity={0.85}
-                            onPress={startDownload}
-                            style={styles.retryActionBtn}
+                            onPress={() => openInstaller()}
+                            style={styles.installActionBtn}
                         >
-                            <Text style={styles.retryActionText}>Re-open Installer</Text>
+                            <LinearGradient
+                                colors={['#10b981', '#059669', '#047857']}
+                                style={styles.installActionGrad}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                <Text style={styles.installActionText}>🚀 Install ARMS {latestVersion} Now</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
                 )}
 
+                {/* Error Section with Direct In-App Retry */}
                 {phase === 'error' && (
                     <View style={styles.errorSection}>
                         <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
@@ -259,31 +272,23 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                             style={styles.retryBtn}
                         >
                             <LinearGradient
-                                colors={['#6366f1', '#4f46e5']}
+                                colors={['#10b981', '#059669']}
                                 style={styles.btnGrad}
                             >
-                                <Text style={styles.btnText}>🔄 Retry Fast Download</Text>
+                                <Text style={styles.btnText}>🔄 Retry In-App Download</Text>
                             </LinearGradient>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            activeOpacity={0.7}
-                            onPress={() => Linking.openURL(GITHUB_DIRECT_URL)}
-                            style={styles.browserLinkBtn}
-                        >
-                            <Text style={styles.browserLinkText}>🌐 Or Download in Browser</Text>
                         </TouchableOpacity>
                     </View>
                 )}
 
-                {/* What's new bullet points */}
+                {/* What's New Feature Highlights */}
                 <View style={styles.featuresBox}>
                     <Text style={styles.featuresTitle}>What's New in {latestVersion}:</Text>
-                    <Text style={styles.featureItem}>• M-Pesa style dashboard with balance masking</Text>
-                    <Text style={styles.featureItem}>• Status bar overlap fix (zero screen bleed)</Text>
-                    <Text style={styles.featureItem}>• Tenant self-service PIN change in app</Text>
-                    <Text style={styles.featureItem}>• Live prepayment & overpayment month breakdown</Text>
-                    <Text style={styles.featureItem}>• Auto-logout protection after 15 min idle</Text>
+                    <Text style={styles.featureItem}>• Ultra-premium FinTech redesign with pinned headers</Text>
+                    <Text style={styles.featureItem}>• Working back button (← Back) on all screens</Text>
+                    <Text style={styles.featureItem}>• Celebratory fireworks & confetti on payment success</Text>
+                    <Text style={styles.featureItem}>• Automatic 15-minute inactivity security lock</Text>
+                    <Text style={styles.featureItem}>• High-speed in-app auto updates with zero browser dependency</Text>
                 </View>
             </Animated.View>
         </View>
@@ -296,19 +301,18 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.bg,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 20,
+        paddingHorizontal: 20,
     },
     ambientGlow: {
         position: 'absolute',
-        top: -60,
-        width: 300,
-        height: 300,
-        borderRadius: 150,
-        backgroundColor: 'rgba(16,185,129,0.1)',
+        top: '25%',
+        width: width * 0.8,
+        height: width * 0.8,
+        borderRadius: width * 0.4,
+        backgroundColor: 'rgba(16,185,129,0.08)',
     },
     card: {
-        width: '100%',
-        maxWidth: 380,
+        width: Math.min(width - 32, 420),
         backgroundColor: COLORS.card,
         borderRadius: 26,
         padding: 24,
@@ -425,11 +429,20 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.accent,
         borderRadius: 4,
     },
+    progressFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    fastTag: {
+        fontSize: 10,
+        color: COLORS.accent,
+        fontWeight: '700',
+    },
     mbText: {
         fontSize: 11,
         color: COLORS.textDim,
-        textAlign: 'right',
-        marginTop: 4,
         fontWeight: '600',
     },
 
@@ -438,7 +451,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: 12,
+        marginTop: 14,
     },
     statusText: {
         fontSize: 12,
@@ -446,12 +459,13 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     doneBox: {
+        width: '100%',
         alignItems: 'center',
         gap: 6,
-        marginTop: 10,
+        marginTop: 12,
     },
     doneEmoji: {
-        fontSize: 32,
+        fontSize: 34,
     },
     doneTitle: {
         fontSize: 16,
@@ -462,18 +476,24 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: COLORS.textSub,
         textAlign: 'center',
+        marginBottom: 8,
     },
-    retryActionBtn: {
-        marginTop: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 10,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+    installActionBtn: {
+        width: '100%',
+        borderRadius: 14,
+        overflow: 'hidden',
+        marginTop: 4,
     },
-    retryActionText: {
-        color: COLORS.accent,
-        fontSize: 12,
-        fontWeight: '800',
+    installActionGrad: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    installActionText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.3,
     },
     errorSection: {
         width: '100%',
@@ -500,15 +520,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '900',
         color: '#fff',
-    },
-    browserLinkBtn: {
-        marginTop: 8,
-        paddingVertical: 6,
-    },
-    browserLinkText: {
-        fontSize: 11,
-        color: COLORS.primaryLight,
-        fontWeight: '700',
     },
 
     // Features

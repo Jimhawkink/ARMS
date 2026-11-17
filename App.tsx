@@ -728,32 +728,46 @@ function AppInner() {
 
     const lastVersionCheckRef = useRef<number>(0);
 
-    useEffect(() => {
-        const checkVersionOnForeground = async () => {
-            try {
-                const now = Date.now();
-                if (now - lastVersionCheckRef.current < 60_000) return;
-                lastVersionCheckRef.current = now;
+    const performVersionCheck = async () => {
+        try {
+            const now = Date.now();
+            if (now - lastVersionCheckRef.current < 15_000) return;
+            lastVersionCheckRef.current = now;
 
-                const vRes = await fetch(
-                    `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
-                    { signal: (AbortSignal as any).timeout ? (AbortSignal as any).timeout(6000) : undefined }
-                );
-                if (vRes.ok) {
-                    const vData = await vRes.json();
-                    if (vData.forceUpdate) {
-                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
-                    }
+            const vRes = await fetch(
+                `${ARMS_API_BASE}/api/app-version?version=${encodeURIComponent(APP_VERSION)}`,
+                { signal: (AbortSignal as any).timeout ? (AbortSignal as any).timeout(6000) : undefined }
+            );
+            if (vRes.ok) {
+                const vData = await vRes.json();
+                if (vData.forceUpdate) {
+                    try {
+                        const { clearSession, clearStaffSession } = await import('./src/lib/security');
+                        await clearSession();
+                        await clearStaffSession();
+                    } catch {}
+                    setSession(null);
+                    setStaffSession(null);
+                    setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'v5.3' });
                 }
-            } catch { /* silent */ }
-        };
+            }
+        } catch { /* silent */ }
+    };
 
+    useEffect(() => {
         const sub = AppState.addEventListener('change', state => {
             if (state === 'active') {
-                checkVersionOnForeground();
+                performVersionCheck();
             }
         });
-        return () => sub.remove();
+        const periodicTimer = setInterval(() => {
+            performVersionCheck();
+        }, 25_000);
+
+        return () => {
+            sub.remove();
+            clearInterval(periodicTimer);
+        };
     }, []);
 
     const initApp = async () => {
@@ -769,7 +783,14 @@ function AppInner() {
                 if (vRes.ok) {
                     const vData = await vRes.json();
                     if (vData.forceUpdate) {
-                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'latest' });
+                        try {
+                            const { clearSession, clearStaffSession } = await import('./src/lib/security');
+                            await clearSession();
+                            await clearStaffSession();
+                        } catch {}
+                        setSession(null);
+                        setStaffSession(null);
+                        setForceUpdate({ required: true, latestVersion: vData.latestVersion || 'v5.3' });
                         setIsLoading(false);
                         return;
                     }
