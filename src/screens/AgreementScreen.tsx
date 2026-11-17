@@ -1,12 +1,21 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import {
-    View, Text, ScrollView, TextInput, TouchableOpacity,
-    StyleSheet, Alert, ActivityIndicator, Image,
-    PanResponder, GestureResponderEvent, Platform,
+    View,
+    Text,
+    ScrollView,
+    TextInput,
+    TouchableOpacity,
+    StyleSheet,
+    Alert,
+    ActivityIndicator,
+    Image,
+    PanResponder,
+    GestureResponderEvent,
+    Platform,
     Dimensions,
+    StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { TenantAgreement, AgreementTemplate, signAgreement } from '../lib/supabase';
 import * as Application from 'expo-application';
 
@@ -16,22 +25,28 @@ interface AgreementScreenProps {
     tenantName: string;
     locationName?: string;
     onAccepted: () => void;
+    onBack?: () => void;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PAD_W = SCREEN_W - 48;
+const PAD_H = 160;
 
-// ── Replace {{placeholder}} tags with real values ─────────────
 function fillPlaceholders(text: string, vals: Record<string, string>): string {
     return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vals[key] || `{{${key}}}`);
 }
-const PAD_H = 160;
 
-function fmt(n: number) { return `KES ${(n || 0).toLocaleString()}`; }
+function fmt(n: number) {
+    return `KES ${(n || 0).toLocaleString()}`;
+}
 
-// ── Finger-draw Signature Pad ─────────────────────────────────
-interface Point { x: number; y: number; }
-interface Stroke { points: Point[]; }
+interface Point {
+    x: number;
+    y: number;
+}
+interface Stroke {
+    points: Point[];
+}
 
 function SignaturePad({
     onSigned,
@@ -40,11 +55,10 @@ function SignaturePad({
     onSigned: (strokes: Stroke[]) => void;
     onClear: () => void;
 }) {
-    const [strokes, setStrokes]         = useState<Stroke[]>([]);
-    const [current, setCurrent]         = useState<Point[]>([]);
-    const [hasDrawn, setHasDrawn]       = useState(false);
-    const containerRef                  = useRef<View>(null);
-    const [padLayout, setPadLayout]     = useState<{ x: number; y: number } | null>(null);
+    const [strokes, setStrokes] = useState<Stroke[]>([]);
+    const [current, setCurrent] = useState<Point[]>([]);
+    const [hasDrawn, setHasDrawn] = useState(false);
+    const [padLayout, setPadLayout] = useState<{ x: number; y: number } | null>(null);
 
     const getRelativePoint = (evt: GestureResponderEvent): Point => {
         const touch = evt.nativeEvent;
@@ -59,12 +73,12 @@ function SignaturePad({
     const panResponder = PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => {
+        onPanResponderGrant: evt => {
             const pt = getRelativePoint(evt);
             setCurrent([pt]);
             setHasDrawn(true);
         },
-        onPanResponderMove: (evt) => {
+        onPanResponderMove: evt => {
             const pt = getRelativePoint(evt);
             setCurrent(prev => [...prev, pt]);
         },
@@ -78,114 +92,102 @@ function SignaturePad({
         },
     });
 
-    const clearPad = () => {
+    const handleClear = () => {
         setStrokes([]);
         setCurrent([]);
         setHasDrawn(false);
         onClear();
     };
 
-    // Convert strokes to SVG path strings for rendering
-    const strokeToPath = (pts: Point[]): string => {
-        if (pts.length === 0) return '';
-        if (pts.length === 1) return `M${pts[0].x},${pts[0].y} L${pts[0].x + 0.1},${pts[0].y}`;
-        return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    };
-
     return (
         <View style={styles.padWrapper}>
-            <View style={styles.padLabelRow}>
-                <Text style={styles.padLabel}>✍️ Sign with your finger below</Text>
+            <View style={styles.padHeader}>
+                <Text style={styles.padLabel}>DRAW YOUR SIGNATURE WITH YOUR FINGER</Text>
                 {hasDrawn && (
-                    <TouchableOpacity onPress={clearPad} style={styles.clearBtn}>
-                        <Text style={styles.clearBtnText}>Clear</Text>
+                    <TouchableOpacity onPress={handleClear} style={styles.clearBtn}>
+                        <Text style={styles.clearBtnText}>Clear ↺</Text>
                     </TouchableOpacity>
                 )}
             </View>
 
-            {/* Signature canvas */}
             <View
-                ref={containerRef}
                 style={styles.padCanvas}
-                onLayout={(e) => {
-                    containerRef.current?.measure((x, y, w, h, px, py) => {
-                        setPadLayout({ x: px, y: py });
+                onLayout={e => {
+                    e.target.measure((x, y, width, height, pageX, pageY) => {
+                        setPadLayout({ x: pageX, y: pageY });
                     });
                 }}
                 {...panResponder.panHandlers}
             >
-                {/* Guideline */}
-                <View style={styles.padGuideLine} pointerEvents="none" />
-                <Text style={styles.padGuideText} pointerEvents="none">Sign here</Text>
-
-                {/* Render completed strokes as SVG-like lines using absolute views */}
-                {[...strokes, current.length > 0 ? { points: current } : null]
-                    .filter(Boolean)
-                    .map((stroke, si) =>
-                        (stroke!.points).slice(0, -1).map((pt, pi) => {
-                            const next = stroke!.points[pi + 1];
-                            if (!next) return null;
-                            const dx = next.x - pt.x;
-                            const dy = next.y - pt.y;
-                            const len = Math.sqrt(dx * dx + dy * dy);
-                            const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-                            return (
-                                <View
-                                    key={`${si}-${pi}`}
-                                    pointerEvents="none"
-                                    style={{
-                                        position: 'absolute',
-                                        left: pt.x,
-                                        top: pt.y - 1.5,
-                                        width: len,
-                                        height: 3,
-                                        backgroundColor: '#1e1b4b',
-                                        borderRadius: 1.5,
-                                        transformOrigin: 'left center',
-                                        transform: [{ rotate: `${angle}deg` }],
-                                    }}
-                                />
-                            );
-                        })
-                    )}
+                {[...strokes, { points: current }].map((stroke, si) =>
+                    stroke.points.map((pt, pi) => {
+                        if (pi === 0) return null;
+                        const prev = stroke.points[pi - 1];
+                        const dx = pt.x - prev.x;
+                        const dy = pt.y - prev.y;
+                        const len = Math.sqrt(dx * dx + dy * dy);
+                        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+                        return (
+                            <View
+                                key={`${si}-${pi}`}
+                                style={{
+                                    position: 'absolute',
+                                    left: prev.x,
+                                    top: prev.y,
+                                    width: len,
+                                    height: 3,
+                                    backgroundColor: '#10b981',
+                                    borderRadius: 1.5,
+                                    transform: [{ rotate: `${angle}deg` }],
+                                }}
+                            />
+                        );
+                    })
+                )}
             </View>
 
             {!hasDrawn && (
-                <Text style={styles.padHint}>Draw your signature above with your finger</Text>
+                <Text style={styles.padHint}>Sign inside the box above using your finger</Text>
             )}
         </View>
     );
 }
 
-// ── Main AgreementScreen ─────────────────────────────────────
-export default function AgreementScreen({ agreement, template, tenantName, locationName, onAccepted }: AgreementScreenProps) {
+export default function AgreementScreen({
+    agreement,
+    template,
+    tenantName,
+    locationName,
+    onAccepted,
+    onBack,
+}: AgreementScreenProps) {
     const [scrolledToBottom, setScrolledToBottom] = useState(false);
     const [signatureStrokes, setSignatureStrokes] = useState<Stroke[]>([]);
     const [signing, setSigning] = useState(false);
     const [activeTab, setActiveTab] = useState<'draw' | 'type'>('draw');
-    const [typedName, setTypedName] = useState('');
+    const [typedName, setTypedName] = useState(tenantName);
 
-    const handleScroll = ({ nativeEvent }: any) => {
-        const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-        const reached = layoutMeasurement.height + contentOffset.y >= contentSize.height - 40;
-        if (reached) setScrolledToBottom(true);
+    const handleScroll = (event: any) => {
+        const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+        const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 40;
+        if (isCloseToBottom && !scrolledToBottom) {
+            setScrolledToBottom(true);
+        }
     };
 
-    // Build placeholder values from agreement + template data
     const placeholderVals: Record<string, string> = {
-        tenant_name:      tenantName || '',
-        unit_name:        agreement.unit_name || '—',
-        location_name:    locationName || (agreement as any).location_name || '—',
-        lease_start_date: agreement.lease_start_date || '—',
-        lease_end_date:   agreement.lease_end_date || 'Month-to-Month',
-        monthly_rent:     `KES ${(agreement.monthly_rent || 0).toLocaleString()}`,
-        deposit_amount:   `KES ${(agreement.deposit_amount || 0).toLocaleString()}`,
-        admin_name:       template?.admin_name || agreement.issued_by || 'Landlord',
-        admin_title:      template?.admin_title || 'Property Manager',
-        issued_by:        agreement.issued_by || 'Admin',
+        tenant_name: tenantName,
+        tenant_phone: (agreement as any).tenant_phone || '',
+        tenant_id_number: (agreement as any).tenant_id_number || '',
+        unit_name: agreement.unit_name || '',
+        location_name: locationName || '',
+        monthly_rent: `KES ${(agreement.monthly_rent || 0).toLocaleString()}`,
+        deposit_amount: `KES ${(agreement.deposit_amount || 0).toLocaleString()}`,
+        admin_name: template?.admin_name || agreement.issued_by || 'Landlord',
+        admin_title: template?.admin_title || 'Property Manager',
+        issued_by: agreement.issued_by || 'Admin',
     };
 
-    // Get the content — snapshot first, fallback to template, then fill placeholders
     const rawContent = (() => {
         try {
             if (agreement.agreement_snapshot) {
@@ -199,11 +201,9 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
     })();
 
     const content = rawContent ? fillPlaceholders(rawContent, placeholderVals) : null;
-
-    const adminName  = fillPlaceholders(template?.admin_name  || agreement.issued_by || '—', placeholderVals);
+    const adminName = fillPlaceholders(template?.admin_name || agreement.issued_by || '—', placeholderVals);
     const adminTitle = template?.admin_title || 'Property Manager';
     const adminSigUrl = template?.admin_signature_url;
-
 
     const hasSignature = activeTab === 'draw'
         ? signatureStrokes.length > 0
@@ -211,25 +211,26 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
 
     const handleAccept = async () => {
         if (!scrolledToBottom) {
-            Alert.alert('Read the full agreement', 'Please scroll all the way to the bottom first.');
+            Alert.alert('Read Full Agreement', 'Please scroll to the bottom of the agreement first.');
             return;
         }
         if (!hasSignature) {
-            Alert.alert('Signature required', activeTab === 'draw'
+            Alert.alert('Signature Required', activeTab === 'draw'
                 ? 'Please draw your signature before accepting.'
-                : 'Please type your full name before accepting.');
+                : 'Please type your full legal name before accepting.');
             return;
         }
 
         const sigDisplay = activeTab === 'type' ? typedName.trim() : tenantName;
 
         Alert.alert(
-            'Confirm & Sign',
-            `You are about to sign this tenancy agreement.\n\nTenant: ${tenantName}\nUnit: ${agreement.unit_name || '—'}\nRent: ${fmt(agreement.monthly_rent)}\n\nThis is legally binding.`,
+            'Confirm & Legally Bind',
+            `You are signing this lease agreement.\n\nTenant: ${tenantName}\nUnit: ${agreement.unit_name || '—'}\nRent: ${fmt(agreement.monthly_rent)}\n\nThis constitutes an electronic signature.`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: '✅ I Accept & Sign', style: 'default',
+                    text: 'I Accept & Sign',
+                    style: 'default',
                     onPress: async () => {
                         setSigning(true);
                         try {
@@ -246,14 +247,15 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
                             });
                             await signAgreement(agreement.agreement_id, sigDisplay, deviceInfo, snapshot);
                             Alert.alert(
-                                '✅ Agreement Signed!',
-                                'Your tenancy agreement has been signed and recorded. Welcome!',
+                                'Agreement Signed Successfully',
+                                'Your tenancy agreement has been officially signed and recorded.',
                                 [{ text: 'Continue', onPress: onAccepted }]
                             );
                         } catch (err: any) {
-                            Alert.alert('Error', err.message || 'Signing failed. Please try again.');
+                            Alert.alert('Signing Error', err.message || 'Signing failed. Please try again.');
+                        } finally {
+                            setSigning(false);
                         }
-                        setSigning(false);
                     },
                 },
             ]
@@ -261,22 +263,28 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Header */}
-            <LinearGradient colors={['#1e1b4b', '#3730a3', '#6366f1']} style={styles.header}>
-                <Text style={styles.headerEmoji}>📋</Text>
-                <View style={{ flex: 1 }}>
-                    <Text style={styles.headerTitle} numberOfLines={1}>
-                        {template?.title || 'Tenancy Agreement'}
-                    </Text>
-                    <Text style={styles.headerSub}>Please read fully before signing</Text>
-                </View>
-            </LinearGradient>
+        <View style={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
 
-            {/* Scroll banner */}
+            {/* Pinned Top Safe Header Bar */}
+            <View style={styles.pinnedHeader}>
+                {onBack && (
+                    <TouchableOpacity onPress={onBack} activeOpacity={0.75} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>← Back</Text>
+                    </TouchableOpacity>
+                )}
+                <View style={styles.headerTitleWrap}>
+                    <Text style={styles.headerTitle} numberOfLines={1}>
+                        {template?.title || 'Tenancy Lease Agreement'}
+                    </Text>
+                    <Text style={styles.headerSub}>Please review all terms before signing</Text>
+                </View>
+            </View>
+
+            {/* Scroll hint banner */}
             {!scrolledToBottom && (
                 <View style={styles.scrollHint}>
-                    <Text style={styles.scrollHintText}>👇 Scroll to the bottom to unlock signing</Text>
+                    <Text style={styles.scrollHintText}>👇 Scroll to the bottom to unlock signature pad</Text>
                 </View>
             )}
 
@@ -287,17 +295,17 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator
             >
-                {/* Lease details */}
+                {/* Lease Details Card */}
                 <View style={styles.detailsCard}>
-                    <Text style={styles.detailsTitle}>📄 Lease Details</Text>
+                    <Text style={styles.detailsTitle}>📄 Key Lease Terms</Text>
                     {[
-                        { label: 'Tenant',       value: tenantName },
-                        { label: 'Unit',         value: agreement.unit_name || '—' },
+                        { label: 'Tenant Name', value: tenantName },
+                        { label: 'Unit', value: agreement.unit_name || '—' },
                         { label: 'Monthly Rent', value: fmt(agreement.monthly_rent) },
-                        { label: 'Deposit',      value: fmt(agreement.deposit_amount) },
-                        { label: 'Lease Start',  value: agreement.lease_start_date || '—' },
-                        { label: 'Lease End',    value: agreement.lease_end_date || 'Month-to-Month' },
-                        { label: 'Issued By',    value: agreement.issued_by },
+                        { label: 'Deposit Paid', value: fmt(agreement.deposit_amount) },
+                        { label: 'Lease Start', value: agreement.lease_start_date || '—' },
+                        { label: 'Lease End', value: agreement.lease_end_date || 'Month-to-Month' },
+                        { label: 'Authorized Landlord', value: agreement.issued_by },
                     ].map(item => (
                         <View key={item.label} style={styles.detailRow}>
                             <Text style={styles.detailLabel}>{item.label}</Text>
@@ -306,37 +314,39 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
                     ))}
                 </View>
 
-                {/* Agreement body */}
+                {/* Agreement Body Text */}
                 <View style={styles.bodyCard}>
                     {content ? (
                         <Text style={styles.bodyText}>{content}</Text>
                     ) : (
                         <View style={styles.noContentBox}>
-                            <Text style={styles.noContentEmoji}>📄</Text>
-                            <Text style={styles.noContentTitle}>Agreement content loading…</Text>
+                            <Text style={styles.noContentTitle}>Lease Agreement Document</Text>
                             <Text style={styles.noContentSub}>
-                                The agreement text will appear here once the template is set up by your landlord.
-                                You can still proceed to sign using the details shown above.
+                                The official lease terms are linked to your unit {agreement.unit_name}. Scroll down to sign and confirm acceptance.
                             </Text>
                         </View>
                     )}
                 </View>
 
-                {/* Signature blocks */}
+                {/* Signatures Row */}
                 <View style={styles.signaturesRow}>
                     <View style={styles.sigBox}>
                         <Text style={styles.sigLabel}>LANDLORD / MANAGER</Text>
                         {adminSigUrl ? (
                             <Image source={{ uri: adminSigUrl }} style={styles.sigImage} resizeMode="contain" />
                         ) : (
-                            <View style={styles.sigPlaceholder} />
+                            <View style={styles.sigPlaceholder}>
+                                <Text style={styles.sigPlaceholderText}>Official Seal</Text>
+                            </View>
                         )}
                         <Text style={styles.sigName}>{adminName}</Text>
                         <Text style={styles.sigTitle}>{adminTitle}</Text>
                     </View>
                     <View style={styles.sigBox}>
-                        <Text style={styles.sigLabel}>TENANT</Text>
-                        <View style={styles.sigPlaceholder} />
+                        <Text style={styles.sigLabel}>TENANT SIGNATURE</Text>
+                        <View style={styles.sigPlaceholder}>
+                            <Text style={styles.sigPlaceholderText}>{hasSignature ? '✓ Signed' : 'Pending Sign'}</Text>
+                        </View>
                         <Text style={styles.sigName}>{tenantName}</Text>
                         <Text style={styles.sigTitle}>To sign below</Text>
                     </View>
@@ -345,152 +355,358 @@ export default function AgreementScreen({ agreement, template, tenantName, locat
                 <View style={{ height: 24 }} />
             </ScrollView>
 
-            {/* ── SIGNING SECTION ── */}
+            {/* Signature Pad Section */}
             <View style={[styles.signSection, !scrolledToBottom && styles.signSectionLocked]}>
                 {!scrolledToBottom ? (
-                    <View style={styles.lockedRow}>
-                        <Text style={styles.lockedText}>🔒 Keep scrolling to read the full agreement</Text>
+                    <View style={styles.lockedNotice}>
+                        <Text style={styles.lockedText}>🔒 Scroll through the agreement above to unlock signing</Text>
                     </View>
                 ) : (
                     <>
-                        {/* Tab switcher */}
-                        <View style={styles.tabRow}>
+                        <View style={styles.tabToggleRow}>
                             <TouchableOpacity
-                                style={[styles.tab, activeTab === 'draw' && styles.tabActive]}
-                                onPress={() => setActiveTab('draw')}>
-                                <Text style={[styles.tabText, activeTab === 'draw' && styles.tabTextActive]}>
-                                    ✍️ Draw Signature
+                                onPress={() => setActiveTab('draw')}
+                                style={[styles.tabToggleBtn, activeTab === 'draw' && styles.tabToggleBtnActive]}
+                            >
+                                <Text style={[styles.tabToggleText, activeTab === 'draw' && styles.tabToggleTextActive]}>
+                                    ✏️ Draw Signature
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.tab, activeTab === 'type' && styles.tabActive]}
-                                onPress={() => setActiveTab('type')}>
-                                <Text style={[styles.tabText, activeTab === 'type' && styles.tabTextActive]}>
+                                onPress={() => setActiveTab('type')}
+                                style={[styles.tabToggleBtn, activeTab === 'type' && styles.tabToggleBtnActive]}
+                            >
+                                <Text style={[styles.tabToggleText, activeTab === 'type' && styles.tabToggleTextActive]}>
                                     ⌨️ Type Name
                                 </Text>
                             </TouchableOpacity>
                         </View>
 
-                        {/* Draw pad */}
-                        {activeTab === 'draw' && (
+                        {activeTab === 'draw' ? (
                             <SignaturePad
-                                onSigned={setSignatureStrokes}
+                                onSigned={strokes => setSignatureStrokes(strokes)}
                                 onClear={() => setSignatureStrokes([])}
                             />
-                        )}
-
-                        {/* Type name */}
-                        {activeTab === 'type' && (
-                            <View style={styles.typeSection}>
-                                <Text style={styles.typeLabel}>Type your full legal name:</Text>
+                        ) : (
+                            <View style={styles.typeBox}>
+                                <Text style={styles.typeLabel}>FULL LEGAL NAME</Text>
                                 <TextInput
+                                    style={styles.typeInput}
                                     value={typedName}
                                     onChangeText={setTypedName}
-                                    placeholder={tenantName || 'Full Name'}
-                                    placeholderTextColor="#94a3b8"
-                                    style={styles.sigInput}
-                                    autoCorrect={false}
-                                    autoCapitalize="words"
+                                    placeholder="Enter your full name"
+                                    placeholderTextColor="#64748b"
                                 />
                             </View>
                         )}
 
-                        {/* Accept button */}
                         <TouchableOpacity
                             onPress={handleAccept}
                             disabled={signing || !hasSignature}
                             style={[styles.acceptBtn, (!hasSignature || signing) && styles.acceptBtnDisabled]}
-                            activeOpacity={0.85}
                         >
                             {signing ? (
-                                <ActivityIndicator color="#fff" size="small" />
+                                <ActivityIndicator color="#ffffff" size="small" />
                             ) : (
-                                <Text style={styles.acceptBtnText}>✅ I Accept & Sign Agreement</Text>
+                                <Text style={styles.acceptBtnText}>✓ Confirm & Sign Tenancy Agreement</Text>
                             )}
                         </TouchableOpacity>
-                        <Text style={styles.legalText}>
-                            By accepting, you confirm this is your legally binding digital signature under Kenyan law.
-                        </Text>
                     </>
                 )}
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container:       { flex: 1, backgroundColor: '#f8fafc' },
-    header:          { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 18 },
-    headerEmoji:     { fontSize: 28 },
-    headerTitle:     { color: '#fff', fontSize: 15, fontWeight: '800' },
-    headerSub:       { color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 2 },
-
-    scrollHint:      { backgroundColor: '#fef3c7', paddingVertical: 8, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#fde68a' },
-    scrollHintText:  { color: '#92400e', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-
-    scroll:          { flex: 1 },
-    scrollContent:   { padding: 16, paddingBottom: 0 },
-
-    detailsCard:     { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3 },
-    detailsTitle:    { fontSize: 13, fontWeight: '800', color: '#1e1b4b', marginBottom: 12 },
-    detailRow:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-    detailLabel:     { fontSize: 11, color: '#64748b', fontWeight: '600' },
-    detailValue:     { fontSize: 12, color: '#1e293b', fontWeight: '700', textAlign: 'right', flex: 1, marginLeft: 12 },
-
-    bodyCard:        { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3 },
-    bodyText:        { fontSize: 12.5, color: '#374151', lineHeight: 20 },
-
-    noContentBox:    { alignItems: 'center', paddingVertical: 20 },
-    noContentEmoji:  { fontSize: 36, marginBottom: 10 },
-    noContentTitle:  { fontSize: 14, fontWeight: '700', color: '#475569', marginBottom: 6 },
-    noContentSub:    { fontSize: 12, color: '#94a3b8', textAlign: 'center', lineHeight: 18 },
-
-    signaturesRow:   { flexDirection: 'row', gap: 12, marginBottom: 12 },
-    sigBox:          { flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-    sigLabel:        { fontSize: 10, fontWeight: '800', color: '#6366f1', marginBottom: 8, textTransform: 'uppercase' },
-    sigImage:        { width: '100%', height: 50, marginBottom: 8 },
-    sigPlaceholder:  { height: 40, borderBottomWidth: 2, borderColor: '#d1d5db', marginBottom: 8 },
-    sigName:         { fontSize: 11, fontWeight: '700', color: '#1e293b' },
-    sigTitle:        { fontSize: 10, color: '#94a3b8', marginTop: 2 },
-
-    // Signing section
-    signSection:     { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingHorizontal: 16, paddingVertical: 12, paddingBottom: 20 },
-    signSectionLocked: { backgroundColor: '#fafafa' },
-    lockedRow:       { alignItems: 'center', paddingVertical: 8 },
-    lockedText:      { color: '#64748b', fontSize: 13, fontWeight: '600' },
-
-    // Tabs
-    tabRow:          { flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 12, padding: 3, marginBottom: 12 },
-    tab:             { flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
-    tabActive:       { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2 },
-    tabText:         { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
-    tabTextActive:   { color: '#6366f1', fontWeight: '800' },
-
-    // Signature pad
-    padWrapper:      { marginBottom: 12 },
-    padLabelRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-    padLabel:        { fontSize: 12, fontWeight: '700', color: '#374151' },
-    clearBtn:        { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5' },
-    clearBtnText:    { fontSize: 11, fontWeight: '700', color: '#ef4444' },
-    padCanvas:       {
-        width: PAD_W, height: PAD_H,
-        backgroundColor: '#fafafa',
-        borderWidth: 2, borderColor: '#c7d2fe', borderRadius: 16,
-        borderStyle: 'dashed',
-        overflow: 'hidden', position: 'relative',
+    container: {
+        flex: 1,
+        backgroundColor: '#0a0f1d',
     },
-    padGuideLine:    { position: 'absolute', bottom: 38, left: 16, right: 16, height: 1.5, backgroundColor: '#c7d2fe' },
-    padGuideText:    { position: 'absolute', bottom: 14, left: 0, right: 0, textAlign: 'center', fontSize: 10, color: '#c7d2fe', fontWeight: '600', letterSpacing: 2 },
-    padHint:         { fontSize: 11, color: '#94a3b8', textAlign: 'center', marginTop: 6, fontStyle: 'italic' },
-
-    // Type section
-    typeSection:     { marginBottom: 12 },
-    typeLabel:       { fontSize: 12, fontWeight: '700', color: '#374151', marginBottom: 8 },
-    sigInput:        { borderWidth: 1.5, borderColor: '#c7d2fe', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, fontWeight: '700', color: '#1e1b4b', backgroundColor: '#eef2ff', fontStyle: 'italic' },
-
-    // Accept
-    acceptBtn:       { backgroundColor: '#6366f1', borderRadius: 16, paddingVertical: 15, alignItems: 'center', marginBottom: 8, shadowColor: '#6366f1', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
-    acceptBtnDisabled: { backgroundColor: '#e2e8f0', shadowOpacity: 0 },
-    acceptBtnText:   { color: '#fff', fontSize: 15, fontWeight: '800' },
-    legalText:       { fontSize: 10, color: '#94a3b8', textAlign: 'center', lineHeight: 15 },
+    pinnedHeader: {
+        backgroundColor: '#0d1527',
+        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 46,
+        paddingBottom: 14,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    backBtn: {
+        backgroundColor: 'rgba(255, 255, 255, 0.07)',
+        paddingHorizontal: 13,
+        paddingVertical: 7,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.14)',
+    },
+    backBtnText: {
+        color: '#f8fafc',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    headerTitleWrap: {
+        flex: 1,
+    },
+    headerTitle: {
+        color: '#f8fafc',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    headerSub: {
+        color: '#94a3b8',
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 1,
+    },
+    scrollHint: {
+        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+        paddingVertical: 8,
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(245, 158, 11, 0.25)',
+    },
+    scrollHintText: {
+        color: '#fbbf24',
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    scroll: {
+        flex: 1,
+    },
+    scrollContent: {
+        padding: 16,
+    },
+    detailsCard: {
+        backgroundColor: '#131b2e',
+        borderRadius: 18,
+        padding: 18,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    detailsTitle: {
+        color: '#f8fafc',
+        fontSize: 14,
+        fontWeight: '900',
+        marginBottom: 12,
+    },
+    detailRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingVertical: 7,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+    },
+    detailLabel: {
+        color: '#94a3b8',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    detailValue: {
+        color: '#f8fafc',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    bodyCard: {
+        backgroundColor: '#131b2e',
+        borderRadius: 18,
+        padding: 18,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    bodyText: {
+        color: '#cbd5e1',
+        fontSize: 13,
+        lineHeight: 22,
+    },
+    noContentBox: {
+        paddingVertical: 20,
+        alignItems: 'center',
+    },
+    noContentTitle: {
+        color: '#f8fafc',
+        fontSize: 15,
+        fontWeight: '900',
+        marginBottom: 6,
+    },
+    noContentSub: {
+        color: '#94a3b8',
+        fontSize: 12,
+        textAlign: 'center',
+        lineHeight: 18,
+    },
+    signaturesRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 16,
+    },
+    sigBox: {
+        flex: 1,
+        backgroundColor: '#131b2e',
+        borderRadius: 14,
+        padding: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    sigLabel: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: '#64748b',
+        letterSpacing: 0.6,
+        marginBottom: 8,
+    },
+    sigImage: {
+        width: 100,
+        height: 40,
+        marginBottom: 6,
+    },
+    sigPlaceholder: {
+        width: 100,
+        height: 40,
+        backgroundColor: '#0a0f1d',
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.06)',
+    },
+    sigPlaceholderText: {
+        color: '#64748b',
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    sigName: {
+        color: '#f8fafc',
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    sigTitle: {
+        color: '#64748b',
+        fontSize: 10,
+        fontWeight: '600',
+    },
+    signSection: {
+        backgroundColor: '#0d1527',
+        padding: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    signSectionLocked: {
+        opacity: 0.8,
+    },
+    lockedNotice: {
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    lockedText: {
+        color: '#94a3b8',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    tabToggleRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 12,
+    },
+    tabToggleBtn: {
+        flex: 1,
+        paddingVertical: 8,
+        borderRadius: 10,
+        backgroundColor: '#131b2e',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    tabToggleBtnActive: {
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    },
+    tabToggleText: {
+        color: '#94a3b8',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    tabToggleTextActive: {
+        color: '#10b981',
+        fontWeight: '900',
+    },
+    padWrapper: {
+        marginBottom: 12,
+    },
+    padHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    padLabel: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: '#64748b',
+        letterSpacing: 0.6,
+    },
+    clearBtn: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+    },
+    clearBtnText: {
+        color: '#ef4444',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    padCanvas: {
+        width: '100%',
+        height: PAD_H,
+        backgroundColor: '#0a0f1d',
+        borderRadius: 14,
+        borderWidth: 1.5,
+        borderColor: 'rgba(16, 185, 129, 0.3)',
+        overflow: 'hidden',
+    },
+    padHint: {
+        color: '#64748b',
+        fontSize: 10,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    typeBox: {
+        marginBottom: 12,
+    },
+    typeLabel: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: '#64748b',
+        letterSpacing: 0.6,
+        marginBottom: 6,
+    },
+    typeInput: {
+        backgroundColor: '#0a0f1d',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        color: '#f8fafc',
+        fontSize: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(16, 185, 129, 0.3)',
+    },
+    acceptBtn: {
+        backgroundColor: '#10b981',
+        paddingVertical: 14,
+        borderRadius: 14,
+        alignItems: 'center',
+    },
+    acceptBtnDisabled: {
+        backgroundColor: '#1e293b',
+    },
+    acceptBtnText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '900',
+    },
 });

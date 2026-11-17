@@ -1,13 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-    View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    TextInput, ActivityIndicator, StatusBar,
-    KeyboardAvoidingView, Platform,
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    TouchableOpacity,
+    TextInput,
+    ActivityIndicator,
+    StatusBar,
+    KeyboardAvoidingView,
+    Platform,
+    Animated,
+    Clipboard,
+    Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-    StaffSession, TenantSearchResult, formatKES, maskPhone,
-    initiateSTKPush, pollSTKResult, refreshTenantBalance,
+    StaffSession,
+    TenantSearchResult,
+    formatKES,
+    maskPhone,
+    normalizePhone,
+    initiateSTKPush,
+    pollSTKResult,
+    refreshTenantBalance,
 } from '../lib/supabase';
 import { validateKenyanPhone, validateAmount } from '../lib/security';
 
@@ -21,21 +37,116 @@ interface Props {
 type Step = 'details' | 'confirm' | 'processing' | 'success' | 'failed';
 type PhoneMode = 'registered' | 'custom';
 
-const C = {
-    bg: '#0f172a', card: '#1e293b', border: '#334155',
-    primary: '#6366f1', accent: '#10b981', danger: '#ef4444',
-    gold: '#f59e0b', text: '#f8fafc', sub: '#94a3b8', dim: '#64748b',
+const COLORS = {
+    bg: '#0a0f1d',
+    card: '#131b2e',
+    cardBorder: 'rgba(255, 255, 255, 0.08)',
+    primary: '#6366f1',
+    accent: '#10b981',
+    neonGreen: '#00e676',
+    danger: '#ef4444',
+    gold: '#fbbf24',
+    text: '#f8fafc',
+    textSub: '#94a3b8',
+    textDim: '#64748b',
     purple: '#8b5cf6',
 };
 
-function Row({ emoji, label, value, highlight }: {
-    emoji: string; label: string; value: string; highlight?: boolean;
-}) {
+const CONFETTI_COLORS = ['#10b981', '#00e676', '#fbbf24', '#f59e0b', '#38bdf8', '#a855f7', '#ec4899', '#ffffff'];
+
+function FireworksBurst() {
+    const particles = useRef(
+        Array.from({ length: 32 }).map((_, i) => {
+            const angle = (i / 32) * 2 * Math.PI + (Math.random() * 0.4 - 0.2);
+            const dist = 70 + Math.random() * 110;
+            const size = 6 + Math.random() * 8;
+            const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+            const anim = new Animated.Value(0);
+            return {
+                anim,
+                targetX: Math.cos(angle) * dist,
+                targetY: Math.sin(angle) * dist,
+                size,
+                color,
+                isCircle: i % 2 === 0,
+            };
+        })
+    ).current;
+
+    useEffect(() => {
+        const animations = particles.map(p =>
+            Animated.sequence([
+                Animated.timing(p.anim, {
+                    toValue: 1,
+                    duration: 1300 + Math.random() * 400,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(p.anim, {
+                    toValue: 0.8,
+                    duration: 600,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        Animated.stagger(20, animations).start();
+    }, [particles]);
+
     return (
-        <View style={s.confirmRow}>
-            <Text style={s.rowEmoji}>{emoji}</Text>
-            <Text style={s.rowLabel}>{label}</Text>
-            <Text style={[s.rowValue, highlight && { color: C.accent, fontWeight: '900', fontSize: 16 }]}>
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                {particles.map((p, idx) => {
+                    const transX = p.anim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, p.targetX],
+                    });
+                    const transY = p.anim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, p.targetY],
+                    });
+                    const scale = p.anim.interpolate({
+                        inputRange: [0, 0.4, 1],
+                        outputRange: [0.2, 1.4, 0.7],
+                    });
+                    const opacity = p.anim.interpolate({
+                        inputRange: [0, 0.2, 0.7, 1],
+                        outputRange: [0, 1, 0.9, 0],
+                    });
+                    const rotate = p.anim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', `${(idx % 2 === 0 ? 1 : -1) * 360}deg`],
+                    });
+
+                    return (
+                        <Animated.View
+                            key={idx}
+                            style={{
+                                position: 'absolute',
+                                width: p.size,
+                                height: p.isCircle ? p.size : p.size * 1.6,
+                                borderRadius: p.isCircle ? p.size / 2 : 2,
+                                backgroundColor: p.color,
+                                opacity,
+                                transform: [
+                                    { translateX: transX },
+                                    { translateY: transY },
+                                    { scale },
+                                    { rotate },
+                                ],
+                            }}
+                        />
+                    );
+                })}
+            </View>
+        </View>
+    );
+}
+
+function ConfirmRowItem({ emoji, label, value, highlight }: { emoji: string; label: string; value: string; highlight?: boolean }) {
+    return (
+        <View style={styles.confirmRow}>
+            <Text style={styles.rowEmoji}>{emoji}</Text>
+            <Text style={styles.rowLabel}>{label}</Text>
+            <Text style={[styles.rowValue, highlight && { color: COLORS.neonGreen, fontWeight: '900', fontSize: 16 }]}>
                 {value}
             </Text>
         </View>
@@ -48,28 +159,38 @@ export default function LandlordPayScreen({ staff, tenant, onBack, onPaymentComp
     const [customPhone, setCustomPhone] = useState('');
     const [amount, setAmount] = useState('');
     const [freshBalance, setFreshBalance] = useState(tenant.balance);
-    const [error, setError] = useState('');
     const [statusMsg, setStatusMsg] = useState('');
+    const [error, setError] = useState('');
     const [receipt, setReceipt] = useState('');
     const [paidAmount, setPaidAmount] = useState(0);
     const [confirmedBalance, setConfirmedBalance] = useState(0);
+
     const cleanupRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
-        refreshTenantBalance(tenant.tenant_id).then(b => {
-            setFreshBalance(b);
+        refreshTenantBalance(tenant.tenant_id).then(bal => {
+            setFreshBalance(bal);
+            if (bal > 0) setAmount(String(Math.round(bal)));
         });
-        return () => { if (cleanupRef.current) cleanupRef.current(); };
-    }, []);
+        return () => {
+            if (cleanupRef.current) cleanupRef.current();
+        };
+    }, [tenant.tenant_id]);
 
     const effectivePhone = phoneMode === 'registered' ? tenant.phone : customPhone;
 
     const handleProceed = () => {
         const { valid: amtValid, error: amtErr } = validateAmount(amount);
-        if (!amtValid) { setError(amtErr || 'Invalid amount'); return; }
+        if (!amtValid) {
+            setError(amtErr || 'Please enter a valid payment amount');
+            return;
+        }
 
         const { valid: phValid, error: phErr } = validateKenyanPhone(effectivePhone);
-        if (!phValid) { setError(phErr || 'Invalid phone number'); return; }
+        if (!phValid) {
+            setError(phErr || 'Please enter a valid Kenyan phone number');
+            return;
+        }
 
         setError('');
         setStep('confirm');
@@ -77,17 +198,24 @@ export default function LandlordPayScreen({ staff, tenant, onBack, onPaymentComp
 
     const handlePayNow = async () => {
         setStep('processing');
-        setStatusMsg('Sending M-Pesa prompt to tenant…');
+        setStatusMsg('Dispatching M-Pesa STK push to tenant...');
+
+        const normalized = normalizePhone(effectivePhone);
+        if (!normalized) {
+            setError('Invalid phone number');
+            setStep('details');
+            return;
+        }
 
         const amtVal = Math.round(parseFloat(amount));
-        const desc = `Rent - ${tenant.tenant_name} - ${tenant.unit_name} (via Landlord)`;
+        const desc = `Rent - ${tenant.tenant_name} - ${tenant.unit_name} (Landlord)`;
 
         try {
-            const { checkoutRequestId, error: stkErr, tillNotConfigured } = await initiateSTKPush({
-                payerPhone: effectivePhone,
+            const { checkoutRequestId, error: stkErr } = await initiateSTKPush({
+                payerPhone: normalized,
                 amount: amtVal,
                 tenantId: tenant.tenant_id,
-                tenantPhone: tenant.phone,
+                tenantPhone: tenant.phone || normalized,
                 description: desc,
             });
 
@@ -97,11 +225,11 @@ export default function LandlordPayScreen({ staff, tenant, onBack, onPaymentComp
                 return;
             }
 
-            setStatusMsg('Waiting for tenant to enter M-Pesa PIN…\nCheck tenant\'s phone for the prompt.');
+            setStatusMsg('Waiting for tenant to enter M-Pesa PIN on their phone...');
 
             cleanupRef.current = pollSTKResult({
                 checkoutRequestId,
-                timeoutMs: 70000,
+                timeoutMs: 60000,
                 onConfirmed: async (mpesaReceipt, confirmedAmt) => {
                     const finalAmt = confirmedAmt || amtVal;
                     setReceipt(mpesaReceipt);
@@ -110,17 +238,17 @@ export default function LandlordPayScreen({ staff, tenant, onBack, onPaymentComp
                     setConfirmedBalance(newBal);
                     setStep('success');
                 },
-                onFailed: (reason) => {
-                    setError(reason || 'Payment was cancelled or failed');
+                onFailed: reason => {
+                    setError(reason || 'Payment was cancelled or rejected by tenant.');
                     setStep('failed');
                 },
                 onTimeout: () => {
-                    setError('Payment timed out. If the tenant paid, it will reflect shortly.');
+                    setError('Payment verification timed out. If money was deducted, the system will auto-sync.');
                     setStep('failed');
                 },
             });
         } catch (err: any) {
-            setError(err.message || 'Network error');
+            setError(err.message || 'Network communication error');
             setStep('failed');
         }
     };
@@ -130,399 +258,793 @@ export default function LandlordPayScreen({ staff, tenant, onBack, onPaymentComp
         setError('');
         setReceipt('');
         setPaidAmount(0);
-        if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+        if (cleanupRef.current) {
+            cleanupRef.current();
+            cleanupRef.current = null;
+        }
     };
 
     const initials = tenant.tenant_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
-    // ── STEP: DETAILS ─────────────────────────────────────────
-    if (step === 'details') {
+    // ─────────────────────────────────────────────────────────────
+    // STEP: SUCCESS (WITH FIREWORKS)
+    // ─────────────────────────────────────────────────────────────
+    if (step === 'success') {
         return (
-            <View style={s.container}>
-                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-                <LinearGradient colors={['#4f46e5', '#7c3aed']} style={s.header}>
-                    <TouchableOpacity onPress={onBack} style={s.backBtn}>
-                        <Text style={s.backText}>← Back</Text>
+            <View style={styles.root}>
+                <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+                <View style={styles.pinnedHeader}>
+                    <TouchableOpacity onPress={onBack} activeOpacity={0.75} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>← Back</Text>
                     </TouchableOpacity>
-                    <Text style={s.headerTitle}>💳 Collect Rent</Text>
-                    <Text style={s.headerSub}>Landlord STK Push · M-Pesa</Text>
-                </LinearGradient>
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>Rent Collected</Text>
+                        <Text style={styles.headerSub}>STK settled instantly</Text>
+                    </View>
+                </View>
 
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                    style={{ flex: 1 }}
-                >
-                    <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+                {/* Celebratory Fireworks Particle Burst */}
+                <FireworksBurst />
 
-                        {/* Tenant Info Card */}
-                        <LinearGradient colors={['#1e293b', '#334155']} style={s.tenantCard}>
-                            <LinearGradient colors={['#4f46e5', '#7c3aed']} style={s.tenantAvatar}>
-                                <Text style={s.tenantAvatarText}>{initials}</Text>
-                            </LinearGradient>
-                            <View style={{ flex: 1 }}>
-                                <Text style={s.tenantName}>{tenant.tenant_name}</Text>
-                                <Text style={s.tenantSub}>📞 {tenant.phone || 'N/A'}</Text>
-                                <Text style={s.tenantSub}>🏠 {tenant.unit_name}  ·  📍 {tenant.location_name}</Text>
+                <ScrollView contentContainerStyle={styles.centerContent}>
+                    <View style={styles.successCard}>
+                        <View style={styles.successIconCircle}>
+                            <Text style={styles.successIconEmoji}>🎆</Text>
+                        </View>
+                        <Text style={styles.successTitle}>🎉 Payment Received! 🎇</Text>
+                        <Text style={styles.successSub}>
+                            The tenant's payment was verified and credited in real-time.
+                        </Text>
+
+                        <View style={styles.resultRows}>
+                            <View style={styles.resultRow}>
+                                <Text style={styles.resultLabel}>Tenant Name</Text>
+                                <Text style={styles.resultValue}>{tenant.tenant_name}</Text>
                             </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                                <Text style={s.balLabel}>Balance</Text>
-                                <Text style={[s.balValue, { color: freshBalance > 0 ? C.danger : C.accent }]}>
-                                    {formatKES(freshBalance)}
+                            <View style={styles.resultRow}>
+                                <Text style={styles.resultLabel}>Unit Allocated</Text>
+                                <Text style={styles.resultValue}>{tenant.unit_name} • {tenant.location_name}</Text>
+                            </View>
+                            <View style={styles.resultRow}>
+                                <Text style={styles.resultLabel}>Amount Collected</Text>
+                                <Text style={[styles.resultValue, { color: COLORS.neonGreen, fontWeight: '900' }]}>
+                                    {formatKES(paidAmount)}
                                 </Text>
                             </View>
-                        </LinearGradient>
-
-                        {/* Phone selector */}
-                        <Text style={s.sectionLabel}>📱 Send STK Prompt To</Text>
-                        <View style={s.phoneModeRow}>
-                            <TouchableOpacity
-                                style={[s.phoneModeBtn, phoneMode === 'registered' && s.phoneModeBtnActive]}
-                                onPress={() => setPhoneMode('registered')}
-                            >
-                                <Text style={[s.phoneModeBtnText, phoneMode === 'registered' && s.phoneModeBtnTextActive]}>
-                                    Tenant's Phone
+                            <View style={styles.resultRow}>
+                                <Text style={styles.resultLabel}>M-Pesa Receipt</Text>
+                                <Text style={[styles.resultValue, { color: COLORS.gold }]}>{receipt}</Text>
+                            </View>
+                            <View style={styles.resultRow}>
+                                <Text style={styles.resultLabel}>Remaining Balance</Text>
+                                <Text style={[styles.resultValue, { color: confirmedBalance > 0 ? COLORS.danger : COLORS.neonGreen }]}>
+                                    {formatKES(confirmedBalance)}
                                 </Text>
-                                {phoneMode === 'registered' && (
-                                    <Text style={s.phoneModeVal}>{maskPhone(tenant.phone)}</Text>
-                                )}
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[s.phoneModeBtn, phoneMode === 'custom' && s.phoneModeBtnActive]}
-                                onPress={() => setPhoneMode('custom')}
-                            >
-                                <Text style={[s.phoneModeBtnText, phoneMode === 'custom' && s.phoneModeBtnTextActive]}>
-                                    Other Phone
-                                </Text>
-                                <Text style={s.phoneModeHint}>Parent / Relative</Text>
-                            </TouchableOpacity>
+                            </View>
                         </View>
 
-                        {phoneMode === 'custom' && (
-                            <View style={s.inputGroup}>
-                                <Text style={s.inputLabel}>📞 Custom Phone Number</Text>
-                                <TextInput
-                                    style={s.input}
-                                    value={customPhone}
-                                    onChangeText={setCustomPhone}
-                                    placeholder="e.g. 0712345678"
-                                    placeholderTextColor={C.dim}
-                                    keyboardType="phone-pad"
-                                    maxLength={13}
-                                    autoFocus
-                                />
-                                <Text style={s.inputHint}>
-                                    This phone will receive the M-Pesa prompt. Payment still credited to {tenant.tenant_name}.
-                                </Text>
-                            </View>
-                        )}
-
-                        {/* Amount */}
-                        <View style={s.inputGroup}>
-                            <Text style={s.inputLabel}>💰 Amount to Collect (KES)</Text>
-                            <TextInput
-                                style={[s.input, s.amountInput]}
-                                value={amount}
-                                onChangeText={t => setAmount(t.replace(/[^0-9]/g, ''))}
-                                placeholder="Enter amount"
-                                placeholderTextColor={C.dim}
-                                keyboardType="numeric"
-                                maxLength={7}
-                            />
-                            {freshBalance > 0 && (
-                                <TouchableOpacity
-                                    style={s.quickBtn}
-                                    onPress={() => setAmount(String(Math.round(freshBalance)))}
-                                >
-                                    <Text style={s.quickBtnText}>
-                                        💡 Collect full balance: {formatKES(freshBalance)}
-                                    </Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        {/* Info note */}
-                        <View style={s.infoBox}>
-                            <Text style={s.infoIcon}>🔒</Text>
-                            <Text style={s.infoText}>
-                                The M-Pesa prompt will be sent to the selected phone.
-                                The tenant must enter their M-Pesa PIN to complete payment.
-                                Payment is credited directly to {tenant.tenant_name}'s account.
-                            </Text>
-                        </View>
-
-                        {error ? (
-                            <View style={s.errorBox}>
-                                <Text style={s.errorText}>⚠️ {error}</Text>
-                            </View>
-                        ) : null}
-
-                        <TouchableOpacity onPress={handleProceed} activeOpacity={0.85}>
-                            <LinearGradient colors={[C.accent, C.primary]} style={s.proceedBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                                <Text style={s.proceedBtnText}>Review & Confirm →</Text>
+                        <TouchableOpacity
+                            onPress={() => {
+                                reset();
+                                onPaymentComplete();
+                            }}
+                            activeOpacity={0.85}
+                            style={styles.doneBtn}
+                        >
+                            <LinearGradient colors={['#10b981', '#059669']} style={styles.doneBtnGrad}>
+                                <Text style={styles.doneBtnText}>Done • Return to Tenants</Text>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </ScrollView>
-                </KeyboardAvoidingView>
+                    </View>
+                </ScrollView>
             </View>
         );
     }
 
-    // ── STEP: CONFIRM ─────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // STEP: PROCESSING (RADAR)
+    // ─────────────────────────────────────────────────────────────
+    if (step === 'processing') {
+        return (
+            <View style={styles.root}>
+                <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+                <View style={styles.pinnedHeader}>
+                    <TouchableOpacity onPress={() => setStep('details')} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>← Cancel</Text>
+                    </TouchableOpacity>
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>Sending STK Push</Text>
+                        <Text style={styles.headerSub}>Awaiting tenant PIN</Text>
+                    </View>
+                </View>
+
+                <View style={styles.centerBox}>
+                    <View style={styles.processingCard}>
+                        <ActivityIndicator size="large" color={COLORS.accent} style={{ marginBottom: 16 }} />
+                        <Text style={styles.processingTitle}>M-Pesa Prompt Dispatched</Text>
+                        <Text style={styles.processingSub}>{statusMsg}</Text>
+                        <View style={styles.processingPhonePill}>
+                            <Text style={styles.processingPhoneText}>{maskPhone(effectivePhone)}</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setStep('details')} style={styles.cancelLink}>
+                            <Text style={styles.cancelLinkText}>Cancel & Edit</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP: FAILED
+    // ─────────────────────────────────────────────────────────────
+    if (step === 'failed') {
+        return (
+            <View style={styles.root}>
+                <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+                <View style={styles.pinnedHeader}>
+                    <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>← Back</Text>
+                    </TouchableOpacity>
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>Collection Status</Text>
+                        <Text style={styles.headerSub}>Notice</Text>
+                    </View>
+                </View>
+
+                <View style={styles.centerBox}>
+                    <View style={styles.failedCard}>
+                        <Text style={styles.failedIcon}>⚠️</Text>
+                        <Text style={styles.failedTitle}>Prompt Not Confirmed</Text>
+                        <Text style={styles.failedSub}>{error || 'The transaction was not completed.'}</Text>
+                        <TouchableOpacity onPress={reset} style={styles.retryBtn}>
+                            <Text style={styles.retryBtnText}>Try Again</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={onBack} style={styles.cancelLink}>
+                            <Text style={styles.cancelLinkText}>Return to Tenant List</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP: CONFIRM
+    // ─────────────────────────────────────────────────────────────
     if (step === 'confirm') {
         return (
-            <View style={s.container}>
-                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-                <LinearGradient colors={['#4f46e5', '#7c3aed']} style={s.header}>
-                    <TouchableOpacity onPress={() => setStep('details')} style={s.backBtn}>
-                        <Text style={s.backText}>← Edit</Text>
+            <View style={styles.root}>
+                <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+                <View style={styles.pinnedHeader}>
+                    <TouchableOpacity onPress={() => setStep('details')} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>← Back</Text>
                     </TouchableOpacity>
-                    <Text style={s.headerTitle}>✅ Confirm Collection</Text>
-                    <Text style={s.headerSub}>Review before sending prompt</Text>
-                </LinearGradient>
-                <ScrollView contentContainerStyle={s.content}>
-                    <View style={s.confirmCard}>
-                        <Row emoji="👤" label="Tenant"     value={tenant.tenant_name} />
-                        <Row emoji="🏠" label="Room"       value={`${tenant.unit_name} · ${tenant.location_name}`} />
-                        <Row emoji="💰" label="Amount"     value={formatKES(parseFloat(amount))} highlight />
-                        <Row emoji="📱" label="STK To"     value={maskPhone(effectivePhone)} />
-                        {phoneMode === 'custom' && (
-                            <View style={s.creditNote}>
-                                <Text style={s.creditNoteText}>
-                                    ✅ Payment credited to <Text style={{ fontWeight: '900' }}>{tenant.tenant_name}'s account</Text>, not the payer's number
-                                </Text>
-                            </View>
-                        )}
-                        <Row emoji="🏛️" label="Initiated By" value={`Landlord: ${staff.staff_name}`} />
-                        <Row emoji="📲" label="Method"     value="M-Pesa STK Push" />
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>Confirm STK Push</Text>
+                        <Text style={styles.headerSub}>Verify payment recipient</Text>
+                    </View>
+                </View>
+
+                <ScrollView contentContainerStyle={styles.content}>
+                    <View style={styles.confirmCard}>
+                        <Text style={styles.confirmCardLabel}>TRANSACTION SUMMARY</Text>
+                        <ConfirmRowItem emoji="👤" label="Tenant" value={tenant.tenant_name} />
+                        <ConfirmRowItem emoji="🚪" label="Allocated Unit" value={`${tenant.unit_name} • ${tenant.location_name}`} />
+                        <ConfirmRowItem emoji="💰" label="Amount" value={formatKES(parseFloat(amount))} highlight />
+                        <ConfirmRowItem emoji="📱" label="Prompt Sent To" value={maskPhone(effectivePhone)} />
+                        <ConfirmRowItem emoji="👔" label="Initiated By" value={`${staff.staff_name} (Landlord)`} />
                     </View>
 
-                    <TouchableOpacity onPress={handlePayNow} activeOpacity={0.85}>
-                        <LinearGradient colors={['#10b981', '#059669', '#047857']} style={s.payNowBtn}>
-                            <Text style={{ fontSize: 22 }}>🚀</Text>
-                            <Text style={s.payNowText}>Send STK Prompt</Text>
+                    <TouchableOpacity onPress={handlePayNow} activeOpacity={0.85} style={styles.sendStkBtn}>
+                        <LinearGradient colors={['#10b981', '#059669']} style={styles.sendStkGrad}>
+                            <Text style={styles.sendStkEmoji}>⚡</Text>
+                            <Text style={styles.sendStkText}>Push STK ({formatKES(parseFloat(amount))})</Text>
                         </LinearGradient>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setStep('details')} style={s.cancelLink}>
-                        <Text style={s.cancelText}>← Go Back</Text>
                     </TouchableOpacity>
                 </ScrollView>
             </View>
         );
     }
 
-    // ── STEP: PROCESSING ──────────────────────────────────────
-    if (step === 'processing') {
-        return (
-            <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
-                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-                <View style={s.resultCard}>
-                    <ActivityIndicator size="large" color={C.accent} />
-                    <Text style={s.processingTitle}>Awaiting Payment</Text>
-                    <Text style={s.processingMsg}>{statusMsg}</Text>
-                    <View style={s.processingTenantChip}>
-                        <Text style={s.processingTenantText}>👤 {tenant.tenant_name}</Text>
-                        <Text style={s.processingTenantText}>💰 {formatKES(parseFloat(amount))}</Text>
-                    </View>
-                    <Text style={s.processingHint}>⚠️ Do NOT close this screen</Text>
+    // ─────────────────────────────────────────────────────────────
+    // STEP: DETAILS (DEFAULT)
+    // ─────────────────────────────────────────────────────────────
+    return (
+        <View style={styles.root}>
+            <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+
+            {/* Pinned Top Safe Header Bar */}
+            <View style={styles.pinnedHeader}>
+                <TouchableOpacity onPress={onBack} activeOpacity={0.75} style={styles.backBtn}>
+                    <Text style={styles.backBtnText}>← Back</Text>
+                </TouchableOpacity>
+                <View style={styles.headerTitleWrap}>
+                    <Text style={styles.headerTitle}>Collect Rent</Text>
+                    <Text style={styles.headerSub}>Landlord Instant STK Express</Text>
                 </View>
             </View>
-        );
-    }
 
-    // ── STEP: SUCCESS ─────────────────────────────────────────
-    if (step === 'success') {
-        return (
-            <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
-                <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-                <View style={s.resultCard}>
-                    <Text style={{ fontSize: 52 }}>🎉</Text>
-                    <Text style={s.successTitle}>Payment Received!</Text>
-                    <View style={s.resultRows}>
-                        <View style={s.resultRow}>
-                            <Text style={s.resultLabel}>Tenant</Text>
-                            <Text style={s.resultValue}>{tenant.tenant_name}</Text>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+                <ScrollView contentContainerStyle={styles.content}>
+                    {/* Tenant Hero Card */}
+                    <LinearGradient colors={['#16213e', '#0f172a']} style={styles.tenantHeroCard}>
+                        <View style={styles.tenantAvatar}>
+                            <Text style={styles.tenantAvatarText}>{initials}</Text>
                         </View>
-                        <View style={s.resultRow}>
-                            <Text style={s.resultLabel}>Amount Paid</Text>
-                            <Text style={[s.resultValue, { color: C.accent }]}>{formatKES(paidAmount)}</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.tenantHeroName}>{tenant.tenant_name}</Text>
+                            <Text style={styles.tenantHeroSub}>🚪 {tenant.unit_name} • 📍 {tenant.location_name}</Text>
+                            <Text style={styles.tenantHeroPhone}>📱 {tenant.phone || 'No phone'}</Text>
                         </View>
-                        <View style={s.resultRow}>
-                            <Text style={s.resultLabel}>M-Pesa Receipt</Text>
-                            <Text style={[s.resultValue, { color: C.gold }]}>{receipt}</Text>
-                        </View>
-                        <View style={s.resultRow}>
-                            <Text style={s.resultLabel}>New Balance</Text>
-                            <Text style={[s.resultValue, { color: confirmedBalance > 0 ? C.danger : C.accent }]}>
-                                {formatKES(confirmedBalance)}
+                        <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={styles.balSub}>Balance</Text>
+                            <Text style={[styles.balAmount, { color: freshBalance > 0 ? COLORS.danger : COLORS.neonGreen }]}>
+                                {formatKES(freshBalance)}
                             </Text>
                         </View>
-                        <View style={s.resultRow}>
-                            <Text style={s.resultLabel}>Collected By</Text>
-                            <Text style={s.resultValue}>{staff.staff_name}</Text>
+                    </LinearGradient>
+
+                    {/* Phone Selector */}
+                    <View style={styles.sectionCard}>
+                        <Text style={styles.sectionTitle}>1. SEND STK PROMPT TO</Text>
+                        <View style={styles.modeToggleRow}>
+                            <TouchableOpacity
+                                style={[styles.modeBtn, phoneMode === 'registered' && styles.modeBtnActive]}
+                                onPress={() => setPhoneMode('registered')}
+                            >
+                                <Text style={[styles.modeBtnText, phoneMode === 'registered' && styles.modeBtnTextActive]}>
+                                    Tenant's Phone
+                                </Text>
+                                <Text style={styles.modeBtnSub}>{maskPhone(tenant.phone)}</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modeBtn, phoneMode === 'custom' && styles.modeBtnActive]}
+                                onPress={() => setPhoneMode('custom')}
+                            >
+                                <Text style={[styles.modeBtnText, phoneMode === 'custom' && styles.modeBtnTextActive]}>
+                                    Other Phone
+                                </Text>
+                                <Text style={styles.modeBtnSub}>Parent / Relative</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {phoneMode === 'custom' && (
+                            <View style={styles.customPhoneBox}>
+                                <Text style={styles.inputLabel}>RECIPIENT PHONE NUMBER</Text>
+                                <TextInput
+                                    style={styles.textInput}
+                                    value={customPhone}
+                                    onChangeText={setCustomPhone}
+                                    placeholder="e.g. 0712345678"
+                                    placeholderTextColor={COLORS.textDim}
+                                    keyboardType="phone-pad"
+                                    maxLength={13}
+                                />
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Amount Input */}
+                    <View style={styles.sectionCard}>
+                        <Text style={styles.sectionTitle}>2. COLLECTION AMOUNT (KES)</Text>
+                        <View style={styles.amountWrap}>
+                            <Text style={styles.kesPrefix}>KES</Text>
+                            <TextInput
+                                style={styles.amountInput}
+                                value={amount}
+                                onChangeText={t => setAmount(t.replace(/[^0-9]/g, ''))}
+                                placeholder="0"
+                                placeholderTextColor={COLORS.textDim}
+                                keyboardType="numeric"
+                                maxLength={7}
+                            />
+                        </View>
+
+                        <View style={styles.presetRow}>
+                            {freshBalance > 0 && (
+                                <TouchableOpacity
+                                    onPress={() => setAmount(String(Math.round(freshBalance)))}
+                                    style={[styles.presetChip, styles.presetChipHighlight]}
+                                >
+                                    <Text style={styles.presetChipTextHighlight}>Full Balance: {formatKES(freshBalance)}</Text>
+                                </TouchableOpacity>
+                            )}
+                            {tenant.monthly_rent ? (
+                                <TouchableOpacity
+                                    onPress={() => setAmount(String(Math.round(tenant.monthly_rent)))}
+                                    style={styles.presetChip}
+                                >
+                                    <Text style={styles.presetChipText}>1 Month: {formatKES(tenant.monthly_rent)}</Text>
+                                </TouchableOpacity>
+                            ) : null}
                         </View>
                     </View>
-                    <TouchableOpacity onPress={() => { reset(); onPaymentComplete(); }} activeOpacity={0.85}>
-                        <LinearGradient colors={[C.primary, '#4f46e5']} style={s.doneBtn}>
-                            <Text style={s.doneBtnText}>✅ Done — Back to Search</Text>
+
+                    {error ? (
+                        <View style={styles.errorBox}>
+                            <Text style={styles.errorText}>⚠️ {error}</Text>
+                        </View>
+                    ) : null}
+
+                    <TouchableOpacity onPress={handleProceed} activeOpacity={0.85} style={styles.proceedBtn}>
+                        <LinearGradient colors={['#10b981', '#059669']} style={styles.proceedGrad}>
+                            <Text style={styles.proceedBtnText}>Continue to Review →</Text>
                         </LinearGradient>
                     </TouchableOpacity>
-                </View>
-            </View>
-        );
-    }
 
-    // ── STEP: FAILED ──────────────────────────────────────────
-    return (
-        <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
-            <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-            <View style={s.resultCard}>
-                <Text style={{ fontSize: 52 }}>❌</Text>
-                <Text style={s.failTitle}>Payment Failed</Text>
-                <Text style={s.failMsg}>{error || 'Transaction was not completed'}</Text>
-                <TouchableOpacity onPress={reset} activeOpacity={0.85}>
-                    <LinearGradient colors={[C.accent, '#059669']} style={s.doneBtn}>
-                        <Text style={s.doneBtnText}>🔄 Try Again</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={onBack} style={s.cancelLink}>
-                    <Text style={s.cancelText}>← Back to Tenant</Text>
-                </TouchableOpacity>
-            </View>
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            </KeyboardAvoidingView>
         </View>
     );
 }
 
-const s = StyleSheet.create({
-    container: { flex: 1, backgroundColor: C.bg },
-    header: { paddingTop: 48, paddingBottom: 16, paddingHorizontal: 16 },
-    backBtn: { marginBottom: 8 },
-    backText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
-    headerTitle: { fontSize: 22, fontWeight: '900', color: '#fff' },
-    headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
-    content: { padding: 16, paddingBottom: 48 },
-
-    tenantCard: {
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        borderRadius: 18, padding: 16, marginBottom: 20,
-        borderWidth: 1, borderColor: C.border,
+const styles = StyleSheet.create({
+    root: {
+        flex: 1,
+        backgroundColor: COLORS.bg,
+    },
+    pinnedHeader: {
+        backgroundColor: '#0d1527',
+        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 46,
+        paddingBottom: 14,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.cardBorder,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.35,
+        shadowRadius: 10,
+        elevation: 8,
+        zIndex: 50,
+    },
+    backBtn: {
+        backgroundColor: 'rgba(255, 255, 255, 0.07)',
+        paddingHorizontal: 13,
+        paddingVertical: 7,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.14)',
+    },
+    backBtnText: {
+        color: '#f8fafc',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    headerTitleWrap: {
+        flex: 1,
+    },
+    headerTitle: {
+        color: COLORS.text,
+        fontSize: 16,
+        fontWeight: '900',
+        letterSpacing: -0.2,
+    },
+    headerSub: {
+        color: COLORS.textSub,
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 1,
+    },
+    content: {
+        padding: 16,
+    },
+    centerContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        padding: 16,
+    },
+    tenantHeroCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+        gap: 12,
     },
     tenantAvatar: {
-        width: 50, height: 50, borderRadius: 14,
-        alignItems: 'center', justifyContent: 'center',
+        width: 46,
+        height: 46,
+        borderRadius: 16,
+        backgroundColor: COLORS.accent,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    tenantAvatarText: { fontSize: 18, fontWeight: '900', color: '#fff' },
-    tenantName: { fontSize: 15, fontWeight: '800', color: C.text, marginBottom: 3 },
-    tenantSub: { fontSize: 11, color: C.sub, marginBottom: 1 },
-    balLabel: { fontSize: 9, color: C.dim, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-    balValue: { fontSize: 15, fontWeight: '900' },
-
-    sectionLabel: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 10 },
-
-    phoneModeRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-    phoneModeBtn: {
-        flex: 1, backgroundColor: C.card, borderRadius: 14,
-        borderWidth: 1, borderColor: C.border,
-        padding: 12, alignItems: 'center',
+    tenantAvatarText: {
+        color: '#ffffff',
+        fontSize: 18,
+        fontWeight: '900',
     },
-    phoneModeBtnActive: {
-        backgroundColor: 'rgba(99,102,241,0.15)',
-        borderColor: C.primary,
+    tenantHeroName: {
+        color: COLORS.text,
+        fontSize: 16,
+        fontWeight: '900',
+        marginBottom: 2,
     },
-    phoneModeBtnText: { fontSize: 12, fontWeight: '700', color: C.sub },
-    phoneModeBtnTextActive: { color: '#a5b4fc' },
-    phoneModeVal: { fontSize: 10, color: C.gold, marginTop: 3, fontWeight: '700' },
-    phoneModeHint: { fontSize: 9, color: C.dim, marginTop: 3 },
-
-    inputGroup: { marginBottom: 16 },
-    inputLabel: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 8 },
-    input: {
-        backgroundColor: C.card, borderWidth: 1, borderColor: C.border,
-        borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14,
-        fontSize: 15, color: C.text, fontWeight: '600',
+    tenantHeroSub: {
+        color: COLORS.textSub,
+        fontSize: 11,
+        fontWeight: '600',
     },
-    amountInput: { fontSize: 26, fontWeight: '900', textAlign: 'center', letterSpacing: 1 },
-    inputHint: { fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 15 },
-    quickBtn: {
-        backgroundColor: 'rgba(16,185,129,0.12)', borderRadius: 10,
-        padding: 10, marginTop: 8,
-        borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)',
+    tenantHeroPhone: {
+        color: COLORS.textDim,
+        fontSize: 11,
+        marginTop: 2,
     },
-    quickBtnText: { fontSize: 12, color: C.accent, fontWeight: '700', textAlign: 'center' },
-
-    infoBox: {
-        flexDirection: 'row', gap: 10,
-        backgroundColor: 'rgba(99,102,241,0.08)',
-        borderRadius: 14, padding: 14, marginBottom: 16,
-        borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)',
+    balSub: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: COLORS.textDim,
+        letterSpacing: 0.6,
+        marginBottom: 2,
     },
-    infoIcon: { fontSize: 16 },
-    infoText: { flex: 1, fontSize: 11, color: C.sub, lineHeight: 18 },
-
+    balAmount: {
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    sectionCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 18,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    sectionTitle: {
+        fontSize: 10,
+        fontWeight: '900',
+        color: COLORS.textDim,
+        letterSpacing: 0.8,
+        marginBottom: 12,
+    },
+    modeToggleRow: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    modeBtn: {
+        flex: 1,
+        backgroundColor: '#0a0f1d',
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    modeBtnActive: {
+        borderColor: COLORS.accent,
+        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    },
+    modeBtnText: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        fontWeight: '700',
+        marginBottom: 2,
+    },
+    modeBtnTextActive: {
+        color: COLORS.text,
+        fontWeight: '900',
+    },
+    modeBtnSub: {
+        fontSize: 10,
+        color: COLORS.textDim,
+    },
+    customPhoneBox: {
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    },
+    inputLabel: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: COLORS.textDim,
+        letterSpacing: 0.6,
+        marginBottom: 6,
+    },
+    textInput: {
+        backgroundColor: '#0a0f1d',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        color: COLORS.text,
+        fontSize: 14,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    amountWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#0a0f1d',
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        borderWidth: 1.5,
+        borderColor: 'rgba(16, 185, 129, 0.3)',
+        marginBottom: 10,
+    },
+    kesPrefix: {
+        fontSize: 16,
+        fontWeight: '900',
+        color: COLORS.textDim,
+        marginRight: 8,
+    },
+    amountInput: {
+        flex: 1,
+        height: 50,
+        fontSize: 24,
+        fontWeight: '900',
+        color: COLORS.neonGreen,
+    },
+    presetRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    presetChip: {
+        flex: 1,
+        backgroundColor: '#0a0f1d',
+        paddingVertical: 8,
+        borderRadius: 10,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    presetChipHighlight: {
+        borderColor: 'rgba(245, 158, 11, 0.4)',
+        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    },
+    presetChipText: {
+        color: COLORS.textSub,
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    presetChipTextHighlight: {
+        color: '#fbbf24',
+        fontSize: 11,
+        fontWeight: '900',
+    },
     errorBox: {
-        backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12,
-        padding: 12, marginBottom: 12,
-        borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+        backgroundColor: 'rgba(239, 68, 68, 0.12)',
+        padding: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.3)',
+        marginBottom: 16,
     },
-    errorText: { fontSize: 12, color: C.danger, fontWeight: '600' },
-
-    proceedBtn: { borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginBottom: 12 },
-    proceedBtnText: { fontSize: 16, fontWeight: '900', color: '#fff' },
-
-    // Confirm
+    errorText: {
+        color: '#fca5a5',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    proceedBtn: {
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    proceedGrad: {
+        paddingVertical: 15,
+        alignItems: 'center',
+    },
+    proceedBtnText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '900',
+    },
     confirmCard: {
-        backgroundColor: C.card, borderRadius: 18,
-        borderWidth: 1, borderColor: C.border,
-        marginBottom: 20, overflow: 'hidden',
+        backgroundColor: COLORS.card,
+        borderRadius: 20,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+        marginBottom: 18,
+    },
+    confirmCardLabel: {
+        fontSize: 10,
+        fontWeight: '900',
+        color: COLORS.textDim,
+        letterSpacing: 0.8,
+        marginBottom: 14,
     },
     confirmRow: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingVertical: 14, paddingHorizontal: 16,
-        borderBottomWidth: 1, borderBottomColor: C.border,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 9,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.04)',
     },
-    rowEmoji: { fontSize: 16, width: 28 },
-    rowLabel: { fontSize: 12, color: C.sub, fontWeight: '600', flex: 1 },
-    rowValue: { fontSize: 13, color: C.text, fontWeight: '700', textAlign: 'right', flex: 1.2 },
-    creditNote: {
-        backgroundColor: 'rgba(16,185,129,0.08)', padding: 12,
-        borderBottomWidth: 1, borderBottomColor: C.border,
+    rowEmoji: {
+        fontSize: 16,
+        marginRight: 10,
     },
-    creditNoteText: { fontSize: 11, color: C.accent, lineHeight: 17, textAlign: 'center' },
-    payNowBtn: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        gap: 10, borderRadius: 18, paddingVertical: 18, marginBottom: 12,
+    rowLabel: {
+        flex: 1,
+        color: COLORS.textSub,
+        fontSize: 12,
+        fontWeight: '600',
     },
-    payNowText: { fontSize: 18, fontWeight: '900', color: '#fff' },
-    cancelLink: { alignItems: 'center', paddingVertical: 14 },
-    cancelText: { fontSize: 13, color: C.dim, fontWeight: '600' },
-
-    // Result / Processing
-    resultCard: {
-        backgroundColor: C.card, borderRadius: 24, padding: 32,
-        alignItems: 'center', gap: 12, marginHorizontal: 24,
-        borderWidth: 1, borderColor: C.border,
+    rowValue: {
+        color: COLORS.text,
+        fontSize: 13,
+        fontWeight: '800',
     },
-    processingTitle: { fontSize: 20, fontWeight: '900', color: C.text },
-    processingMsg: { fontSize: 13, color: C.sub, textAlign: 'center', lineHeight: 20 },
-    processingTenantChip: {
-        backgroundColor: 'rgba(99,102,241,0.12)', borderRadius: 14,
-        padding: 12, width: '100%', gap: 6,
-        borderWidth: 1, borderColor: 'rgba(99,102,241,0.25)',
+    sendStkBtn: {
+        borderRadius: 16,
+        overflow: 'hidden',
     },
-    processingTenantText: { fontSize: 13, color: C.text, fontWeight: '700', textAlign: 'center' },
-    processingHint: { fontSize: 11, color: C.gold, fontWeight: '700' },
-
-    successTitle: { fontSize: 22, fontWeight: '900', color: C.accent },
-    failTitle: { fontSize: 22, fontWeight: '900', color: C.danger },
-    failMsg: { fontSize: 13, color: C.sub, textAlign: 'center', lineHeight: 20 },
-
-    resultRows: { width: '100%', gap: 0 },
+    sendStkGrad: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        gap: 8,
+    },
+    sendStkEmoji: {
+        fontSize: 18,
+    },
+    sendStkText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '900',
+    },
+    centerBox: {
+        flex: 1,
+        justifyContent: 'center',
+        padding: 20,
+    },
+    processingCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 22,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    processingTitle: {
+        color: COLORS.text,
+        fontSize: 18,
+        fontWeight: '900',
+        marginBottom: 8,
+    },
+    processingSub: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        textAlign: 'center',
+        lineHeight: 18,
+        marginBottom: 16,
+    },
+    processingPhonePill: {
+        backgroundColor: '#0a0f1d',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        marginBottom: 16,
+    },
+    processingPhoneText: {
+        color: COLORS.neonGreen,
+        fontSize: 14,
+        fontWeight: '900',
+    },
+    cancelLink: {
+        paddingVertical: 6,
+    },
+    cancelLinkText: {
+        color: COLORS.textDim,
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    failedCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 22,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.25)',
+    },
+    failedIcon: {
+        fontSize: 40,
+        marginBottom: 10,
+    },
+    failedTitle: {
+        color: COLORS.text,
+        fontSize: 18,
+        fontWeight: '900',
+        marginBottom: 6,
+    },
+    failedSub: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        textAlign: 'center',
+        lineHeight: 18,
+        marginBottom: 18,
+    },
+    retryBtn: {
+        width: '100%',
+        backgroundColor: COLORS.accent,
+        paddingVertical: 12,
+        borderRadius: 14,
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    retryBtnText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '900',
+    },
+    successCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(16, 185, 129, 0.3)',
+    },
+    successIconCircle: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: COLORS.accent,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 14,
+    },
+    successIconEmoji: {
+        fontSize: 32,
+    },
+    successTitle: {
+        color: COLORS.text,
+        fontSize: 20,
+        fontWeight: '900',
+        marginBottom: 6,
+    },
+    successSub: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        textAlign: 'center',
+        lineHeight: 18,
+        marginBottom: 18,
+    },
+    resultRows: {
+        width: '100%',
+        backgroundColor: '#0a0f1d',
+        borderRadius: 14,
+        padding: 14,
+        marginBottom: 18,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
     resultRow: {
-        flexDirection: 'row', justifyContent: 'space-between',
-        paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingVertical: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.04)',
     },
-    resultLabel: { fontSize: 12, color: C.sub, fontWeight: '600' },
-    resultValue: { fontSize: 13, color: C.text, fontWeight: '800' },
-
-    doneBtn: { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 },
-    doneBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
+    resultLabel: {
+        fontSize: 11,
+        color: COLORS.textSub,
+        fontWeight: '600',
+    },
+    resultValue: {
+        fontSize: 12,
+        color: COLORS.text,
+        fontWeight: '800',
+    },
+    doneBtn: {
+        width: '100%',
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    doneBtnGrad: {
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    doneBtnText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '900',
+    },
 });

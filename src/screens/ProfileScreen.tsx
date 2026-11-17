@@ -1,99 +1,139 @@
 import React, { useState } from 'react';
 import {
-    View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    Alert, StatusBar, Modal, TextInput, ActivityIndicator,
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    TouchableOpacity,
+    StatusBar,
+    Alert,
+    Platform,
+    Modal,
+    TextInput,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { TenantSession, formatKES, maskPhone, changeTenantPin } from '../lib/supabase';
-import { APP_VERSION } from '../lib/version';
+import { TenantSession, formatKES, supabase } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Props {
     session: TenantSession;
     onLogout: () => void;
+    onBack?: () => void;
 }
 
-const C = {
-    bg: '#0f172a', card: '#1e293b', border: '#334155',
-    primary: '#6366f1', accent: '#10b981', danger: '#ef4444',
-    text: '#f8fafc', sub: '#94a3b8', dim: '#64748b',
-    warning: '#f59e0b',
+const COLORS = {
+    bg: '#0a0f1d',
+    card: '#131b2e',
+    cardBorder: 'rgba(255, 255, 255, 0.08)',
+    primary: '#6366f1',
+    primaryLight: '#a5b4fc',
+    accent: '#10b981',
+    neonGreen: '#00e676',
+    danger: '#ef4444',
+    gold: '#fbbf24',
+    text: '#f8fafc',
+    textSub: '#94a3b8',
+    textDim: '#64748b',
 };
 
-function InfoRow({ emoji, label, value }: { emoji: string; label: string; value: string }) {
+function InfoRow({ emoji, label, value }: { emoji: string; label: string; value?: string | number | null }) {
     return (
-        <View style={s.infoRow}>
-            <Text style={s.infoEmoji}>{emoji}</Text>
-            <Text style={s.infoLabel}>{label}</Text>
-            <Text style={s.infoValue}>{value || '—'}</Text>
+        <View style={styles.infoRow}>
+            <Text style={styles.infoEmoji}>{emoji}</Text>
+            <View style={{ flex: 1 }}>
+                <Text style={styles.infoLabel}>{label}</Text>
+                <Text style={styles.infoValue}>{value ?? '—'}</Text>
+            </View>
         </View>
     );
 }
 
-export default function ProfileScreen({ session, onLogout }: Props) {
-    // PIN Change Modal State
+function maskPhone(p?: string) {
+    if (!p || p.length < 9) return p || '—';
+    return p.slice(0, 4) + ' ••• ' + p.slice(-3);
+}
+
+export default function ProfileScreen({ session, onLogout, onBack }: Props) {
+    // PIN Change state
     const [pinModalVisible, setPinModalVisible] = useState(false);
-    const [currentPin, setCurrentPin] = useState('');
     const [newPin, setNewPin] = useState('');
     const [confirmPin, setConfirmPin] = useState('');
-    const [showPins, setShowPins] = useState(false);
     const [savingPin, setSavingPin] = useState(false);
-    const [pinError, setPinError] = useState<string | null>(null);
+    const [pinError, setPinError] = useState('');
 
     const handleLogout = () => {
-        Alert.alert('Logout', 'Are you sure you want to log out?', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Logout', style: 'destructive', onPress: onLogout },
-        ]);
+        Alert.alert(
+            'Confirm Logout',
+            `Are you sure you want to log out of ${session.tenant_name}'s account?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Log Out', style: 'destructive', onPress: onLogout },
+            ]
+        );
     };
 
     const handleOpenPinModal = () => {
-        setCurrentPin('');
         setNewPin('');
         setConfirmPin('');
-        setPinError(null);
-        setShowPins(false);
+        setPinError('');
         setPinModalVisible(true);
     };
 
     const handleSavePin = async () => {
-        setPinError(null);
-
-        const curr = currentPin.trim();
-        const next = newPin.trim();
-        const conf = confirmPin.trim();
-
-        if (!curr) {
-            setPinError('Please enter your current PIN');
+        if (!/^\d{6}$/.test(newPin)) {
+            setPinError('New PIN must be exactly 6 numeric digits');
             return;
         }
-        if (!next) {
-            setPinError('Please enter a new PIN');
-            return;
-        }
-        if (!/^\d{4,6}$/.test(next)) {
-            setPinError('New PIN must be strictly 4 to 6 numeric digits');
-            return;
-        }
-        if (next !== conf) {
-            setPinError('New PIN and Confirm PIN do not match');
-            return;
-        }
-        if (next === curr) {
-            setPinError('New PIN cannot be the same as your current PIN');
+        if (newPin !== confirmPin) {
+            setPinError('PINs do not match');
             return;
         }
 
         setSavingPin(true);
+        setPinError('');
+
         try {
-            const res = await changeTenantPin(session.tenant_id, curr, next, conf);
-            if (!res.success) {
-                setPinError(res.error || 'Failed to update PIN');
-                return;
+            // Update PIN on tenant row
+            const { error: updateErr } = await supabase
+                .from('arms_tenants')
+                .update({ pin: newPin })
+                .eq('tenant_id', session.tenant_id);
+
+            if (updateErr) throw updateErr;
+
+            // Log change in PIN ledger for admin visibility
+            try {
+                await supabase
+                    .from('arms_tenant_pin_ledger')
+                    .insert([{
+                        tenant_id: session.tenant_id,
+                        tenant_name: session.tenant_name,
+                        unit_name: session.unit_name,
+                        new_pin: newPin,
+                        ip_address: 'mobile_app',
+                        user_agent: Platform.OS,
+                        created_at: new Date().toISOString(),
+                    }]);
+            } catch (ledgerErr) {
+                console.log('PIN ledger optional logging notice:', ledgerErr);
+            }
+
+            // Update local storage session
+            try {
+                const storedRaw = await AsyncStorage.getItem('tenant_session');
+                if (storedRaw) {
+                    const parsed = JSON.parse(storedRaw);
+                    parsed.pin = newPin;
+                    await AsyncStorage.setItem('tenant_session', JSON.stringify(parsed));
+                }
+            } catch (storeErr) {
+                console.log('AsyncStorage session PIN update notice:', storeErr);
             }
 
             setPinModalVisible(false);
             Alert.alert(
-                '✅ PIN Changed Successfully',
+                'PIN Changed Successfully',
                 'Your login PIN has been updated. Please remember your new PIN for future logins.',
                 [{ text: 'OK' }]
             );
@@ -104,220 +144,200 @@ export default function ProfileScreen({ session, onLogout }: Props) {
         }
     };
 
-    const initials = session.tenant_name
-        .split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+    const initials = (session.tenant_name || 'T')
+        .split(' ')
+        .slice(0, 2)
+        .map(w => w[0])
+        .join('')
+        .toUpperCase();
 
     return (
-        <View style={{ flex: 1, backgroundColor: C.bg }}>
-            <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-            <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-                {/* Avatar Card */}
-                <LinearGradient
-                    colors={['#4f46e5', '#7c3aed', '#1e40af']}
-                    style={s.heroCard}
-                >
-                    <View style={s.heroDecor1} />
-                    <View style={s.heroDecor2} />
-                    <View style={s.avatarWrap}>
-                        <View style={s.avatar}>
-                            <Text style={s.avatarText}>{initials}</Text>
-                        </View>
-                        <View style={s.onlineDot} />
+        <View style={styles.root}>
+            <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
+
+            {/* Pinned Top Safe Header Bar */}
+            <View style={styles.pinnedHeader}>
+                <View style={styles.headerTopRow}>
+                    {onBack && (
+                        <TouchableOpacity
+                            activeOpacity={0.75}
+                            onPress={onBack}
+                            style={styles.backBtn}
+                        >
+                            <Text style={styles.backText}>← Back</Text>
+                        </TouchableOpacity>
+                    )}
+                    <View style={styles.headerTitleWrap}>
+                        <Text style={styles.headerTitle}>My Profile & Security</Text>
+                        <Text style={styles.headerSub}>Account management & credentials</Text>
                     </View>
-                    <Text style={s.heroName}>{session.tenant_name}</Text>
-                    <Text style={s.heroSub}>Tenant • {session.location_name}</Text>
-                    <View style={s.heroChips}>
-                        <View style={s.chip}><Text style={s.chipText}>🏠 {session.unit_name}</Text></View>
-                        <View style={s.chip}><Text style={s.chipText}>📞 {maskPhone(session.phone)}</Text></View>
+                    <TouchableOpacity
+                        activeOpacity={0.75}
+                        onPress={handleLogout}
+                        style={styles.logoutSmallBtn}
+                    >
+                        <Text style={styles.logoutSmallText}>Logout</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* Scrollable Profile Content */}
+            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                {/* Avatar Hero Card */}
+                <LinearGradient
+                    colors={['#16213e', '#0f172a']}
+                    style={styles.heroCard}
+                >
+                    <View style={styles.avatarWrap}>
+                        <LinearGradient
+                            colors={['#10b981', '#047857']}
+                            style={styles.avatar}
+                        >
+                            <Text style={styles.avatarText}>{initials}</Text>
+                        </LinearGradient>
+                        <View style={styles.onlineDot} />
+                    </View>
+                    <Text style={styles.heroName}>{session.tenant_name}</Text>
+                    <Text style={styles.heroSub}>Active Tenant • {session.location_name}</Text>
+                    <View style={styles.heroChips}>
+                        <View style={styles.chip}>
+                            <Text style={styles.chipText}>🚪 {session.unit_name}</Text>
+                        </View>
+                        <View style={styles.chip}>
+                            <Text style={styles.chipText}>📱 {maskPhone(session.phone)}</Text>
+                        </View>
                     </View>
                 </LinearGradient>
 
-                {/* Details Card */}
-                <View style={s.detailsCard}>
-                    <Text style={s.sectionTitle}>👤 Personal Details</Text>
-                    <InfoRow emoji="📝" label="Full Name" value={session.tenant_name} />
-                    <InfoRow emoji="📞" label="Phone" value={session.phone} />
+                {/* Security & Login PIN Card */}
+                <View style={styles.detailsCard}>
+                    <Text style={styles.sectionTitle}>🔒 Security & Login PIN</Text>
+                    <InfoRow emoji="🔑" label="Login PIN" value="•••••• (Configured)" />
+                    <InfoRow emoji="🛡️" label="Access Level" value="Enterprise RLS Protected" />
+
+                    <TouchableOpacity
+                        onPress={handleOpenPinModal}
+                        activeOpacity={0.85}
+                        style={styles.changePinBtn}
+                    >
+                        <LinearGradient
+                            colors={['#10b981', '#059669']}
+                            style={styles.changePinGrad}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                        >
+                            <Text style={styles.changePinEmoji}>🔐</Text>
+                            <Text style={styles.changePinText}>Change Login PIN</Text>
+                            <Text style={styles.changePinArrow}>→</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
+
+                {/* Personal Details Card */}
+                <View style={styles.detailsCard}>
+                    <Text style={styles.sectionTitle}>👤 Personal Details</Text>
+                    <InfoRow emoji="📛" label="Full Name" value={session.tenant_name} />
+                    <InfoRow emoji="📱" label="Phone" value={session.phone} />
                     <InfoRow emoji="🪪" label="ID Number" value={session.id_number} />
                     <InfoRow emoji="📧" label="Email" value={session.email} />
                 </View>
 
                 {/* Rental Info */}
-                <View style={s.detailsCard}>
-                    <Text style={s.sectionTitle}>🏠 Rental Info</Text>
-                    <InfoRow emoji="🚪" label="Room" value={session.unit_name} />
-                    <InfoRow emoji="📍" label="Location" value={session.location_name} />
-                    <InfoRow emoji="💰" label="Monthly Rent" value={formatKES(session.monthly_rent)} />
-                    <InfoRow emoji="🔐" label="Deposit Paid" value={formatKES(session.deposit_paid)} />
-                    <InfoRow emoji="📅" label="Move-In Date" value={
-                        session.move_in_date
-                            ? new Date(session.move_in_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' })
-                            : '—'
-                    } />
-                    <InfoRow emoji="⚠️" label="Outstanding" value={formatKES(session.balance)} />
+                <View style={styles.detailsCard}>
+                    <Text style={styles.sectionTitle}>🏠 Tenancy Dossier</Text>
+                    <InfoRow emoji="🚪" label="Allocated Unit" value={session.unit_name} />
+                    <InfoRow emoji="📍" label="Property Location" value={session.location_name} />
+                    <InfoRow emoji="💰" label="Agreed Monthly Rent" value={session.monthly_rent ? formatKES(session.monthly_rent) : '—'} />
+                    <InfoRow emoji="📅" label="Move-In Date" value={session.move_in_date} />
+                    <InfoRow emoji="🛡️" label="Deposit Paid" value={session.deposit_paid ? formatKES(session.deposit_paid) : '—'} />
                 </View>
 
-                {/* ── 🔒 Security & PIN Settings ── */}
-                <View style={s.detailsCard}>
-                    <Text style={s.sectionTitle}>🔒 Security & Login PIN</Text>
-                    <InfoRow emoji="🔑" label="Login PIN" value="•••••• (Configured)" />
-                    <InfoRow emoji="🛡️" label="Protection" value="Bcrypt + RLS Enforced" />
-
-                    <TouchableOpacity
-                        onPress={handleOpenPinModal}
-                        activeOpacity={0.85}
-                        style={s.changePinBtn}
-                    >
-                        <LinearGradient
-                            colors={['#4f46e5', '#6366f1']}
-                            style={s.changePinGrad}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                        >
-                            <Text style={s.changePinEmoji}>🔐</Text>
-                            <Text style={s.changePinText}>Change Login PIN</Text>
-                            <Text style={s.changePinArrow}>→</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
-                </View>
-
-                {/* App Info */}
-                <View style={s.detailsCard}>
-                    <Text style={s.sectionTitle}>ℹ️ App Info</Text>
-                    <InfoRow emoji="📱" label="App Version" value={`ARMS Tenant ${APP_VERSION}`} />
-                    <InfoRow emoji="🔒" label="Security" value="Encrypted API + Strict RLS" />
-                    <InfoRow emoji="📞" label="Support" value="0720316175" />
-                </View>
-
-                {/* Logout */}
-                <TouchableOpacity onPress={handleLogout} activeOpacity={0.85} style={s.logoutBtn}>
-                    <LinearGradient colors={['#ef4444', '#dc2626']} style={s.logoutGrad}>
-                        <Text style={s.logoutEmoji}>🚪</Text>
-                        <Text style={s.logoutText}>Logout</Text>
-                    </LinearGradient>
+                {/* Big Logout Button */}
+                <TouchableOpacity
+                    onPress={handleLogout}
+                    activeOpacity={0.85}
+                    style={styles.logoutBtn}
+                >
+                    <Text style={styles.logoutText}>🚪 Log Out of Account</Text>
                 </TouchableOpacity>
 
-                {/* Footer */}
-                <View style={s.footer}>
-                    <Text style={s.footerTitle}>💎 Alpha Solutions</Text>
-                    <Text style={s.footerDev}>Developed by Jimhawkins Korir</Text>
-                    <Text style={s.footerPhone}>📞 0720316175</Text>
-                    <Text style={s.footerCopy}>© {new Date().getFullYear()} ARMS Tenant App</Text>
-                </View>
+                <View style={{ height: 40 }} />
             </ScrollView>
 
-            {/* ── 🔒 Change Login PIN Modal ── */}
+            {/* PIN Change Modal */}
             <Modal
                 visible={pinModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => {
-                    if (!savingPin) setPinModalVisible(false);
-                }}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setPinModalVisible(false)}
             >
-                <View style={s.modalBackdrop}>
-                    <View style={s.modalContent}>
-                        {/* Header */}
-                        <View style={s.modalHeader}>
-                            <View style={{ flex: 1 }}>
-                                <Text style={s.modalTitle}>🔒 Change Login PIN</Text>
-                                <Text style={s.modalSub}>
-                                    Update your 4-6 digit numeric login PIN.
-                                </Text>
-                            </View>
-                            <TouchableOpacity
-                                onPress={() => setPinModalVisible(false)}
-                                disabled={savingPin}
-                                style={s.modalCloseBtn}
-                            >
-                                <Text style={s.modalCloseText}>✕</Text>
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalCard}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Change Login PIN</Text>
+                            <TouchableOpacity onPress={() => setPinModalVisible(false)}>
+                                <Text style={styles.modalClose}>✕</Text>
                             </TouchableOpacity>
                         </View>
 
-                        {/* Error Alert */}
-                        {pinError && (
-                            <View style={s.errorBox}>
-                                <Text style={s.errorText}>⚠️ {pinError}</Text>
+                        <Text style={styles.modalSub}>
+                            Choose a secure 6-digit PIN to use when logging in to your tenant account.
+                        </Text>
+
+                        {pinError ? (
+                            <View style={styles.errorBanner}>
+                                <Text style={styles.errorText}>{pinError}</Text>
                             </View>
-                        )}
+                        ) : null}
 
-                        {/* Input 1: Current PIN */}
-                        <View style={s.inputGroup}>
-                            <Text style={s.inputLabel}>Current PIN</Text>
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>NEW 6-DIGIT PIN</Text>
                             <TextInput
-                                style={s.textInput}
-                                placeholder="Enter current PIN"
-                                placeholderTextColor={C.dim}
-                                keyboardType="number-pad"
-                                maxLength={6}
-                                secureTextEntry={!showPins}
-                                value={currentPin}
-                                onChangeText={setCurrentPin}
-                            />
-                        </View>
-
-                        {/* Input 2: New PIN */}
-                        <View style={s.inputGroup}>
-                            <Text style={s.inputLabel}>New PIN (4 to 6 Digits)</Text>
-                            <TextInput
-                                style={s.textInput}
-                                placeholder="Enter new numeric PIN"
-                                placeholderTextColor={C.dim}
-                                keyboardType="number-pad"
-                                maxLength={6}
-                                secureTextEntry={!showPins}
+                                style={styles.modalInput}
                                 value={newPin}
                                 onChangeText={setNewPin}
-                            />
-                        </View>
-
-                        {/* Input 3: Confirm PIN */}
-                        <View style={s.inputGroup}>
-                            <Text style={s.inputLabel}>Confirm New PIN</Text>
-                            <TextInput
-                                style={s.textInput}
-                                placeholder="Re-enter new PIN"
-                                placeholderTextColor={C.dim}
                                 keyboardType="number-pad"
                                 maxLength={6}
-                                secureTextEntry={!showPins}
-                                value={confirmPin}
-                                onChangeText={setConfirmPin}
+                                secureTextEntry
+                                placeholder="Enter 6-digit PIN"
+                                placeholderTextColor={COLORS.textDim}
                             />
                         </View>
 
-                        {/* Show / Hide Toggle */}
-                        <TouchableOpacity
-                            onPress={() => setShowPins(p => !p)}
-                            style={s.toggleShowBtn}
-                        >
-                            <Text style={s.toggleShowText}>
-                                {showPins ? '🙈 Hide Numbers' : '👁️ Show Numbers'}
-                            </Text>
-                        </TouchableOpacity>
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>CONFIRM NEW PIN</Text>
+                            <TextInput
+                                style={styles.modalInput}
+                                value={confirmPin}
+                                onChangeText={setConfirmPin}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                secureTextEntry
+                                placeholder="Re-enter 6-digit PIN"
+                                placeholderTextColor={COLORS.textDim}
+                            />
+                        </View>
 
-                        {/* Submit Button */}
-                        <TouchableOpacity
-                            onPress={handleSavePin}
-                            disabled={savingPin}
-                            activeOpacity={0.85}
-                            style={[s.submitPinBtn, savingPin && { opacity: 0.7 }]}
-                        >
-                            <LinearGradient
-                                colors={['#10b981', '#059669']}
-                                style={s.submitPinGrad}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                onPress={() => setPinModalVisible(false)}
+                                style={styles.modalCancelBtn}
+                            >
+                                <Text style={styles.modalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                onPress={handleSavePin}
+                                disabled={savingPin}
+                                style={styles.modalSaveBtn}
                             >
                                 {savingPin ? (
-                                    <ActivityIndicator size="small" color="#fff" />
+                                    <ActivityIndicator size="small" color="#ffffff" />
                                 ) : (
-                                    <>
-                                        <Text style={s.submitPinEmoji}>💾</Text>
-                                        <Text style={s.submitPinText}>Update & Save PIN</Text>
-                                    </>
+                                    <Text style={styles.modalSaveText}>Save PIN</Text>
                                 )}
-                            </LinearGradient>
-                        </TouchableOpacity>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -325,108 +345,314 @@ export default function ProfileScreen({ session, onLogout }: Props) {
     );
 }
 
-const s = StyleSheet.create({
-    content: { padding: 16, paddingBottom: 40 },
+const styles = StyleSheet.create({
+    root: {
+        flex: 1,
+        backgroundColor: COLORS.bg,
+    },
+    pinnedHeader: {
+        backgroundColor: '#0d1527',
+        paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 46,
+        paddingBottom: 14,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.cardBorder,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.35,
+        shadowRadius: 10,
+        elevation: 8,
+        zIndex: 50,
+    },
+    headerTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    backBtn: {
+        backgroundColor: 'rgba(255, 255, 255, 0.07)',
+        paddingHorizontal: 13,
+        paddingVertical: 7,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.14)',
+    },
+    backText: {
+        color: '#f8fafc',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    headerTitleWrap: {
+        flex: 1,
+    },
+    headerTitle: {
+        color: COLORS.text,
+        fontSize: 16,
+        fontWeight: '900',
+        letterSpacing: -0.2,
+    },
+    headerSub: {
+        color: COLORS.textSub,
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 1,
+    },
+    logoutSmallBtn: {
+        backgroundColor: 'rgba(239, 68, 68, 0.12)',
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.25)',
+    },
+    logoutSmallText: {
+        color: '#fca5a5',
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    content: {
+        padding: 16,
+    },
     heroCard: {
-        borderRadius: 24, padding: 24, alignItems: 'center', marginBottom: 16,
+        borderRadius: 22,
+        padding: 22,
+        alignItems: 'center',
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    avatarWrap: {
+        position: 'relative',
+        marginBottom: 12,
+    },
+    avatar: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: 'rgba(16, 185, 129, 0.4)',
+    },
+    avatarText: {
+        color: '#ffffff',
+        fontSize: 26,
+        fontWeight: '900',
+    },
+    onlineDot: {
+        position: 'absolute',
+        bottom: 2,
+        right: 2,
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        backgroundColor: COLORS.neonGreen,
+        borderWidth: 2,
+        borderColor: '#0f172a',
+    },
+    heroName: {
+        color: COLORS.text,
+        fontSize: 20,
+        fontWeight: '900',
+        marginBottom: 4,
+    },
+    heroSub: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        fontWeight: '600',
+        marginBottom: 12,
+    },
+    heroChips: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    chip: {
+        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 12,
+    },
+    chipText: {
+        color: COLORS.text,
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    detailsCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 18,
+        padding: 18,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    sectionTitle: {
+        color: COLORS.text,
+        fontSize: 14,
+        fontWeight: '900',
+        marginBottom: 14,
+        letterSpacing: 0.2,
+    },
+    infoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+        gap: 12,
+    },
+    infoEmoji: {
+        fontSize: 18,
+    },
+    infoLabel: {
+        color: COLORS.textDim,
+        fontSize: 10,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+        marginBottom: 2,
+    },
+    infoValue: {
+        color: COLORS.text,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    changePinBtn: {
+        marginTop: 14,
+        borderRadius: 14,
         overflow: 'hidden',
     },
-    heroDecor1: { position: 'absolute', top: -30, right: -30, width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.08)' },
-    heroDecor2: { position: 'absolute', bottom: -20, left: -20, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.05)' },
-    avatarWrap: { position: 'relative', marginBottom: 12 },
-    avatar: {
-        width: 80, height: 80, borderRadius: 24,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    avatarText: { fontSize: 28, fontWeight: '900', color: '#fff' },
-    onlineDot: {
-        position: 'absolute', bottom: -2, right: -2,
-        width: 18, height: 18, borderRadius: 9,
-        backgroundColor: '#10b981', borderWidth: 3, borderColor: '#4f46e5',
-    },
-    heroName: { fontSize: 22, fontWeight: '900', color: '#fff', marginBottom: 4 },
-    heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 14 },
-    heroChips: { flexDirection: 'row', gap: 8 },
-    chip: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-    chipText: { fontSize: 11, color: '#fff', fontWeight: '700' },
-    detailsCard: {
-        backgroundColor: C.card, borderRadius: 18, padding: 16, marginBottom: 12,
-        borderWidth: 1, borderColor: C.border,
-    },
-    sectionTitle: { fontSize: 14, fontWeight: '800', color: C.text, marginBottom: 12 },
-    infoRow: {
-        flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
-        borderBottomWidth: 1, borderBottomColor: C.border,
-    },
-    infoEmoji: { fontSize: 16, width: 30 },
-    infoLabel: { fontSize: 12, color: C.sub, fontWeight: '600', flex: 1 },
-    infoValue: { fontSize: 12, color: C.text, fontWeight: '700', textAlign: 'right', flex: 1.2 },
-    changePinBtn: {
-        borderRadius: 14, overflow: 'hidden', marginTop: 12,
-    },
     changePinGrad: {
-        flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
     },
-    changePinEmoji: { fontSize: 16, marginRight: 8 },
-    changePinText: { fontSize: 13, fontWeight: '800', color: '#fff', flex: 1 },
-    changePinArrow: { fontSize: 16, fontWeight: '900', color: '#fff' },
-    logoutBtn: { borderRadius: 16, overflow: 'hidden', marginTop: 8, marginBottom: 24 },
-    logoutGrad: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        paddingVertical: 16, gap: 8,
+    changePinEmoji: {
+        fontSize: 16,
+        marginRight: 8,
     },
-    logoutEmoji: { fontSize: 18 },
-    logoutText: { fontSize: 16, fontWeight: '900', color: '#fff' },
-    footer: { alignItems: 'center', gap: 4, paddingBottom: 20 },
-    footerTitle: { fontSize: 13, color: C.sub, fontWeight: '700' },
-    footerDev: { fontSize: 10, color: C.dim },
-    footerPhone: { fontSize: 10, color: C.dim },
-    footerCopy: { fontSize: 10, color: C.dim, marginTop: 4 },
-
-    // Modal Styles
-    modalBackdrop: {
-        flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
-        justifyContent: 'center', alignItems: 'center', padding: 20,
+    changePinText: {
+        flex: 1,
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '800',
     },
-    modalContent: {
-        width: '100%', maxWidth: 360, backgroundColor: C.card,
-        borderRadius: 24, padding: 20, borderWidth: 1, borderColor: C.border,
+    changePinArrow: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    logoutBtn: {
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+        paddingVertical: 14,
+        borderRadius: 16,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.25)',
+        marginTop: 4,
+    },
+    logoutText: {
+        color: '#f87171',
+        fontSize: 14,
+        fontWeight: '900',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        justifyContent: 'center',
+        padding: 20,
+    },
+    modalCard: {
+        backgroundColor: '#131b2e',
+        borderRadius: 22,
+        padding: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
     },
     modalHeader: {
-        flexDirection: 'row', alignItems: 'center', marginBottom: 16,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
     },
-    modalTitle: { fontSize: 16, fontWeight: '900', color: C.text },
-    modalSub: { fontSize: 11, color: C.sub, marginTop: 2 },
-    modalCloseBtn: {
-        width: 32, height: 32, borderRadius: 16, backgroundColor: C.border,
-        alignItems: 'center', justifyContent: 'center',
+    modalTitle: {
+        color: COLORS.text,
+        fontSize: 18,
+        fontWeight: '900',
     },
-    modalCloseText: { fontSize: 14, fontWeight: '900', color: C.sub },
-    errorBox: {
-        backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)',
-        borderRadius: 12, padding: 10, marginBottom: 12,
+    modalClose: {
+        color: COLORS.textDim,
+        fontSize: 18,
+        fontWeight: '800',
+        padding: 4,
     },
-    errorText: { color: '#f87171', fontSize: 12, fontWeight: '600' },
-    inputGroup: { marginBottom: 12 },
-    inputLabel: { fontSize: 11, fontWeight: '700', color: C.sub, marginBottom: 6 },
-    textInput: {
-        backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border,
-        paddingHorizontal: 14, paddingVertical: 10, fontSize: 16, color: C.text,
-        fontWeight: '700', letterSpacing: 2,
+    modalSub: {
+        color: COLORS.textSub,
+        fontSize: 12,
+        lineHeight: 18,
+        marginBottom: 16,
     },
-    toggleShowBtn: {
-        alignSelf: 'flex-end', paddingVertical: 4, paddingHorizontal: 6, marginBottom: 16,
+    errorBanner: {
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+        padding: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.3)',
+        marginBottom: 14,
     },
-    toggleShowText: { fontSize: 12, color: C.primary, fontWeight: '700' },
-    submitPinBtn: {
-        borderRadius: 14, overflow: 'hidden',
+    errorText: {
+        color: '#fca5a5',
+        fontSize: 12,
+        fontWeight: '700',
     },
-    submitPinGrad: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        paddingVertical: 14, gap: 8,
+    inputGroup: {
+        marginBottom: 14,
     },
-    submitPinEmoji: { fontSize: 16 },
-    submitPinText: { fontSize: 14, fontWeight: '900', color: '#fff' },
+    inputLabel: {
+        color: COLORS.textDim,
+        fontSize: 10,
+        fontWeight: '800',
+        letterSpacing: 0.6,
+        marginBottom: 6,
+    },
+    modalInput: {
+        backgroundColor: '#0a0f1d',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        color: COLORS.text,
+        fontSize: 15,
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+    },
+    modalActions: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 10,
+    },
+    modalCancelBtn: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+        alignItems: 'center',
+    },
+    modalCancelText: {
+        color: COLORS.textSub,
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    modalSaveBtn: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: COLORS.accent,
+        alignItems: 'center',
+    },
+    modalSaveText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '900',
+    },
 });
