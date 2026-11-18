@@ -437,7 +437,7 @@ export async function getTenantPrepaymentSummary(
         // Future cutoff: strictly greater than currentMonth or '2026-11'
         const cutoff = currentMonth >= '2026-11' ? '2026-11' : currentMonth;
 
-        // 1. Fetch advance bills in arms_billing
+        // 1. Fetch advance bills in arms_billing (strictly future months)
         const { data: advanceBills } = await supabase
             .from('arms_billing')
             .select('*')
@@ -446,32 +446,17 @@ export async function getTenantPrepaymentSummary(
             .gt('amount_paid', 0)
             .order('billing_month', { ascending: true });
 
-        // 2. Fetch payments to check for credit notes
-        const { data: payments } = await supabase
-            .from('arms_payments')
-            .select('notes, amount, payment_date')
-            .eq('tenant_id', tenantId)
-            .order('payment_date', { ascending: false })
-            .limit(10);
-
-        let excessCredit = 0;
-        (payments || []).forEach(p => {
-            if (p.notes && p.notes.includes('[Credit:')) {
-                const m = p.notes.match(/\[Credit:\s*(\d+(?:\.\d+)?)\]/);
-                if (m) excessCredit += parseFloat(m[1]) || 0;
-            }
-        });
-
-        // 3. Check tenant balance (if negative, that represents credit)
+        // 2. Check tenant balance (only a true negative balance represents active unallocated credit)
         const { data: tenant } = await supabase
             .from('arms_tenants')
             .select('balance')
             .eq('tenant_id', tenantId)
             .single();
 
-        if (tenant && tenant.balance < 0) {
-            const negCredit = Math.abs(tenant.balance);
-            if (negCredit > excessCredit) excessCredit = negCredit;
+        let excessCredit = 0;
+        // A tenant only has unallocated credit if their current overall balance is negative (< 0)
+        if (tenant && tenant.balance !== null && Number(tenant.balance) < 0) {
+            excessCredit = Math.abs(Number(tenant.balance));
         }
 
         const coveredMonths: PrepaymentMonthBreakdown[] = (advanceBills || []).map((b: any) => ({
