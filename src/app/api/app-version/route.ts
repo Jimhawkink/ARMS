@@ -2,13 +2,12 @@ import { NextResponse } from 'next/server';
 
 // ============================================================
 // ARMS Mobile App Version Gate
-// STRICT: Enforce v5.6 for all users.
-// Any version < v5.6 (v5.5, v5.4, v5.3, v5.2, v5.1, v5.0, v4.x) will be forced
-// to update immediately and will be logged out of their session.
+// Flexible: Allow v5.0+ so students don't have to keep downloading updates.
+// Only severely outdated legacy versions (< v5.0) are prompted.
 // ============================================================
 
-const LATEST_VERSION = 'v5.6';
-const MIN_VERSION    = 'v5.6'; 
+const LATEST_VERSION = 'v5.5';
+const MIN_VERSION    = 'v5.0'; 
 const DOWNLOAD_URL   = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL   = 'https://arms-opal.vercel.app/qr-print';
 
