@@ -260,12 +260,37 @@ export async function POST(req: NextRequest) {
         }
 
         const arrearsMonths = allocations.filter(a => a.isArrear).map(a => a.billing_month).join(",");
+
+        // 7b. Check active penalties to clear from excess payment before logging credit
+        let penaltyPaidTotal = 0;
+        const pensToClear: number[] = [];
+        if (remaining > 0) {
+            const { data: activePens } = await supabase
+                .from("arms_penalties")
+                .select("penalty_id, amount")
+                .eq("tenant_id", tenantId)
+                .eq("status", "Active")
+                .order("penalty_date", { ascending: true });
+
+            for (const p of (activePens || [])) {
+                const cost = p.amount || 100;
+                if (remaining >= cost) {
+                    pensToClear.push(p.penalty_id);
+                    remaining = Math.round((remaining - cost) * 100) / 100;
+                    penaltyPaidTotal = Math.round((penaltyPaidTotal + cost) * 100) / 100;
+                } else {
+                    break;
+                }
+            }
+        }
+
         const metaTags = [
             `[Month: ${currentMonth}]`,
             `[ArrearsPaid:${arrearsPaid}]`,
             `[CurrentRentPaid:${currentRentPaid}]`,
             allocations.length > 0 ? `[BillsCleared:${allocations.length}]` : "",
             arrearsMonths ? `[ArrearMonths:${arrearsMonths}]` : "",
+            penaltyPaidTotal > 0 ? `[PenaltyCleared:${penaltyPaidTotal}]` : "",
             remaining > 0 ? `[Credit:${remaining}]` : "",
         ].filter(Boolean).join("");
 
@@ -303,55 +328,34 @@ export async function POST(req: NextRequest) {
                 )
             );
 
-            // 10. Recalculate tenant balance from ACTUAL bill balances (most accurate)
+            // 10. Recalculate tenant balance from ACTUAL bill balances
             const { data: allBillsNow } = await supabase
                 .from("arms_billing")
                 .select("balance")
                 .eq("tenant_id", tenantId)
                 .gt("balance", 0);
 
-            const trueTenantBalance = Math.round(
+            const unpaidRentDebt = Math.round(
                 (allBillsNow || []).reduce((s: number, b: any) => s + (b.balance || 0), 0) * 100
             ) / 100;
+
+            const trueTenantBalance = unpaidRentDebt > 0 ? unpaidRentDebt : (remaining > 0 ? -remaining : 0);
 
             await supabase.from("arms_tenants").update({
                 balance: trueTenantBalance,
                 updated_at: new Date().toISOString(),
             }).eq("tenant_id", tenantId);
 
-            // 11. Only clear penalties if the payment EXCEEDED unpaid rent and covered penalties
-            const rentPaidTotal = (allocations || []).reduce((s, a) => s + (a.amount || 0), 0);
-            const excessForPenalties = Math.max(0, Math.round((txnAmount - rentPaidTotal) * 100) / 100);
-
-            if (excessForPenalties > 0) {
-                const { data: activePens } = await supabase
+            // 11. Mark cleared penalties as Paid
+            if (pensToClear.length > 0) {
+                await supabase
                     .from("arms_penalties")
-                    .select("penalty_id, amount")
-                    .eq("tenant_id", tenantId)
-                    .eq("status", "Active")
-                    .order("penalty_date", { ascending: true });
-
-                let penRem = excessForPenalties;
-                const pensToClear: number[] = [];
-                for (const p of (activePens || [])) {
-                    const cost = p.amount || 100;
-                    if (penRem >= cost) {
-                        pensToClear.push(p.penalty_id);
-                        penRem -= cost;
-                    } else {
-                        break;
-                    }
-                }
-                if (pensToClear.length > 0) {
-                    await supabase
-                        .from("arms_penalties")
-                        .update({
-                            status: "Paid",
-                            updated_at: new Date().toISOString(),
-                        })
-                        .in("penalty_id", pensToClear);
-                    console.log(`[KCB Callback ARMS] Cleared ${pensToClear.length} penalty records for tenant ${tenantId} from excess KES ${excessForPenalties}`);
-                }
+                    .update({
+                        status: "Paid",
+                        updated_at: new Date().toISOString(),
+                    })
+                    .in("penalty_id", pensToClear);
+                console.log(`[KCB Callback ARMS] Cleared ${pensToClear.length} penalty records for tenant ${tenantId}`);
             }
 
             console.log(`[KCB Callback ARMS] Tenant ${tenantId} new balance: ${trueTenantBalance}`);
