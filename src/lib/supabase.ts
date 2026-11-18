@@ -2159,18 +2159,15 @@ export async function getTenantPrepaymentStatus(tenantId: number) {
             .gt('amount_paid', 0)
             .order('billing_month', { ascending: true });
 
-        const { data: creditPayments } = await supabase
-            .from('arms_payments')
-            .select('amount, notes, payment_date')
+        const { data: tenant } = await supabase
+            .from('arms_tenants')
+            .select('balance')
             .eq('tenant_id', tenantId)
-            .ilike('notes', '%Credit%')
-            .order('payment_date', { ascending: false })
-            .limit(1);
+            .single();
 
         let latestCredit = 0;
-        if (creditPayments && creditPayments.length > 0) {
-            const m = creditPayments[0].notes?.match(/\[Credit:(\d+(?:\.\d+)?)\]/);
-            if (m) latestCredit = parseFloat(m[1]);
+        if (tenant && tenant.balance !== null && Number(tenant.balance) < 0) {
+            latestCredit = Math.abs(Number(tenant.balance));
         }
 
         const advanceSum = (bills || []).reduce((sum: number, b: any) => sum + (b.amount_paid || 0), 0);

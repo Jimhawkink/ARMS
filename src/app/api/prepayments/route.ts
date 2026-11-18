@@ -103,6 +103,8 @@ export async function GET(req: NextRequest) {
         });
 
         // 4. Also check payments with [Credit: ...] for any tenants who have excess payment credit
+        // CRITICAL: A tenant only has active credit if their current overall balance is negative (< 0).
+        // If balance >= 0, any historical overpayment from past months was already consumed by subsequent bills!
         const creditRecords: any[] = [];
         (paymentsRes.data || []).forEach(p => {
             if (!p.notes || !p.notes.includes('[Credit:')) return;
@@ -113,6 +115,10 @@ export async function GET(req: NextRequest) {
 
             const tenant = tenantMap.get(p.tenant_id);
             if (!tenant) return;
+            if (tenant.balance === null || Number(tenant.balance) >= 0) return;
+
+            const effectiveCredit = Math.min(creditAmt, Math.abs(Number(tenant.balance)));
+            if (effectiveCredit <= 0) return;
 
             creditRecords.push({
                 type: 'overpayment_credit',
@@ -125,7 +131,7 @@ export async function GET(req: NextRequest) {
                 location_name: tenant.arms_locations?.location_name || '-',
                 location_id: tenant.location_id,
                 monthly_rent: tenant.monthly_rent,
-                advance_paid: creditAmt,
+                advance_paid: effectiveCredit,
                 advance_balance_remaining: 0,
                 target_month: 'Credit Overpayment',
                 status: 'Credit',
