@@ -111,11 +111,91 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (billsToCreate.length > 0) {
-                    await supabase.from("arms_billing").insert(billsToCreate);
+                    const { data: insertedBills } = await supabase
+                        .from("arms_billing")
+                        .insert(billsToCreate)
+                        .select();
+
+                    // If an initial move-in payment was provided, record it and allocate FIFO
+                    if (initialPayment > 0 && insertedBills && insertedBills.length > 0) {
+                        let remaining = initialPayment;
+                        let arrearsPaid = 0;
+                        let currentRentPaid = 0;
+                        const sortedBills = [...insertedBills].sort((a, b) => a.billing_date.localeCompare(b.billing_date));
+                        const clearedBillingIds: number[] = [];
+                        const arrearMonthsCleared: string[] = [];
+
+                        for (const b of sortedBills) {
+                            if (remaining <= 0) break;
+                            const billBal = Number(b.balance || 0);
+                            if (billBal <= 0) continue;
+
+                            const alloc = Math.min(remaining, billBal);
+                            const newPaid = Number(b.amount_paid || 0) + alloc;
+                            const newBal = Math.max(0, Number(b.rent_amount) - newPaid);
+                            const newStatus = newBal <= 0 ? "Paid" : "Partial";
+                            const isArrear = b.billing_month < currentMonth;
+
+                            if (isArrear) {
+                                arrearsPaid += alloc;
+                                if (newStatus === "Paid") arrearMonthsCleared.push(b.billing_month);
+                            } else {
+                                currentRentPaid += alloc;
+                            }
+
+                            clearedBillingIds.push(b.billing_id);
+                            await supabase
+                                .from("arms_billing")
+                                .update({
+                                    amount_paid: newPaid,
+                                    balance: newBal,
+                                    status: newStatus,
+                                    updated_at: new Date().toISOString(),
+                                })
+                                .eq("billing_id", b.billing_id);
+
+                            remaining -= alloc;
+                        }
+
+                        const creditAmount = Math.max(0, Math.round(remaining * 100) / 100);
+                        const metaTags = [
+                            `[ArrearsPaid:${arrearsPaid}]`,
+                            `[CurrentRentPaid:${currentRentPaid}]`,
+                            clearedBillingIds.length > 0 ? `[BillsCleared:${clearedBillingIds.length}]` : "",
+                            arrearMonthsCleared.length > 0 ? `[ArrearMonths:${arrearMonthsCleared.join(",")}]` : "",
+                            creditAmount > 0 ? `[Credit:${creditAmount}]` : "",
+                        ].filter(Boolean).join("");
+
+                        await supabase.from("arms_payments").insert([{
+                            tenant_id: newTenant.tenant_id,
+                            billing_id: clearedBillingIds[0] || null,
+                            location_id: tenant.location_id,
+                            amount: initialPayment,
+                            payment_method: tenant.payment_method || "Cash",
+                            recorded_by: "Move-In Payment",
+                            notes: `Move-in payment ${metaTags}`,
+                            payment_date: new Date().toISOString(),
+                        }]);
+
+                        totalBalance = Math.max(0, Math.round((totalBalance - initialPayment) * 100) / 100);
+                    }
+
                     await supabase.from("arms_tenants").update({
                         balance: Math.round(totalBalance * 100) / 100,
                         updated_at: new Date().toISOString(),
                     }).eq("tenant_id", newTenant.tenant_id);
+                } else if (initialPayment > 0) {
+                    // Future move-in: record entire payment as advance credit
+                    await supabase.from("arms_payments").insert([{
+                        tenant_id: newTenant.tenant_id,
+                        billing_id: null,
+                        location_id: tenant.location_id,
+                        amount: initialPayment,
+                        payment_method: tenant.payment_method || "Cash",
+                        recorded_by: "Move-In Payment",
+                        notes: `Move-in advance payment [Credit:${initialPayment}]`,
+                        payment_date: new Date().toISOString(),
+                    }]);
                 }
             }
 
