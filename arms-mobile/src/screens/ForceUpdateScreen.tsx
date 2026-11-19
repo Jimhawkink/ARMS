@@ -83,6 +83,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
     const pulse   = useRef(new Animated.Value(1)).current;
     const checkScale = useRef(new Animated.Value(0)).current;
     const successFade = useRef(new Animated.Value(0)).current;
+    const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null);
 
     const [phase,    setPhase]    = useState<Phase>('idle');
     const [progress, setProgress] = useState(0);   // 0–1
@@ -106,20 +107,36 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
         return () => clearTimeout(t);
     }, []);
 
-    const startDownload = useCallback(async () => {
-        if (phase === 'downloading' || phase === 'done') return;
+    const startDownload = useCallback(async (retryCount = 0) => {
+        if (phase === 'installing' || phase === 'done') return;
         setPhase('downloading');
-        setProgress(0);
         setErrMsg('');
 
-        const apkUrl      = `${APK_BASE_URL}${latestVersion}.apk`;
-        const localPath   = `${FileSystem.cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
+        const localPath = `${FileSystem.cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
 
-        // Delete any previous partial download
-        try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch (_) {}
+        // If we already have a resumable download, resume from current byte offset
+        if (downloadResumableRef.current) {
+            try {
+                const resumed = await downloadResumableRef.current.resumeAsync();
+                if (resumed?.uri) {
+                    setProgress(1);
+                    setPhase('installing');
+                    await new Promise(r => setTimeout(r, 800));
+                    await launchInstall(resumed.uri);
+                    setPhase('done');
+                    Animated.sequence([
+                        Animated.spring(checkScale,  { toValue: 1, useNativeDriver: true, bounciness: 15 }),
+                        Animated.timing(successFade, { toValue: 1, duration: 400, useNativeDriver: true }),
+                    ]).start();
+                    return;
+                }
+            } catch (resumeErr) {
+                console.warn('[ForceUpdate] Resume attempt failed, restarting:', resumeErr);
+            }
+        }
 
-        const downloadResumable = FileSystem.createDownloadResumable(
-            apkUrl,
+        downloadResumableRef.current = FileSystem.createDownloadResumable(
+            'https://arms-opal.vercel.app/api/dl',
             localPath,
             {},
             (downloadProgress) => {
@@ -131,7 +148,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
         );
 
         try {
-            const result = await downloadResumable.downloadAsync();
+            const result = await downloadResumableRef.current.downloadAsync();
             if (!result?.uri) throw new Error('Download failed — no file saved');
 
             setProgress(1);
@@ -149,7 +166,12 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             ]).start();
 
         } catch (e: any) {
-            setErrMsg(e?.message || 'Download failed. Please try again.');
+            if (retryCount < 2) {
+                console.log(`[ForceUpdate] Auto-retrying on slow internet (attempt ${retryCount + 1}/2)...`);
+                setTimeout(() => startDownload(retryCount + 1), 2000);
+                return;
+            }
+            setErrMsg('Weak internet detected. Tap Retry or use the browser download below.');
             setPhase('error');
         }
     }, [phase, latestVersion]);
