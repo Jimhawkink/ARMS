@@ -10,60 +10,21 @@ function getServiceClient() {
     );
 }
 
-// ============================================================
-// VERSION GATE — blocks old APKs (< v5.3) from accessing tenant features
-// Old APKs don't send X-App-Version header or are below v5.3 → blocked
-// ============================================================
-const MIN_APK_VERSION = 'v5.3';
-
-function parseVersion(v: string): number[] {
-    return v.replace(/^v/, '').split('.').map(n => parseInt(n) || 0);
-}
-
-function isTooOld(appVersion: string): boolean {
-    const app = parseVersion(appVersion);
-    const min = parseVersion(MIN_APK_VERSION);
-    for (let i = 0; i < Math.max(app.length, min.length); i++) {
-        const a = app[i] ?? 0;
-        const m = min[i] ?? 0;
-        if (a < m) return true;
-        if (a > m) return false;
-    }
-    return false; // equal → not too old
-}
-
 /**
  * POST /api/license/tenant-check
  *
- * Checks if a tenant is licensed to use the mobile app.
- * Auto-creates a license on first login (no admin action needed).
- * Updates last_seen_at on every call.
- *
- * Body: { tenantId: number, phone: string }
- *
- * Responses:
- *   { licensed: true }                       — active license
- *   { licensed: true, autoLicensed: true }   — newly created
- *   { licensed: false, reason: string }      — revoked or outdated APK
+ * Verifies if a tenant has active mobile app access.
+ * Auto-creates a license on login.
+ * FAIL-OPEN: Paying tenants are NEVER blocked due to version headers or network blips.
  */
 export async function POST(req: NextRequest) {
     try {
-        // ── VERSION GATE ──────────────────────────────────────────────────
-        const appVersion = req.headers.get('X-App-Version') || '';
-        if (!appVersion || isTooOld(appVersion)) {
-            return NextResponse.json({
-                licensed: false,
-                reason: `⚠️ Your app (${appVersion || 'unknown'}) is outdated.\n\nPlease scan the QR code on your door to download the new version (${MIN_APK_VERSION}).`,
-            });
-        }
-        // ─────────────────────────────────────────────────────────────────
-
-        const body = await req.json();
+        const body = await req.json().catch(() => ({}));
         const { tenantId, phone } = body;
 
-        // Validate tenantId
-        if (!tenantId || typeof tenantId !== 'number' || !Number.isInteger(tenantId) || tenantId <= 0) {
-            return NextResponse.json({ error: 'tenantId required' }, { status: 400 });
+        // If no tenantId provided, fail-open to let valid session through
+        if (!tenantId || typeof tenantId !== 'number' || tenantId <= 0) {
+            return NextResponse.json({ licensed: true });
         }
 
         const supabase = getServiceClient();
@@ -77,29 +38,30 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
 
         if (fetchError) {
-            console.error('tenant-check fetch error:', fetchError.message);
-            return NextResponse.json({ error: 'License check failed' }, { status: 500 });
+            console.warn('[tenant-check] fetch warning (fail-open):', fetchError.message);
+            return NextResponse.json({ licensed: true });
         }
 
         if (existing) {
-            // Update last_seen_at
-            await supabase
-                .from('arms_tenant_licenses')
-                .update({ last_seen_at: now })
-                .eq('tenant_id', tenantId);
-
-            if (existing.is_active) {
-                return NextResponse.json({ licensed: true });
-            } else {
+            // Only block if explicitly revoked by landlord/admin with an active reason
+            if (existing.is_active === false && existing.revoked_reason) {
                 return NextResponse.json({
                     licensed: false,
                     reason: existing.revoked_reason || 'Access has been revoked by your landlord.',
                 });
             }
+
+            // Update last_seen_at in background
+            await supabase
+                .from('arms_tenant_licenses')
+                .update({ last_seen_at: now, is_active: true })
+                .eq('tenant_id', tenantId);
+
+            return NextResponse.json({ licensed: true });
         }
 
-        // No record — auto-create license (first login)
-        const { error: insertError } = await supabase
+        // No record — auto-create active license
+        await supabase
             .from('arms_tenant_licenses')
             .upsert(
                 [{
@@ -112,14 +74,9 @@ export async function POST(req: NextRequest) {
                 { onConflict: 'tenant_id' }
             );
 
-        if (insertError) {
-            console.error('tenant-check insert error:', insertError.message);
-            return NextResponse.json({ error: 'License check failed' }, { status: 500 });
-        }
-
         return NextResponse.json({ licensed: true, autoLicensed: true });
     } catch (err: unknown) {
-        console.error('tenant-check error:', err);
-        return NextResponse.json({ error: 'License check failed' }, { status: 500 });
+        console.warn('[tenant-check] exception (fail-open):', err);
+        return NextResponse.json({ licensed: true });
     }
 }
