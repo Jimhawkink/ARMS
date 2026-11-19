@@ -39,6 +39,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
     const pulse = useRef(new Animated.Value(1)).current;
     const progressAnim = useRef(new Animated.Value(0)).current;
     const savedApkUriRef = useRef<string | null>(null);
+    const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null);
 
     const [phase, setPhase] = useState<Phase>('idle');
     const [progress, setProgress] = useState(0);
@@ -103,24 +104,31 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
         }
     };
 
-    const startDownload = async () => {
+    const startDownload = async (retryCount = 0) => {
         try {
             setPhase('downloading');
-            setProgress(0);
             setErrorMsg('');
 
             const targetDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
             const apkPath = `${targetDir}ARMSTenantApp-v${latestVersion}.apk`;
 
-            // Clear old APK cache if exists
-            try {
-                const info = await FileSystem.getInfoAsync(apkPath);
-                if (info.exists) {
-                    await FileSystem.deleteAsync(apkPath, { idempotent: true });
+            // If we already have an active resumable download instance, attempt resume to preserve downloaded bytes
+            if (downloadResumableRef.current) {
+                try {
+                    const resumed = await downloadResumableRef.current.resumeAsync();
+                    if (resumed?.uri) {
+                        savedApkUriRef.current = resumed.uri;
+                        setProgress(1);
+                        await openInstaller(resumed.uri);
+                        return;
+                    }
+                } catch (resumeErr) {
+                    console.warn('[ForceUpdate] Resume attempt failed, restarting:', resumeErr);
                 }
-            } catch {}
+            }
 
-            const downloadResumable = FileSystem.createDownloadResumable(
+            // Fresh resumable download instance with real-time byte tracking
+            downloadResumableRef.current = FileSystem.createDownloadResumable(
                 APK_DOWNLOAD_URL,
                 apkPath,
                 {
@@ -136,7 +144,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                 }
             );
 
-            const result = await downloadResumable.downloadAsync();
+            const result = await downloadResumableRef.current.downloadAsync();
             if (!result?.uri) throw new Error('Download failed — no update package received.');
 
             savedApkUriRef.current = result.uri;
@@ -146,7 +154,13 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             await openInstaller(result.uri);
         } catch (err: any) {
             console.warn('[ForceUpdate error]', err);
-            setErrorMsg(err?.message || 'Download failed. Please tap retry below.');
+            // Automatic retry up to 2 times for weak internet packet drops before failing
+            if (retryCount < 2) {
+                console.log(`[ForceUpdate] Auto-retrying download on slow connection (attempt ${retryCount + 1}/2)...`);
+                setTimeout(() => startDownload(retryCount + 1), 2000);
+                return;
+            }
+            setErrorMsg('Slow connection detected. You can retry in-app or use your phone browser.');
             setPhase('error');
         }
     };
