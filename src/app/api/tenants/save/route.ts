@@ -140,9 +140,20 @@ export async function POST(req: NextRequest) {
                 await supabase.from("arms_units").update({ status: "Occupied", updated_at: new Date().toISOString() }).eq("unit_id", updates.unit_id);
             }
 
+            // Strip non-column fields that don't exist in arms_tenants
+            const {
+                initial_payment: _ip,
+                location_name: _ln,
+                additional_units: _au,
+                unit_name: _un,
+                arms_units: _arrU,
+                arms_locations: _arrL,
+                ...safeUpdates
+            } = updates as any;
+
             const { data: updatedTenant, error: uErr } = await supabase
                 .from("arms_tenants")
-                .update({ ...updates, updated_at: new Date().toISOString() })
+                .update({ ...safeUpdates, updated_at: new Date().toISOString() })
                 .eq("tenant_id", tenantId)
                 .select()
                 .single();

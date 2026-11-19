@@ -871,11 +871,22 @@ export async function addTenant(tenant: {
 }
 
 export async function updateTenant(id: number, updates: any) {
+    // Strip fields that don't exist in arms_tenants to avoid schema cache errors
+    const {
+        initial_payment: _ip,
+        location_name: _ln,
+        additional_units: _au,
+        unit_name: _un,
+        arms_units: _arrU,
+        arms_locations: _arrL,
+        ...safeUpdates
+    } = updates;
+
     if (typeof window !== 'undefined') {
         const res = await fetch('/api/tenants/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'update', id, updates }),
+            body: JSON.stringify({ action: 'update', id, updates: safeUpdates }),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -888,9 +899,6 @@ export async function updateTenant(id: number, updates: any) {
         invalidateCache('stats');
         return json.tenant;
     }
-
-    // Strip fields that don't exist in arms_tenants to avoid schema cache errors
-    const { initial_payment: _ip, location_name: _ln, ...safeUpdates } = updates;
 
     // ── Fetch old tenant data before update ──
     const { data: oldTenant } = await supabase

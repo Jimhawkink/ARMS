@@ -646,7 +646,8 @@ export default function TenantsPage() {
             }
 
             if (isEdit) {
-                await updateTenant(editItem.tenant_id, payload);
+                const { location_name: _ln, ...tenantDbPayload } = payload;
+                await updateTenant(editItem.tenant_id, tenantDbPayload);
                 if (form.initial_payment !== '') {
                     await updateMoveInPayment(
                         editItem.tenant_id,
