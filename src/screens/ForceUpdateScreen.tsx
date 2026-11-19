@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, BackHandler, ActivityIndicator,
+    StatusBar, TouchableOpacity, BackHandler, ActivityIndicator, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -127,12 +127,12 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                     headers: { 'Cache-Control': 'no-cache' },
                 },
                 (data) => {
-                    if (data.totalBytesExpectedToWrite > 0) {
-                        const pct = data.totalBytesWritten / data.totalBytesExpectedToWrite;
-                        setProgress(Math.min(pct, 1));
-                        setDownloadedMb((data.totalBytesWritten / (1024 * 1024)).toFixed(1));
-                        setTotalMb((data.totalBytesExpectedToWrite / (1024 * 1024)).toFixed(1));
-                    }
+                    const total = data.totalBytesExpectedToWrite > 0 ? data.totalBytesExpectedToWrite : 73417255;
+                    const written = data.totalBytesWritten || 0;
+                    const pct = Math.min(written / total, 0.99);
+                    setProgress(pct);
+                    setDownloadedMb((written / (1024 * 1024)).toFixed(1));
+                    setTotalMb((total / (1024 * 1024)).toFixed(1));
                 }
             );
 
@@ -262,7 +262,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                     </View>
                 )}
 
-                {/* Error Section with Direct In-App Retry */}
+                {/* Error Section with Direct In-App Retry & Weak Internet Browser Fallback */}
                 {phase === 'error' && (
                     <View style={styles.errorSection}>
                         <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
@@ -276,6 +276,19 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                                 style={styles.btnGrad}
                             >
                                 <Text style={styles.btnText}>🔄 Retry In-App Download</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => Linking.openURL(APK_DOWNLOAD_URL).catch(() => {})}
+                            style={[styles.retryBtn, { marginTop: 10, borderColor: '#3b82f6', borderWidth: 1 }]}
+                        >
+                            <LinearGradient
+                                colors={['#1d4ed8', '#1e40af']}
+                                style={styles.btnGrad}
+                            >
+                                <Text style={styles.btnText}>🌐 Download via Browser (Weak Internet)</Text>
                             </LinearGradient>
                         </TouchableOpacity>
                     </View>
