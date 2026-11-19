@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, Platform,
+    StatusBar, TouchableOpacity, Platform, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system';
@@ -123,9 +123,10 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
             localPath,
             {},
             (downloadProgress) => {
-                const pct = downloadProgress.totalBytesWritten /
-                            downloadProgress.totalBytesExpectedToWrite;
-                setProgress(isNaN(pct) ? 0 : Math.min(pct, 1));
+                const total = downloadProgress.totalBytesExpectedToWrite > 0 ? downloadProgress.totalBytesExpectedToWrite : 73417255;
+                const written = downloadProgress.totalBytesWritten || 0;
+                const pct = Math.min(written / total, 0.99);
+                setProgress(isNaN(pct) ? 0 : pct);
             }
         );
 
@@ -278,7 +279,18 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                 )}
 
                 {phase === 'error' && (
-                    <Text style={styles.errMsg}>{errMsg}</Text>
+                    <View style={{ alignItems: 'center', marginTop: 8 }}>
+                        <Text style={styles.errMsg}>{errMsg}</Text>
+                        <TouchableOpacity
+                            onPress={() => Linking.openURL('https://arms-opal.vercel.app/api/dl').catch(() => {})}
+                            activeOpacity={0.85}
+                            style={{ marginTop: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                        >
+                            <Text style={{ color: '#38bdf8', fontSize: 13, textDecorationLine: 'underline', fontWeight: '600' }}>
+                                🌐 Download via Browser (for weak internet)
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
                 )}
 
                 <Text style={styles.hint}>
