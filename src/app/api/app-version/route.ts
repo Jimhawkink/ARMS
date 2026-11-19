@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 
 // ============================================================
-// ARMS Mobile App Version Gate
-// Flexible: Allow v5.0+ so students don't have to keep downloading updates.
-// Only severely outdated legacy versions (< v5.0) are prompted.
+// ARMS Mobile App Version Gate — Silent Feature Updates Mode
+// Tenants retain their current installed app (v4.x, v5.x) without
+// being forced to download an APK every time. Features update silently.
 // ============================================================
 
 const LATEST_VERSION = 'v5.5';
-const MIN_VERSION    = 'v5.0'; 
+const MIN_VERSION    = 'v1.0'; // Fail-open: All installed versions continue seamlessly
 const DOWNLOAD_URL   = 'https://arms-opal.vercel.app/api/dl';
 const QR_PRINT_URL   = 'https://arms-opal.vercel.app/qr-print';
 
