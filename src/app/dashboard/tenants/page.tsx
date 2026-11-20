@@ -4,7 +4,8 @@ import {
     getTenants, addTenant, updateTenant, deactivateTenant, deleteTenantPermanently, getUnits,
     getLocations, calculateUnpaidRent, generateMonthlyBills, getMoveInPayment,
     updateMoveInPayment, getAllTenantUnits, getTenantUnits, saveTenantUnits,
-    getTenantMonthlyRentForMonth, parseComradesFromNotes
+    getTenantMonthlyRentForMonth, parseComradesFromNotes,
+    calculateMoveInProratedRent, isExemptFromMoveInPenalty
 } from '@/lib/supabase';
 import { hashPassword } from '@/lib/password';
 import toast from 'react-hot-toast';
@@ -581,6 +582,13 @@ export default function TenantsPage() {
         : 0;
     const totalCombinedRent = primaryRentNum + totalAdditionalRent + totalComradeAddedRent;
     const totalRoomCount = 1 + additionalUnits.filter(au => au.unit_id > 0).length;
+
+    // Real-time Move-In Admission Proration calculation
+    const moveInProration = useMemo(() => {
+        if (!form.move_in_date || totalCombinedRent <= 0) return null;
+        const billingMonth = form.billing_start_month || form.move_in_date.slice(0, 7);
+        return calculateMoveInProratedRent(totalCombinedRent, billingMonth, form.move_in_date);
+    }, [form.move_in_date, form.billing_start_month, totalCombinedRent]);
 
     // ── Save Tenant Logic ──
     const handleSave = async () => {
@@ -2273,6 +2281,51 @@ export default function TenantsPage() {
                                             ⚡ Backdated Move-In: ARMS will auto-generate all monthly bills from {form.billing_start_month} to now!
                                         </div>
                                     )}
+
+                                    {/* Real-time Admission Rent Proration & Penalty Exemption Banner */}
+                                    {moveInProration && moveInProration.isProrated ? (
+                                        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-300 text-xs space-y-2 shadow-sm">
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-black text-emerald-950 flex items-center gap-1.5 text-xs sm:text-sm">
+                                                    📅 Admission Prorated Rent (Day {moveInProration.moveInDay} Onwards)
+                                                </span>
+                                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-700 text-white uppercase tracking-wider">
+                                                    Prorated
+                                                </span>
+                                            </div>
+                                            <p className="text-[11px] text-emerald-900 font-semibold leading-relaxed">
+                                                Tenant admitted on the <strong>{moveInProration.moveInDay}th</strong> of the month (6th onwards). Strictly for the admission month (<strong>{form.billing_start_month || form.move_in_date.slice(0, 7)}</strong>), rent is charged strictly per day:
+                                            </p>
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 font-bold text-[11px] text-slate-800">
+                                                <div className="bg-white/90 p-2 rounded-xl border border-emerald-200">
+                                                    <span className="text-[10px] text-slate-500 block">Staying to End-Month</span>
+                                                    <span className="text-slate-800 font-black">{moveInProration.daysStaying} / {moveInProration.daysInMonth} days</span>
+                                                </div>
+                                                <div className="bg-white/90 p-2 rounded-xl border border-emerald-200">
+                                                    <span className="text-[10px] text-slate-500 block">Daily Rent Rate</span>
+                                                    <span className="text-slate-800 font-black">KES {Math.round(moveInProration.dailyRate).toLocaleString()}/day</span>
+                                                </div>
+                                                <div className="bg-white/90 p-2 rounded-xl border border-emerald-200 col-span-2 sm:col-span-1">
+                                                    <span className="text-[10px] text-slate-500 block">Move-In Month Rent</span>
+                                                    <span className="text-emerald-700 font-black text-sm">KES {moveInProration.rentAmount.toLocaleString()}</span>
+                                                </div>
+                                            </div>
+                                            <div className="p-2 rounded-xl bg-white/70 border border-emerald-200/80 flex items-start gap-2 text-[11px]">
+                                                <span className="text-sm">🛡️</span>
+                                                <div>
+                                                    <strong className="text-emerald-950 font-black">Zero Late Penalty Guaranteed:</strong>
+                                                    <p className="text-emerald-800 text-[10px] leading-tight mt-0.5">
+                                                        Tenant was admitted after the 5th due date, so <strong>NO late penalty</strong> will be charged on this move-in month. Following months will bill standard full monthly rent (KES {totalCombinedRent.toLocaleString()}).
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : moveInProration ? (
+                                        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 font-semibold flex items-center justify-between">
+                                            <span>📅 Standard Monthly Billing (Admitted 1st–5th: Standard full month rent KES {totalCombinedRent.toLocaleString()} applies).</span>
+                                            <span className="text-[10px] font-bold text-slate-500">Normal 10% penalty past 5th</span>
+                                        </div>
+                                    ) : null}
 
                                     {/* Vacation Toggle */}
                                     <div className="p-4 rounded-2xl border border-violet-200 bg-violet-50/40 flex items-center justify-between">

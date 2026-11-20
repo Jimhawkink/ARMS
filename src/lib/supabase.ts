@@ -420,6 +420,104 @@ export function getTenantMonthlyRentForMonth(monthlyRent: number, notes: string 
     return effectiveRent;
 }
 
+/**
+ * Calculates effective rent for a given billing month, applying move-in proration
+ * if the tenant was admitted on the 6th or later of their move-in month.
+ *
+ * Rules:
+ * - If billingMonth is the move-in month:
+ *     - If moveInDay (1-5): standard full monthly rent.
+ *     - If moveInDay (6 onwards): prorated by days from move-in date to month end:
+ *         daysInMonth = total days in month
+ *         daysStaying = (daysInMonth - moveInDay) + 1
+ *         proratedRent = Math.round((monthlyRent / daysInMonth) * daysStaying)
+ * - If billingMonth is after the move-in month:
+ *     - Standard full monthly rent (strictly only move-in month is prorated)
+ */
+export function calculateMoveInProratedRent(
+    monthlyRent: number,
+    billingMonth: string, // 'YYYY-MM'
+    moveInDate?: string | null // 'YYYY-MM-DD'
+): {
+    rentAmount: number;
+    isProrated: boolean;
+    daysStaying: number;
+    daysInMonth: number;
+    moveInDay: number;
+    dailyRate: number;
+} {
+    const [year, month] = billingMonth.split('-').map(Number);
+    // Number of days in the given month (e.g. Nov = 30, Oct = 31)
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dailyRate = daysInMonth > 0 ? monthlyRent / daysInMonth : 0;
+
+    if (!moveInDate || !moveInDate.includes('-')) {
+        return {
+            rentAmount: monthlyRent,
+            isProrated: false,
+            daysStaying: daysInMonth,
+            daysInMonth,
+            moveInDay: 1,
+            dailyRate,
+        };
+    }
+
+    const moveInMonth = moveInDate.slice(0, 7);
+    if (billingMonth !== moveInMonth) {
+        // Strictly only prorate the month of admission / move-in
+        return {
+            rentAmount: monthlyRent,
+            isProrated: false,
+            daysStaying: daysInMonth,
+            daysInMonth,
+            moveInDay: 1,
+            dailyRate,
+        };
+    }
+
+    const parts = moveInDate.split('-');
+    const moveInDay = parseInt(parts[2], 10);
+
+    // If admitted on 1st - 5th: standard full monthly rent applies
+    if (isNaN(moveInDay) || moveInDay < 6) {
+        return {
+            rentAmount: monthlyRent,
+            isProrated: false,
+            daysStaying: daysInMonth,
+            daysInMonth,
+            moveInDay: isNaN(moveInDay) ? 1 : moveInDay,
+            dailyRate,
+        };
+    }
+
+    // If admitted on 6th onwards: calculate daily rent multiplied by days to end of month
+    const daysStaying = Math.max(1, (daysInMonth - moveInDay) + 1);
+    const proratedRent = Math.round(dailyRate * daysStaying);
+
+    return {
+        rentAmount: proratedRent,
+        isProrated: true,
+        daysStaying,
+        daysInMonth,
+        moveInDay,
+        dailyRate,
+    };
+}
+
+/**
+ * Checks whether a bill month is exempt from late payment penalties
+ * because the tenant moved in on the 6th or later of that month.
+ * Strictly applies only to the move-in / admission month.
+ */
+export function isExemptFromMoveInPenalty(billMonth: string, moveInDate?: string | null): boolean {
+    if (!moveInDate || !moveInDate.includes('-')) return false;
+    const moveInMonth = moveInDate.slice(0, 7);
+    if (billMonth !== moveInMonth) return false; // Strictly only the move-in month is exempt
+    const parts = moveInDate.split('-');
+    const moveInDay = parseInt(parts[2], 10);
+    return !isNaN(moveInDay) && moveInDay >= 6; // Admitted on 6th onwards -> EXEMPT from penalty!
+}
+
 export interface AddTenantChargeParams {
     tenantId: number;
     amount: number;
@@ -812,6 +910,18 @@ export async function addTenant(tenant: {
             const curM = `${sy}-${String(sm).padStart(2, '0')}`;
             const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curM);
             const effectiveRent = getEffectiveRent(nominalRent, curM, isOnVacation);
+            const moveInDateActual = tenant.move_in_date || (rawMoveIn.length === 10 ? rawMoveIn : `${rawMoveIn}-01`);
+            const proration = calculateMoveInProratedRent(effectiveRent, curM, moveInDateActual);
+            const billRent = proration.rentAmount;
+
+            let billNotes: string | null = null;
+            if (proration.isProrated) {
+                billNotes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})`;
+            }
+            if (isOnVacation && isVacationMonth(curM)) {
+                billNotes = billNotes ? `${billNotes} | Vacation half-rent (50%)` : 'Vacation half-rent (50%)';
+            }
+
             billsToCreate.push({
                 tenant_id: data.tenant_id,
                 location_id: tenant.location_id,
@@ -819,13 +929,13 @@ export async function addTenant(tenant: {
                 billing_month: curM,
                 billing_date: `${curM}-01`,
                 due_date: `${curM}-05`,
-                rent_amount: effectiveRent,
+                rent_amount: billRent,
                 amount_paid: 0,
-                balance: effectiveRent,
+                balance: billRent,
                 status: 'Unpaid',
-                notes: isOnVacation && isVacationMonth(curM) ? 'Vacation half-rent (50%)' : null,
+                notes: billNotes,
             });
-            totalBalance += effectiveRent;
+            totalBalance += billRent;
             sm++;
             if (sm > 12) { sm = 1; sy++; }
         }
@@ -903,7 +1013,7 @@ export async function updateTenant(id: number, updates: any) {
     // ── Fetch old tenant data before update ──
     const { data: oldTenant } = await supabase
         .from('arms_tenants')
-        .select('unit_id, monthly_rent, location_id, is_on_vacation, notes')
+        .select('unit_id, monthly_rent, location_id, is_on_vacation, notes, move_in_date')
         .eq('tenant_id', id)
         .single();
 
@@ -950,16 +1060,27 @@ export async function updateTenant(id: number, updates: any) {
                 .neq('status', 'Paid')
                 .order('billing_month', { ascending: true });
 
+            const moveInDateActual = safeUpdates.move_in_date || oldTenant?.move_in_date;
+
             if (unpaidBills && unpaidBills.length > 0) {
                 await Promise.all(unpaidBills.map((bill: any) => {
                     const nominalRent = getTenantMonthlyRentForMonth(currentRent, activeNotes, bill.billing_month);
                     const effectiveRent = getEffectiveRent(nominalRent, bill.billing_month, isOnVacation);
-                    const newBalance = Math.max(0, Math.round((effectiveRent - (bill.amount_paid || 0)) * 100) / 100);
+                    const proration = calculateMoveInProratedRent(effectiveRent, bill.billing_month, moveInDateActual);
+                    const billRent = proration.rentAmount;
+                    const isExemptPenalty = isExemptFromMoveInPenalty(bill.billing_month, moveInDateActual);
+                    const newBalance = Math.max(0, Math.round((billRent - (bill.amount_paid || 0)) * 100) / 100);
                     const newStatus = newBalance <= 0 ? 'Paid' : (bill.amount_paid || 0) > 0 ? 'Partial' : 'Unpaid';
+                    let notes = bill.notes || '';
+                    if (proration.isProrated) {
+                        notes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})`;
+                    }
                     return supabase.from('arms_billing').update({
-                        rent_amount: effectiveRent,
+                        rent_amount: billRent,
                         balance: newBalance,
                         status: newStatus,
+                        due_date: isExemptPenalty ? moveInDateActual : `${bill.billing_month}-05`,
+                        notes,
                         updated_at: new Date().toISOString(),
                     }).eq('billing_id', bill.billing_id);
                 }));
@@ -967,18 +1088,26 @@ export async function updateTenant(id: number, updates: any) {
                 // No bill for current month yet — create it
                 const nominalRent = getTenantMonthlyRentForMonth(currentRent, activeNotes, currentMonth);
                 const effectiveRent = getEffectiveRent(nominalRent, currentMonth, isOnVacation);
+                const proration = calculateMoveInProratedRent(effectiveRent, currentMonth, moveInDateActual);
+                const isExemptPenalty = isExemptFromMoveInPenalty(currentMonth, moveInDateActual);
                 await supabase.from('arms_billing').insert([{
                     tenant_id: id,
                     location_id: locationId,
                     unit_id: unitId,
                     billing_month: currentMonth,
                     billing_date: `${currentMonth}-01`,
-                    due_date: `${currentMonth}-05`,
-                    rent_amount: effectiveRent,
+                    due_date: isExemptPenalty ? moveInDateActual : `${currentMonth}-05`,
+                    rent_amount: proration.rentAmount,
                     amount_paid: 0,
-                    balance: effectiveRent,
+                    balance: proration.rentAmount,
                     status: 'Unpaid',
+                    notes: proration.isProrated ? `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})` : null,
                 }]);
+            }
+
+            // Exemption: Clean up any penalty for move-in month if admitted 6th onwards
+            if (moveInDateActual && isExemptFromMoveInPenalty(moveInDateActual.slice(0, 7), moveInDateActual)) {
+                await supabase.from('arms_penalties').delete().eq('tenant_id', id).eq('billing_month', moveInDateActual.slice(0, 7));
             }
 
             // Recalculate total balance from all unpaid bills
@@ -1098,18 +1227,31 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
             if (!existingMonths.has(curM)) {
                 const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curM);
                 const effectiveRent = getEffectiveRent(nominalRent, curM, tenantOnVacation);
+                const moveInDateActual = tenant.move_in_date || (moveInDate.length === 10 ? moveInDate : `${moveInDate}-01`);
+                const proration = calculateMoveInProratedRent(effectiveRent, curM, moveInDateActual);
+                const billRent = proration.rentAmount;
+                const isExemptPenalty = isExemptFromMoveInPenalty(curM, moveInDateActual);
+
+                let billNotes: string | null = null;
+                if (proration.isProrated) {
+                    billNotes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})`;
+                }
+                if (tenantOnVacation && isVacationMonth(curM)) {
+                    billNotes = billNotes ? `${billNotes} | Vacation half-rent (50%)` : 'Vacation half-rent (50%)';
+                }
+
                 billsToCreate.push({
                     tenant_id: tenantId,
                     location_id: tenant.location_id,
                     unit_id: tenant.unit_id,
                     billing_month: curM,
                     billing_date: `${curM}-01`,
-                    due_date: `${curM}-05`,
-                    rent_amount: effectiveRent,
+                    due_date: isExemptPenalty ? moveInDateActual : `${curM}-05`,
+                    rent_amount: billRent,
                     amount_paid: 0,
-                    balance: effectiveRent,
+                    balance: billRent,
                     status: 'Unpaid',
-                    notes: tenantOnVacation && isVacationMonth(curM) ? 'Vacation half-rent (50%)' : null,
+                    notes: billNotes,
                 });
             }
             sm++;
@@ -1119,6 +1261,30 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
 
     if (billsToCreate.length > 0) {
         await supabase.from('arms_billing').insert(billsToCreate);
+    }
+
+    // If move-in bill already existed, ensure its rent_amount and due_date match proration
+    const moveInDateActual = tenant.move_in_date || (moveInDate.length === 10 ? moveInDate : `${moveInDate}-01`);
+    if (existingMonths.has(moveInMonth) && moveInDateActual) {
+        const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, moveInMonth);
+        const effectiveRent = getEffectiveRent(nominalRent, moveInMonth, tenantOnVacation);
+        const proration = calculateMoveInProratedRent(effectiveRent, moveInMonth, moveInDateActual);
+        const isExemptPenalty = isExemptFromMoveInPenalty(moveInMonth, moveInDateActual);
+
+        let billNotes: string | null = null;
+        if (proration.isProrated) {
+            billNotes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})`;
+        }
+        if (tenantOnVacation && isVacationMonth(moveInMonth)) {
+            billNotes = billNotes ? `${billNotes} | Vacation half-rent (50%)` : 'Vacation half-rent (50%)';
+        }
+
+        await supabase.from('arms_billing').update({
+            rent_amount: proration.rentAmount,
+            due_date: isExemptPenalty ? moveInDateActual : `${moveInMonth}-05`,
+            notes: billNotes,
+            updated_at: new Date().toISOString(),
+        }).eq('tenant_id', tenantId).eq('billing_month', moveInMonth);
     }
 
     // ── Step 3: Reset ALL remaining bills to unpaid ──
@@ -1186,6 +1352,11 @@ export async function updateMoveInPayment(tenantId: number, newAmount: number, l
         balance: newTenantBalance,
         updated_at: new Date().toISOString(),
     }).eq('tenant_id', tenantId);
+
+    // If move-in day is 6th onwards, guarantee exemption from penalty on move-in month
+    if (moveInDateActual && isExemptFromMoveInPenalty(moveInMonth, moveInDateActual)) {
+        await supabase.from('arms_penalties').delete().eq('tenant_id', tenantId).eq('billing_month', moveInMonth);
+    }
 }
 
 export async function deactivateTenant(id: number) {
@@ -3540,7 +3711,10 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
 
     // Only look at CURRENT month bills (November 2026 onwards by nature of running now)
     let q = supabaseAdmin.from('arms_billing')
-        .select('billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month')
+        .select(`
+            billing_id, tenant_id, location_id, rent_amount, balance, status, billing_month,
+            arms_tenants(move_in_date)
+        `)
         .eq('billing_month', currentMonth)
         .in('status', ['Unpaid', 'Partial'])
         .gt('balance', 0);
@@ -3549,7 +3723,9 @@ export async function generatePenalties(locationId?: number): Promise<{ generate
     if (!bills || bills.length === 0) return { generated: 0, skipped: 0 };
 
     // Build one 10% flat penalty row per overdue tenant (dated 6th of the month)
-    const rows = bills.map((bill: any) => {
+    // EXEMPTION: Tenants who moved in on the 6th or later of currentMonth are never penalized on their move-in month
+    const eligibleBills = bills.filter((b: any) => !isExemptFromMoveInPenalty(currentMonth, b.arms_tenants?.move_in_date));
+    const rows = eligibleBills.map((bill: any) => {
         const rent = Number(bill.rent_amount) || 0;
         const penaltyAmt = Math.round(rent * 0.10);
         return {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin, isExemptFromMoveInPenalty } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,8 +58,37 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ generated: 0, skipped: 0, message: 'No unpaid bills found for ' + currentMonth });
         }
 
+        // Fetch tenants' move_in_date to enforce move-in penalty exemption (day 6 onwards)
+        const billTenantIds = Array.from(new Set(bills.map((b: any) => b.tenant_id)));
+        const { data: tenantRows } = await supabaseAdmin
+            .from('arms_tenants')
+            .select('tenant_id, move_in_date')
+            .in('tenant_id', billTenantIds);
+        const tenantMoveInMap = new Map<number, string | null>();
+        (tenantRows || []).forEach((t: any) => tenantMoveInMap.set(t.tenant_id, t.move_in_date || null));
+
+        // Filter out tenants who moved in on the 6th onwards — STRICTLY EXEMPT from penalty on move-in month!
+        const exemptTenantIds: number[] = [];
+        const eligibleBills = bills.filter((b: any) => {
+            const moveIn = tenantMoveInMap.get(b.tenant_id);
+            if (isExemptFromMoveInPenalty(currentMonth, moveIn)) {
+                exemptTenantIds.push(b.tenant_id);
+                return false;
+            }
+            return true;
+        });
+
+        // Ensure any accidental penalties for exempt move-in tenants are deleted
+        if (exemptTenantIds.length > 0) {
+            await supabaseAdmin
+                .from('arms_penalties')
+                .delete()
+                .in('tenant_id', exemptTenantIds)
+                .eq('billing_month', currentMonth);
+        }
+
         // Build one 10% flat penalty row per overdue tenant (dated 6th of the month)
-        const rows = bills.map((bill: any) => {
+        const rows = eligibleBills.map((bill: any) => {
             const rent = Number(bill.rent_amount) || 0;
             const penaltyAmt = Math.round(rent * 0.10);
             return {
@@ -109,8 +138,24 @@ export async function GET(req: NextRequest) {
             const todayDay = today.getUTCDate();
             const currentMonth = localMonthStr(today);
 
-            // Auto-generate 10% flat penalty for tenant if today >= 6th and tenant has unpaid bill for current month
-            if (todayDay >= 6) {
+            // Fetch tenant move_in_date to check move-in penalty exemption
+            const { data: tenantInfo } = await supabaseAdmin
+                .from('arms_tenants')
+                .select('move_in_date')
+                .eq('tenant_id', tenantId)
+                .maybeSingle();
+
+            const isExempt = isExemptFromMoveInPenalty(currentMonth, tenantInfo?.move_in_date);
+
+            if (isExempt) {
+                // EXEMPT from penalty on move-in month! Delete any stray penalty row for this month
+                await supabaseAdmin
+                    .from('arms_penalties')
+                    .delete()
+                    .eq('tenant_id', tenantId)
+                    .eq('billing_month', currentMonth);
+            } else if (todayDay >= 6) {
+                // Auto-generate 10% flat penalty for tenant if today >= 6th and tenant has unpaid bill for current month
                 try {
                     const { data: curBill } = await supabaseAdmin
                         .from('arms_billing')
@@ -193,7 +238,33 @@ export async function GET(req: NextRequest) {
             try {
                 const unpaidBills = bills.filter((b: any) => (b.balance || 0) > 0 && b.status !== 'Paid');
                 if (unpaidBills.length > 0) {
-                    const syncRows = unpaidBills.map((b: any) => {
+                    const tIds = Array.from(new Set(unpaidBills.map((b: any) => b.tenant_id)));
+                    const { data: tRows } = await supabaseAdmin
+                        .from('arms_tenants')
+                        .select('tenant_id, move_in_date')
+                        .in('tenant_id', tIds);
+                    const tMap = new Map<number, string | null>();
+                    (tRows || []).forEach((t: any) => tMap.set(t.tenant_id, t.move_in_date || null));
+
+                    const exemptTIds: number[] = [];
+                    const eligibleUnpaid = unpaidBills.filter((b: any) => {
+                        const moveIn = tMap.get(b.tenant_id);
+                        if (isExemptFromMoveInPenalty(month, moveIn)) {
+                            exemptTIds.push(b.tenant_id);
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    if (exemptTIds.length > 0) {
+                        await supabaseAdmin
+                            .from('arms_penalties')
+                            .delete()
+                            .in('tenant_id', exemptTIds)
+                            .eq('billing_month', month);
+                    }
+
+                    const syncRows = eligibleUnpaid.map((b: any) => {
                         const rent = Number(b.rent_amount) || 0;
                         const penAmt = Math.round(rent * 0.10);
                         return {

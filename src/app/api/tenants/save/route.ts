@@ -4,7 +4,12 @@
 // Powered by supabaseAdmin (service_role) to shield DB from direct client writes
 // ═══════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase, getTenantMonthlyRentForMonth } from "@/lib/supabase";
+import {
+    supabaseAdmin as supabase,
+    getTenantMonthlyRentForMonth,
+    calculateMoveInProratedRent,
+    isExemptFromMoveInPenalty,
+} from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +88,7 @@ export async function POST(req: NextRequest) {
                 const nowLocal = new Date();
                 const currentMonth = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, "0")}`;
                 const earliestMonth = rawMoveIn.slice(0, 7);
+                const moveInDateActual = tenant.move_in_date || (rawMoveIn.length === 10 ? rawMoveIn : `${rawMoveIn}-01`);
                 const billsToCreate: any[] = [];
 
                 let [sy, sm] = earliestMonth.split("-").map(Number);
@@ -92,20 +98,33 @@ export async function POST(req: NextRequest) {
                     const curM = `${sy}-${String(sm).padStart(2, "0")}`;
                     const nominalRent = getTenantMonthlyRentForMonth(monthlyRent, tenant.notes, curM);
                     const effectiveRent = getEffectiveRent(nominalRent, curM, isOnVacation);
+                    // Strictly prorate admission rent if tenant moves in on 6th onwards of that move-in month
+                    const proration = calculateMoveInProratedRent(effectiveRent, curM, moveInDateActual);
+                    const billRent = proration.rentAmount;
+                    const isExemptPenalty = isExemptFromMoveInPenalty(curM, moveInDateActual);
+
+                    let billNotes: string | null = null;
+                    if (proration.isProrated) {
+                        billNotes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${moveInDateActual})`;
+                    }
+                    if (isOnVacation && isVacationMonth(curM)) {
+                        billNotes = billNotes ? `${billNotes} | Vacation half-rent (50%)` : "Vacation half-rent (50%)";
+                    }
+
                     billsToCreate.push({
                         tenant_id: newTenant.tenant_id,
                         location_id: tenant.location_id,
                         unit_id: tenant.unit_id,
                         billing_month: curM,
                         billing_date: `${curM}-01`,
-                        due_date: `${curM}-05`,
-                        rent_amount: effectiveRent,
+                        due_date: isExemptPenalty ? moveInDateActual : `${curM}-05`,
+                        rent_amount: billRent,
                         amount_paid: 0,
-                        balance: effectiveRent,
+                        balance: billRent,
                         status: "Unpaid",
-                        notes: isOnVacation && isVacationMonth(curM) ? "Vacation half-rent (50%)" : null,
+                        notes: billNotes,
                     });
-                    totalBalance += effectiveRent;
+                    totalBalance += billRent;
                     sm++;
                     if (sm > 12) { sm = 1; sy++; }
                 }
@@ -115,6 +134,16 @@ export async function POST(req: NextRequest) {
                         .from("arms_billing")
                         .insert(billsToCreate)
                         .select();
+
+                    // If admitted on 6th onwards, guarantee no late penalty is ever charged on the move-in month
+                    const moveInMonth = moveInDateActual.slice(0, 7);
+                    if (isExemptFromMoveInPenalty(moveInMonth, moveInDateActual)) {
+                        await supabase
+                            .from("arms_penalties")
+                            .delete()
+                            .eq("tenant_id", newTenant.tenant_id)
+                            .eq("billing_month", moveInMonth);
+                    }
 
                     // If an initial move-in payment was provided, record it and allocate FIFO
                     if (initialPayment > 0 && insertedBills && insertedBills.length > 0) {
@@ -239,6 +268,91 @@ export async function POST(req: NextRequest) {
                 .single();
 
             if (uErr) throw uErr;
+
+            // ── HANDLE MOVE-IN PRORATION & PENALTY EXEMPTION ON UPDATE ──
+            const newMoveInDate = updates.move_in_date || oldTenant?.move_in_date;
+            const newMonthlyRent = Number(updates.monthly_rent !== undefined ? updates.monthly_rent : oldTenant?.monthly_rent || 0);
+
+            if (newMoveInDate && newMonthlyRent > 0) {
+                const moveInMonth = newMoveInDate.slice(0, 7);
+                const isExemptPenalty = isExemptFromMoveInPenalty(moveInMonth, newMoveInDate);
+
+                // If moving in on 6th onwards, remove any penalty on the move-in month!
+                if (isExemptPenalty) {
+                    await supabase
+                        .from("arms_penalties")
+                        .delete()
+                        .eq("tenant_id", tenantId)
+                        .eq("billing_month", moveInMonth);
+                }
+
+                // If move_in_date or rent was updated, ensure move-in bill reflects correct prorated rent
+                const moveInChanged = updates.move_in_date && updates.move_in_date !== oldTenant?.move_in_date;
+                const rentChanged = updates.monthly_rent !== undefined && Number(updates.monthly_rent) !== Number(oldTenant?.monthly_rent);
+
+                if (moveInChanged || rentChanged) {
+                    // Check if move-in bill exists
+                    const { data: moveInBill } = await supabase
+                        .from("arms_billing")
+                        .select("*")
+                        .eq("tenant_id", tenantId)
+                        .eq("billing_month", moveInMonth)
+                        .maybeSingle();
+
+                    if (moveInBill) {
+                        const nominalRent = getTenantMonthlyRentForMonth(newMonthlyRent, updates.notes || oldTenant?.notes, moveInMonth);
+                        const tenantIsVacation = updates.is_on_vacation ?? oldTenant?.is_on_vacation ?? false;
+                        const effRent = getEffectiveRent(nominalRent, moveInMonth, tenantIsVacation);
+                        const proration = calculateMoveInProratedRent(effRent, moveInMonth, newMoveInDate);
+                        const newRentAmt = proration.rentAmount;
+                        const paid = Number(moveInBill.amount_paid || 0);
+                        const newBalance = Math.max(0, Math.round((newRentAmt - paid) * 100) / 100);
+                        const newStatus = newBalance === 0 ? "Paid" : (paid > 0 ? "Partial" : "Unpaid");
+
+                        let billNotes: string | null = null;
+                        if (proration.isProrated) {
+                            billNotes = `Prorated admission rent (${proration.daysStaying}/${proration.daysInMonth} days from ${newMoveInDate})`;
+                        }
+                        if (tenantIsVacation && isVacationMonth(moveInMonth)) {
+                            billNotes = billNotes ? `${billNotes} | Vacation half-rent (50%)` : "Vacation half-rent (50%)";
+                        }
+
+                        await supabase
+                            .from("arms_billing")
+                            .update({
+                                rent_amount: newRentAmt,
+                                balance: newBalance,
+                                status: newStatus,
+                                due_date: isExemptPenalty ? newMoveInDate : `${moveInMonth}-05`,
+                                notes: billNotes,
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq("billing_id", moveInBill.billing_id);
+                    }
+
+                    // Recalculate tenant balance safely from arms_billing + penalties
+                    const { data: allTenantBills } = await supabase
+                        .from("arms_billing")
+                        .select("balance")
+                        .eq("tenant_id", tenantId);
+                    const { data: allTenantPenalties } = await supabase
+                        .from("arms_penalties")
+                        .select("amount")
+                        .eq("tenant_id", tenantId)
+                        .eq("status", "Active");
+
+                    const billsBal = (allTenantBills || []).reduce((s, b) => s + (Number(b.balance) || 0), 0);
+                    const penBal = (allTenantPenalties || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                    const finalBal = Math.max(0, Math.round((billsBal + penBal) * 100) / 100);
+
+                    await supabase
+                        .from("arms_tenants")
+                        .update({ balance: finalBal, updated_at: new Date().toISOString() })
+                        .eq("tenant_id", tenantId);
+
+                    return NextResponse.json({ success: true, tenant: { ...updatedTenant, balance: finalBal } });
+                }
+            }
 
             return NextResponse.json({ success: true, tenant: updatedTenant });
         }
