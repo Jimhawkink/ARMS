@@ -1110,13 +1110,24 @@ export async function updateTenant(id: number, updates: any) {
                 await supabase.from('arms_penalties').delete().eq('tenant_id', id).eq('billing_month', moveInDateActual.slice(0, 7));
             }
 
-            // Recalculate total balance from all unpaid bills
+            // Recalculate total balance from all unpaid bills and excess payment credit
             const { data: allBills } = await supabase
                 .from('arms_billing')
                 .select('balance')
                 .eq('tenant_id', id)
                 .gt('balance', 0);
-            const totalBalance = (allBills || []).reduce((s: number, b: any) => s + (b.balance || 0), 0);
+            const unpaidRent = (allBills || []).reduce((s: number, b: any) => s + (b.balance || 0), 0);
+
+            let totalBalance = unpaidRent;
+            if (unpaidRent === 0) {
+                const { data: allTenantPayments } = await supabase.from('arms_payments').select('amount').eq('tenant_id', id);
+                const { data: allBilled } = await supabase.from('arms_billing').select('rent_amount').eq('tenant_id', id);
+                const totalPaid = (allTenantPayments || []).reduce((s: number, p: any) => s + (p.amount || 0), 0);
+                const totalBilled = (allBilled || []).reduce((s: number, b: any) => s + (b.rent_amount || 0), 0);
+                const credit = Math.max(0, Math.round((totalPaid - totalBilled) * 100) / 100);
+                totalBalance = credit > 0 ? -credit : 0;
+            }
+
             await supabase.from('arms_tenants').update({
                 balance: Math.round(totalBalance * 100) / 100,
                 updated_at: new Date().toISOString(),

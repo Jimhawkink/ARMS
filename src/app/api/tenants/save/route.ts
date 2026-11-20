@@ -306,8 +306,9 @@ export async function POST(req: NextRequest) {
                         const proration = calculateMoveInProratedRent(effRent, moveInMonth, newMoveInDate);
                         const newRentAmt = proration.rentAmount;
                         const paid = Number(moveInBill.amount_paid || 0);
-                        const newBalance = Math.max(0, Math.round((newRentAmt - paid) * 100) / 100);
-                        const newStatus = newBalance === 0 ? "Paid" : (paid > 0 ? "Partial" : "Unpaid");
+                        const cappedPaid = Math.min(paid, newRentAmt);
+                        const newBalance = Math.max(0, Math.round((newRentAmt - cappedPaid) * 100) / 100);
+                        const newStatus = newBalance === 0 ? "Paid" : (cappedPaid > 0 ? "Partial" : "Unpaid");
 
                         let billNotes: string | null = null;
                         if (proration.isProrated) {
@@ -321,6 +322,7 @@ export async function POST(req: NextRequest) {
                             .from("arms_billing")
                             .update({
                                 rent_amount: newRentAmt,
+                                amount_paid: cappedPaid,
                                 balance: newBalance,
                                 status: newStatus,
                                 due_date: isExemptPenalty ? newMoveInDate : `${moveInMonth}-05`,
@@ -330,20 +332,33 @@ export async function POST(req: NextRequest) {
                             .eq("billing_id", moveInBill.billing_id);
                     }
 
-                    // Recalculate tenant balance safely from arms_billing + penalties
+                    // Recalculate tenant balance safely from arms_billing + penalties + overpayment credit
                     const { data: allTenantBills } = await supabase
                         .from("arms_billing")
-                        .select("balance")
+                        .select("rent_amount, balance")
                         .eq("tenant_id", tenantId);
                     const { data: allTenantPenalties } = await supabase
                         .from("arms_penalties")
                         .select("amount")
                         .eq("tenant_id", tenantId)
                         .eq("status", "Active");
+                    const { data: allTenantPayments } = await supabase
+                        .from("arms_payments")
+                        .select("amount")
+                        .eq("tenant_id", tenantId);
 
                     const billsBal = (allTenantBills || []).reduce((s, b) => s + (Number(b.balance) || 0), 0);
                     const penBal = (allTenantPenalties || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-                    const finalBal = Math.max(0, Math.round((billsBal + penBal) * 100) / 100);
+                    const outstandingDebt = Math.round((billsBal + penBal) * 100) / 100;
+
+                    let finalBal = outstandingDebt;
+                    if (outstandingDebt === 0) {
+                        // All bills and penalties cleared — check if payments exceed billed rent (advance credit)
+                        const totalPaid = (allTenantPayments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                        const totalBilled = (allTenantBills || []).reduce((s, b) => s + (Number(b.rent_amount) || 0), 0);
+                        const credit = Math.max(0, Math.round((totalPaid - totalBilled) * 100) / 100);
+                        finalBal = credit > 0 ? -credit : 0;
+                    }
 
                     await supabase
                         .from("arms_tenants")
