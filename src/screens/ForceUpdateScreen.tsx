@@ -282,7 +282,7 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
                         <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
                         <TouchableOpacity
                             activeOpacity={0.85}
-                            onPress={startDownload}
+                            onPress={() => startDownload()}
                             style={styles.retryBtn}
                         >
                             <LinearGradient
