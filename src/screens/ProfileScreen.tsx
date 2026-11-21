@@ -13,7 +13,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { TenantSession, formatKES, supabase } from '../lib/supabase';
+import { TenantSession, formatKES, changeTenantPin } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Props {
@@ -57,6 +57,7 @@ function maskPhone(p?: string) {
 export default function ProfileScreen({ session, onLogout, onBack }: Props) {
     // PIN Change state
     const [pinModalVisible, setPinModalVisible] = useState(false);
+    const [currentPin, setCurrentPin] = useState('');
     const [newPin, setNewPin] = useState('');
     const [confirmPin, setConfirmPin] = useState('');
     const [savingPin, setSavingPin] = useState(false);
@@ -74,6 +75,7 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
     };
 
     const handleOpenPinModal = () => {
+        setCurrentPin('');
         setNewPin('');
         setConfirmPin('');
         setPinError('');
@@ -81,12 +83,21 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
     };
 
     const handleSavePin = async () => {
-        if (!/^\d{6}$/.test(newPin)) {
-            setPinError('New PIN must be exactly 6 numeric digits');
+        // Validate inputs
+        if (!currentPin || currentPin.trim().length < 4) {
+            setPinError('Please enter your current PIN');
+            return;
+        }
+        if (!/^\d{4,6}$/.test(newPin)) {
+            setPinError('New PIN must be 4 to 6 numeric digits');
             return;
         }
         if (newPin !== confirmPin) {
-            setPinError('PINs do not match');
+            setPinError('New PINs do not match');
+            return;
+        }
+        if (newPin.trim() === currentPin.trim()) {
+            setPinError('New PIN must be different from your current PIN');
             return;
         }
 
@@ -94,45 +105,21 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
         setPinError('');
 
         try {
-            // Update PIN on tenant row
-            const { error: updateErr } = await supabase
-                .from('arms_tenants')
-                .update({ pin: newPin })
-                .eq('tenant_id', session.tenant_id);
+            // Use secure server-side API (uses service_role key — bypasses RLS correctly)
+            const result = await changeTenantPin(
+                session.tenant_id,
+                currentPin.trim(),
+                newPin.trim(),
+                confirmPin.trim()
+            );
 
-            if (updateErr) throw updateErr;
-
-            // Log change in PIN ledger for admin visibility
-            try {
-                await supabase
-                    .from('arms_tenant_pin_ledger')
-                    .insert([{
-                        tenant_id: session.tenant_id,
-                        tenant_name: session.tenant_name,
-                        unit_name: session.unit_name,
-                        new_pin: newPin,
-                        ip_address: 'mobile_app',
-                        user_agent: Platform.OS,
-                        created_at: new Date().toISOString(),
-                    }]);
-            } catch (ledgerErr) {
-                console.log('PIN ledger optional logging notice:', ledgerErr);
+            if (!result.success) {
+                setPinError(result.error || 'Failed to change PIN. Please try again.');
+                return;
             }
 
-            // Update local storage session
-            try {
-                const storedRaw = await AsyncStorage.getItem('tenant_session');
-                if (storedRaw) {
-                    const parsed = JSON.parse(storedRaw);
-                    parsed.pin = newPin;
-                    await AsyncStorage.setItem('tenant_session', JSON.stringify(parsed));
-                }
-            } catch (storeErr) {
-                console.log('AsyncStorage session PIN update notice:', storeErr);
-            }
-
+            // Success — close modal and auto-logout so tenant re-logs with new PIN
             setPinModalVisible(false);
-            // Auto-logout so tenant must re-login with new PIN
             Alert.alert(
                 '🔐 PIN Changed Successfully',
                 'Your login PIN has been updated. You will now be logged out — please log back in using your new PIN.',
@@ -140,7 +127,6 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                     {
                         text: 'OK, Log Me Out',
                         onPress: () => {
-                            // Clear local session then trigger logout
                             AsyncStorage.removeItem('tenant_session').catch(() => {});
                             onLogout();
                         },
@@ -149,7 +135,7 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                 { cancelable: false }
             );
         } catch (err: any) {
-            setPinError(err.message || 'Error updating PIN');
+            setPinError(err.message || 'Network error. Please check your connection.');
         } finally {
             setSavingPin(false);
         }
@@ -302,7 +288,21 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                         ) : null}
 
                         <View style={styles.inputGroup}>
-                            <Text style={styles.inputLabel}>NEW 6-DIGIT PIN</Text>
+                            <Text style={styles.inputLabel}>CURRENT PIN</Text>
+                            <TextInput
+                                style={styles.modalInput}
+                                value={currentPin}
+                                onChangeText={setCurrentPin}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                secureTextEntry
+                                placeholder="Enter your current PIN"
+                                placeholderTextColor={COLORS.textDim}
+                            />
+                        </View>
+
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>NEW PIN (4–6 DIGITS)</Text>
                             <TextInput
                                 style={styles.modalInput}
                                 value={newPin}
@@ -310,7 +310,7 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                                 keyboardType="number-pad"
                                 maxLength={6}
                                 secureTextEntry
-                                placeholder="Enter 6-digit PIN"
+                                placeholder="Enter new PIN"
                                 placeholderTextColor={COLORS.textDim}
                             />
                         </View>
@@ -324,7 +324,7 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                                 keyboardType="number-pad"
                                 maxLength={6}
                                 secureTextEntry
-                                placeholder="Re-enter 6-digit PIN"
+                                placeholder="Re-enter new PIN"
                                 placeholderTextColor={COLORS.textDim}
                             />
                         </View>
