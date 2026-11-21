@@ -118,21 +118,27 @@ export default function ProfileScreen({ session, onLogout, onBack }: Props) {
                 return;
             }
 
-            // Success — close modal and auto-logout so tenant re-logs with new PIN
+            // Success — close modal and auto-logout immediately when OK is tapped
             setPinModalVisible(false);
             Alert.alert(
                 '🔐 PIN Changed Successfully',
-                'Your login PIN has been updated. You will now be logged out — please log back in using your new PIN.',
+                'Your login PIN has been updated. Please log in using your new PIN.',
                 [
                     {
-                        text: 'OK, Log Me Out',
+                        text: 'OK',
                         onPress: () => {
                             AsyncStorage.removeItem('tenant_session').catch(() => {});
                             onLogout();
                         },
                     },
                 ],
-                { cancelable: false }
+                {
+                    cancelable: false,
+                    onDismiss: () => {
+                        AsyncStorage.removeItem('tenant_session').catch(() => {});
+                        onLogout();
+                    },
+                }
             );
         } catch (err: any) {
             setPinError(err.message || 'Network error. Please check your connection.');
