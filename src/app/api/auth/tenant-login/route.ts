@@ -41,7 +41,9 @@ export async function POST(req: NextRequest) {
         let tenant = directMatches && directMatches.length > 0 ? directMatches[0] : null;
 
         // 2. Intelligent Auto-Heal Fallback:
-        // If not found by direct mobile_pin, check if PIN matches the last 6 digits of any active tenant's phone
+        // ONLY for first-time tenants who do not have any mobile_pin configured yet.
+        // If a tenant has already configured a custom mobile_pin, the phone fallback is DISABLED
+        // to prevent the old phone digits from hijacking or overwriting their custom PIN!
         if (!tenant && /^\d{4,6}$/.test(pinStr)) {
             const { data: phoneCandidates } = await supabase
                 .from("arms_tenants")
@@ -49,6 +51,7 @@ export async function POST(req: NextRequest) {
                     tenant_id, tenant_name, phone, id_number, email,
                     unit_id, location_id, monthly_rent, deposit_paid,
                     move_in_date, balance, is_on_vacation, status,
+                    mobile_pin,
                     arms_units(unit_name),
                     arms_locations(location_name)
                 `)
@@ -64,9 +67,11 @@ export async function POST(req: NextRequest) {
                     return digits.endsWith(pinStr);
                 });
 
-                if (matched) {
+                // STRICT CHECK: Fallback ONLY triggers if the tenant has NO mobile_pin set.
+                // If they have set a custom PIN, old phone digits MUST NOT log them in or overwrite their PIN!
+                if (matched && (!matched.mobile_pin || !String(matched.mobile_pin).trim())) {
                     tenant = matched;
-                    // Auto-heal: permanently set mobile_pin so next lookup is instantaneous
+                    // Auto-heal: set mobile_pin for first-time login
                     try {
                         await supabase
                             .from("arms_tenants")

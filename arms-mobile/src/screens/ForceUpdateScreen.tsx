@@ -1,344 +1,321 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Animated, Dimensions,
-    StatusBar, TouchableOpacity, Platform, Linking,
+    StatusBar, TouchableOpacity, BackHandler, ActivityIndicator, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
-const APK_BASE_URL  = 'https://arms-opal.vercel.app/ARMSTenantApp-';
-const CONFETTI_COLORS = [
-    '#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#ff6bb5',
-    '#c77dff','#f9844a','#00b4d8','#f72585','#4cc9f0',
-];
+const APK_DOWNLOAD_URL = 'https://arms-opal.vercel.app/api/dl';
 
-// ── Simple confetti piece ──────────────────────────────────────────────────
-function ConfettiPiece({ color, delay, startX }: { color: string; delay: number; startX: number }) {
-    const translateY = useRef(new Animated.Value(-30)).current;
-    const translateX = useRef(new Animated.Value(0)).current;
-    const rotate     = useRef(new Animated.Value(0)).current;
-    const opacity    = useRef(new Animated.Value(1)).current;
+const COLORS = {
+    bg: '#0a0f1d',
+    card: '#131b2e',
+    cardBorder: '#1e293b',
+    primary: '#6366f1',
+    primaryLight: '#a5b4fc',
+    accent: '#10b981',
+    neonGreen: '#00e676',
+    danger: '#ef4444',
+    gold: '#fbbf24',
+    text: '#f8fafc',
+    textSub: '#94a3b8',
+    textDim: '#64748b',
+};
 
-    useEffect(() => {
-        const drift = (Math.random() - 0.5) * 120;
-        setTimeout(() => {
-            Animated.parallel([
-                Animated.timing(translateY, { toValue: height * 0.85, duration: 2800, useNativeDriver: true }),
-                Animated.timing(translateX, { toValue: drift,         duration: 2800, useNativeDriver: true }),
-                Animated.timing(rotate,     { toValue: 8,             duration: 2800, useNativeDriver: true }),
-                Animated.sequence([
-                    Animated.delay(1800),
-                    Animated.timing(opacity, { toValue: 0, duration: 1000, useNativeDriver: true }),
-                ]),
-            ]).start();
-        }, delay);
-    }, []);
-
-    const isRect = Math.random() > 0.5;
-    return (
-        <Animated.View style={{
-            position: 'absolute',
-            left: startX,
-            top: 0,
-            width:  isRect ? 8  : 6,
-            height: isRect ? 14 : 6,
-            borderRadius: isRect ? 2 : 3,
-            backgroundColor: color,
-            opacity,
-            transform: [
-                { translateY },
-                { translateX },
-                { rotate: rotate.interpolate({ inputRange: [0, 8], outputRange: ['0deg', '720deg'] }) },
-            ],
-        }} />
-    );
+interface Props {
+    currentVersion: string;
+    latestVersion: string;
 }
-
-// ── Confetti burst (60 pieces) ─────────────────────────────────────────────
-function Confetti() {
-    const pieces = Array.from({ length: 60 }, (_, i) => ({
-        id: i,
-        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-        delay: Math.random() * 600,
-        startX: Math.random() * width,
-    }));
-    return (
-        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-            {pieces.map(p => <ConfettiPiece key={p.id} {...p} />)}
-        </View>
-    );
-}
-
-// ── Main screen ────────────────────────────────────────────────────────────
-interface Props { currentVersion: string; latestVersion: string; }
 
 type Phase = 'idle' | 'downloading' | 'installing' | 'done' | 'error';
 
 export default function ForceUpdateScreen({ currentVersion, latestVersion }: Props) {
-    const slideUp = useRef(new Animated.Value(60)).current;
-    const fadeIn  = useRef(new Animated.Value(0)).current;
-    const pulse   = useRef(new Animated.Value(1)).current;
-    const checkScale = useRef(new Animated.Value(0)).current;
-    const successFade = useRef(new Animated.Value(0)).current;
+    const slideUp = useRef(new Animated.Value(40)).current;
+    const fadeIn = useRef(new Animated.Value(0)).current;
+    const pulse = useRef(new Animated.Value(1)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
+    const savedApkUriRef = useRef<string | null>(null);
     const downloadResumableRef = useRef<FileSystem.DownloadResumable | null>(null);
 
-    const [phase,    setPhase]    = useState<Phase>('idle');
-    const [progress, setProgress] = useState(0);   // 0–1
-    const [errMsg,   setErrMsg]   = useState('');
+    const [phase, setPhase] = useState<Phase>('idle');
+    const [progress, setProgress] = useState(0);
+    const [downloadedMb, setDownloadedMb] = useState('0');
+    const [totalMb, setTotalMb] = useState('70.0');
+    const [errorMsg, setErrorMsg] = useState('');
 
-    // Entrance animation
+    // Disable Android back button — mandatory update cannot be skipped
+    useEffect(() => {
+        const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+        return () => sub.remove();
+    }, []);
+
     useEffect(() => {
         Animated.parallel([
-            Animated.timing(slideUp, { toValue: 0, duration: 600, useNativeDriver: true }),
-            Animated.timing(fadeIn,  { toValue: 1, duration: 600, useNativeDriver: true }),
+            Animated.timing(slideUp, { toValue: 0, duration: 500, useNativeDriver: true }),
+            Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }),
         ]).start();
 
-        // Pulse button
-        Animated.loop(Animated.sequence([
-            Animated.timing(pulse, { toValue: 1.04, duration: 900, useNativeDriver: true }),
-            Animated.timing(pulse, { toValue: 1,    duration: 900, useNativeDriver: true }),
-        ])).start();
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulse, { toValue: 1.08, duration: 900, useNativeDriver: true }),
+                Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+            ])
+        ).start();
 
-        // Auto-start download after 1.5s
-        const t = setTimeout(() => startDownload(), 1500);
+        // Auto-start download immediately inside the APK
+        const t = setTimeout(() => startDownload(), 500);
         return () => clearTimeout(t);
     }, []);
 
-    const startDownload = useCallback(async (retryCount = 0) => {
-        if (phase === 'installing' || phase === 'done') return;
-        setPhase('downloading');
-        setErrMsg('');
+    useEffect(() => {
+        Animated.timing(progressAnim, {
+            toValue: progress,
+            duration: 150,
+            useNativeDriver: false,
+        }).start();
+    }, [progress]);
 
-        const localPath = `${FileSystem.cacheDirectory}ARMSTenantApp-${latestVersion}.apk`;
-
-        // If we already have a resumable download, resume from current byte offset
-        if (downloadResumableRef.current) {
-            try {
-                const resumed = await downloadResumableRef.current.resumeAsync();
-                if (resumed?.uri) {
-                    setProgress(1);
-                    setPhase('installing');
-                    await new Promise(r => setTimeout(r, 800));
-                    await launchInstall(resumed.uri);
-                    setPhase('done');
-                    Animated.sequence([
-                        Animated.spring(checkScale,  { toValue: 1, useNativeDriver: true, bounciness: 15 }),
-                        Animated.timing(successFade, { toValue: 1, duration: 400, useNativeDriver: true }),
-                    ]).start();
-                    return;
-                }
-            } catch (resumeErr) {
-                console.warn('[ForceUpdate] Resume attempt failed, restarting:', resumeErr);
-            }
+    // Open native Android package installer directly from in-app downloaded APK
+    const openInstaller = async (uriToInstall?: string) => {
+        const targetUri = uriToInstall || savedApkUriRef.current;
+        if (!targetUri) {
+            startDownload();
+            return;
         }
 
-        downloadResumableRef.current = FileSystem.createDownloadResumable(
-            'https://arms-opal.vercel.app/api/dl',
-            localPath,
-            {},
-            (downloadProgress) => {
-                const total = downloadProgress.totalBytesExpectedToWrite > 0 ? downloadProgress.totalBytesExpectedToWrite : 73417255;
-                const written = downloadProgress.totalBytesWritten || 0;
-                const pct = Math.min(written / total, 0.99);
-                setProgress(isNaN(pct) ? 0 : pct);
-            }
-        );
-
+        setPhase('installing');
         try {
-            const result = await downloadResumableRef.current.downloadAsync();
-            if (!result?.uri) throw new Error('Download failed — no file saved');
-
-            setProgress(1);
-            setPhase('installing');
-
-            // Small pause to show 100%, then trigger install
-            await new Promise(r => setTimeout(r, 800));
-            await launchInstall(result.uri);
-
-            // Show celebration
+            const contentUri = await FileSystem.getContentUriAsync(targetUri);
+            // FLAG_GRANT_READ_URI_PERMISSION (1) | FLAG_ACTIVITY_NEW_TASK (268435456)
+            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: contentUri,
+                flags: 1 | 268435456,
+                type: 'application/vnd.android.package-archive',
+            });
             setPhase('done');
-            Animated.sequence([
-                Animated.spring(checkScale,  { toValue: 1, useNativeDriver: true, bounciness: 15 }),
-                Animated.timing(successFade, { toValue: 1, duration: 400, useNativeDriver: true }),
-            ]).start();
+        } catch (err: any) {
+            console.warn('[ForceUpdate] IntentLauncher error:', err);
+            // Keep in done phase so user can tap install button directly
+            setPhase('done');
+        }
+    };
 
-        } catch (e: any) {
+    const startDownload = async (retryCount = 0) => {
+        try {
+            setPhase('downloading');
+            setErrorMsg('');
+
+            const targetDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+            const apkPath = `${targetDir}ARMSTenantApp-v${latestVersion}.apk`;
+
+            // If we already have an active resumable download instance, attempt resume to preserve downloaded bytes
+            if (downloadResumableRef.current) {
+                try {
+                    const resumed = await downloadResumableRef.current.resumeAsync();
+                    if (resumed?.uri) {
+                        savedApkUriRef.current = resumed.uri;
+                        setProgress(1);
+                        await openInstaller(resumed.uri);
+                        return;
+                    }
+                } catch (resumeErr) {
+                    console.warn('[ForceUpdate] Resume attempt failed, restarting:', resumeErr);
+                }
+            }
+
+            // Fresh resumable download instance with real-time byte tracking
+            downloadResumableRef.current = FileSystem.createDownloadResumable(
+                APK_DOWNLOAD_URL,
+                apkPath,
+                {
+                    headers: { 'Cache-Control': 'no-cache' },
+                },
+                (data) => {
+                    const total = data.totalBytesExpectedToWrite > 0 ? data.totalBytesExpectedToWrite : 73417255;
+                    const written = data.totalBytesWritten || 0;
+                    const pct = Math.min(written / total, 0.99);
+                    setProgress(pct);
+                    setDownloadedMb((written / (1024 * 1024)).toFixed(1));
+                    setTotalMb((total / (1024 * 1024)).toFixed(1));
+                }
+            );
+
+            const result = await downloadResumableRef.current.downloadAsync();
+            if (!result?.uri) throw new Error('Download failed — no update package received.');
+
+            savedApkUriRef.current = result.uri;
+            setProgress(1);
+
+            // Automatically launch native Android installer without opening Chrome
+            await openInstaller(result.uri);
+        } catch (err: any) {
+            console.warn('[ForceUpdate error]', err);
+            // Automatic retry up to 2 times for weak internet packet drops before failing
             if (retryCount < 2) {
-                console.log(`[ForceUpdate] Auto-retrying on slow internet (attempt ${retryCount + 1}/2)...`);
+                console.log(`[ForceUpdate] Auto-retrying download on slow connection (attempt ${retryCount + 1}/2)...`);
                 setTimeout(() => startDownload(retryCount + 1), 2000);
                 return;
             }
-            setErrMsg('Weak internet detected. Tap Retry or use the browser download below.');
+            setErrorMsg('Slow connection detected. You can retry in-app or use your phone browser.');
             setPhase('error');
         }
-    }, [phase, latestVersion]);
-
-    const launchInstall = async (fileUri: string) => {
-        if (Platform.OS !== 'android') return;
-        // Convert file:// URI to content:// via IntentLauncher
-        const contentUri = await FileSystem.getContentUriAsync(fileUri);
-        await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
-            data: contentUri,
-            flags: 1,   // FLAG_GRANT_READ_URI_PERMISSION
-            type: 'application/vnd.android.package-archive',
-        });
     };
 
-    // ── PHASE: SUCCESS / CELEBRATION ──────────────────────────────────────
-    if (phase === 'done') {
-        return (
-            <View style={styles.root}>
-                <StatusBar barStyle="light-content" backgroundColor="#0a2e1a" />
-                <LinearGradient colors={['#0a2e1a','#0d4a28','#0a2e1a']} style={StyleSheet.absoluteFillObject} />
-                <Confetti />
-                <Animated.View style={[styles.card, styles.successCard, { opacity: successFade }]}>
-                    {/* Big animated check */}
-                    <Animated.View style={[styles.checkWrap, { transform: [{ scale: checkScale }] }]}>
-                        <LinearGradient colors={['#22c55e','#16a34a']} style={styles.checkCircle}>
-                            <Text style={styles.checkMark}>✓</Text>
-                        </LinearGradient>
-                        {/* Orbit ring */}
-                        <View style={styles.orbitRing} />
-                    </Animated.View>
+    const progressPercent = Math.round(progress * 100);
 
-                    <Text style={styles.successTitle}>Update Successful! 🎉</Text>
-                    <Text style={styles.successSub}>
-                        ARMS {latestVersion} is ready.{'\n'}Complete the installation to enjoy the new version!
-                    </Text>
-
-                    <View style={styles.confettiRow}>
-                        {['🎊','✨','🎆','🌟','🎉','🎇','⭐','💫'].map((e, i) => (
-                            <Text key={i} style={styles.confettiEmoji}>{e}</Text>
-                        ))}
-                    </View>
-
-                    <TouchableOpacity onPress={startDownload} style={styles.reinstallBtn}>
-                        <Text style={styles.reinstallBtnText}>📲 Open Install Again</Text>
-                    </TouchableOpacity>
-                </Animated.View>
-            </View>
-        );
-    }
-
-    // ── PHASE: IDLE / DOWNLOADING / INSTALLING / ERROR ────────────────────
     return (
         <View style={styles.root}>
-            <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
-            <LinearGradient colors={['#0f172a','#1e1b4b','#0c1a2e']} style={StyleSheet.absoluteFillObject} />
-            <View style={styles.decor1} />
-            <View style={styles.decor2} />
+            <StatusBar barStyle="light-content" backgroundColor="#0a0f1d" translucent={false} />
 
-            <Animated.View style={[styles.card, { opacity: fadeIn, transform: [{ translateY: slideUp }] }]}>
-                {/* Icon */}
-                <View style={styles.iconWrap}>
-                    <LinearGradient colors={['#f59e0b','#d97706']} style={styles.iconGrad}>
+            <LinearGradient
+                colors={['#0a0f1d', '#0d1527', '#080d1a']}
+                style={StyleSheet.absoluteFillObject}
+            />
+
+            <View style={styles.ambientGlow} />
+
+            <Animated.View
+                style={[
+                    styles.card,
+                    { opacity: fadeIn, transform: [{ translateY: slideUp }] },
+                ]}
+            >
+                {/* Rocket Icon with Pulse */}
+                <Animated.View style={[styles.iconWrap, { transform: [{ scale: pulse }] }]}>
+                    <LinearGradient
+                        colors={['#10b981', '#059669', '#047857']}
+                        style={styles.iconGrad}
+                    >
                         <Text style={styles.iconEmoji}>🚀</Text>
                     </LinearGradient>
-                </View>
+                </Animated.View>
 
                 <Text style={styles.title}>Update Required</Text>
                 <Text style={styles.subtitle}>
-                    {phase === 'downloading'
-                        ? `Downloading ${latestVersion}… ${Math.round(progress * 100)}%`
-                        : phase === 'installing'
-                        ? `Installing ${latestVersion}…`
-                        : phase === 'error'
-                        ? '⚠️ Download failed'
-                        : 'A new version is available. Downloading automatically…'}
+                    A critical security and feature upgrade is required to continue using ARMS.
                 </Text>
 
-                {/* Version pills */}
+                {/* Version Comparison Pills */}
                 <View style={styles.versionRow}>
                     <View style={styles.versionPill}>
-                        <Text style={styles.versionLabel}>Your Version</Text>
+                        <Text style={styles.versionLabel}>INSTALLED</Text>
                         <Text style={styles.versionBad}>{currentVersion}</Text>
                     </View>
-                    <Text style={styles.arrow}>→</Text>
+                    <Text style={styles.arrowText}>→</Text>
                     <View style={[styles.versionPill, styles.versionPillGood]}>
-                        <Text style={styles.versionLabel}>New Version</Text>
+                        <Text style={[styles.versionLabel, { color: '#a7f3d0' }]}>NEW VERSION</Text>
                         <Text style={styles.versionGood}>{latestVersion}</Text>
                     </View>
                 </View>
 
-                <View style={styles.divider} />
-
-                {/* ── PROGRESS BAR (shown while downloading / installing) ── */}
-                {(phase === 'downloading' || phase === 'installing') && (
-                    <View style={styles.progressWrap}>
-                        <View style={styles.progressTrack}>
-                            <Animated.View style={[
-                                styles.progressFill,
-                                { width: `${Math.round(progress * 100)}%` as any },
-                                phase === 'installing' && styles.progressFillGreen,
-                            ]} />
+                {/* In-App Direct Download Progress */}
+                {phase === 'downloading' && (
+                    <View style={styles.progressSection}>
+                        <View style={styles.progressHeader}>
+                            <Text style={styles.progressTitle}>Downloading Update In-App...</Text>
+                            <Text style={styles.progressPercentText}>{progressPercent}%</Text>
                         </View>
-                        <View style={styles.progressRow}>
-                            <Text style={styles.progressPct}>
-                                {phase === 'installing' ? '✅ Installing…' : `${Math.round(progress * 100)}%`}
-                            </Text>
-                            <Text style={styles.progressSize}>
-                                {phase === 'installing' ? '' : `${Math.round(progress * 67.3)} / 67.3 MB`}
+
+                        <View style={styles.progressTrack}>
+                            <Animated.View
+                                style={[
+                                    styles.progressBar,
+                                    {
+                                        width: progressAnim.interpolate({
+                                            inputRange: [0, 1],
+                                            outputRange: ['0%', '100%'],
+                                        }),
+                                    },
+                                ]}
+                            />
+                        </View>
+
+                        <View style={styles.progressFooter}>
+                            <Text style={styles.fastTag}>⚡ High-Speed Direct In-App CDN</Text>
+                            <Text style={styles.mbText}>
+                                {downloadedMb} MB / {totalMb} MB
                             </Text>
                         </View>
                     </View>
                 )}
 
-                {/* ── DOWNLOAD BUTTON (shown when idle or error) ── */}
-                {(phase === 'idle' || phase === 'error') && (
-                    <Animated.View style={{ width: '100%', transform: [{ scale: pulse }] }}>
-                        <TouchableOpacity onPress={startDownload} activeOpacity={0.85}>
-                            <LinearGradient colors={['#6366f1','#4f46e5','#3730a3']} style={styles.downloadBtn}>
-                                <Text style={styles.downloadBtnEmoji}>⬇️</Text>
-                                <Text style={styles.downloadBtnText}>
-                                    {phase === 'error' ? 'Retry Download' : `Download ${latestVersion} Now`}
-                                </Text>
+                {/* Opening Android Installer */}
+                {phase === 'installing' && (
+                    <View style={styles.statusBox}>
+                        <ActivityIndicator size="small" color={COLORS.accent} />
+                        <Text style={styles.statusText}>Launching Android Package Installer...</Text>
+                    </View>
+                )}
+
+                {/* Download Complete — One-Tap In-App Install */}
+                {phase === 'done' && (
+                    <View style={styles.doneBox}>
+                        <Text style={styles.doneEmoji}>📦</Text>
+                        <Text style={styles.doneTitle}>Download Complete (100%)</Text>
+                        <Text style={styles.doneSub}>
+                            The v{latestVersion} package is ready. Tap below to complete installation.
+                        </Text>
+                        <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => openInstaller()}
+                            style={styles.installActionBtn}
+                        >
+                            <LinearGradient
+                                colors={['#10b981', '#059669', '#047857']}
+                                style={styles.installActionGrad}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                <Text style={styles.installActionText}>🚀 Install ARMS {latestVersion} Now</Text>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </Animated.View>
+                    </View>
                 )}
 
+                {/* Error Section with Direct In-App Retry & Weak Internet Browser Fallback */}
                 {phase === 'error' && (
-                    <View style={{ alignItems: 'center', marginTop: 8 }}>
-                        <Text style={styles.errMsg}>{errMsg}</Text>
+                    <View style={styles.errorSection}>
+                        <Text style={styles.errorText}>⚠️ {errorMsg}</Text>
                         <TouchableOpacity
-                            onPress={() => Linking.openURL('https://arms-opal.vercel.app/api/dl').catch(() => {})}
                             activeOpacity={0.85}
-                            style={{ marginTop: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                            onPress={() => startDownload()}
+                            style={styles.retryBtn}
                         >
-                            <Text style={{ color: '#38bdf8', fontSize: 13, textDecorationLine: 'underline', fontWeight: '600' }}>
-                                🌐 Download via Browser (for weak internet)
-                            </Text>
+                            <LinearGradient
+                                colors={['#10b981', '#059669']}
+                                style={styles.btnGrad}
+                            >
+                                <Text style={styles.btnText}>🔄 Retry In-App Download</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => Linking.openURL(APK_DOWNLOAD_URL).catch(() => {})}
+                            style={[styles.retryBtn, { marginTop: 10, borderColor: '#3b82f6', borderWidth: 1 }]}
+                        >
+                            <LinearGradient
+                                colors={['#1d4ed8', '#1e40af']}
+                                style={styles.btnGrad}
+                            >
+                                <Text style={styles.btnText}>🌐 Download via Browser (Weak Internet)</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
                 )}
 
-                <Text style={styles.hint}>
-                    {phase === 'downloading' || phase === 'installing'
-                        ? 'Please keep the app open while downloading…'
-                        : 'After installing, re-open ARMS to continue.'}
-                </Text>
-
-                {/* Steps */}
-                <View style={styles.steps}>
-                    {[
-                        ['⬇️', 'Download starts automatically'],
-                        ['📲', 'Install prompt appears automatically'],
-                        ['✅', 'Re-open ARMS — you\'re done!'],
-                    ].map(([emoji, text], i) => (
-                        <View key={i} style={styles.step}>
-                            <View style={[
-                                styles.stepNum,
-                                phase === 'downloading' && i === 0 && styles.stepNumActive,
-                                phase === 'installing'  && i === 1 && styles.stepNumActive,
-                            ]}>
-                                <Text style={styles.stepNumText}>{i + 1}</Text>
-                            </View>
-                            <Text style={styles.stepText}>{emoji}  {text}</Text>
-                        </View>
-                    ))}
+                {/* What's New Feature Highlights */}
+                <View style={styles.featuresBox}>
+                    <Text style={styles.featuresTitle}>What's New in {latestVersion}:</Text>
+                    <Text style={styles.featureItem}>• Ultra-premium FinTech redesign with pinned headers</Text>
+                    <Text style={styles.featureItem}>• Working back button (← Back) on all screens</Text>
+                    <Text style={styles.featureItem}>• Celebratory fireworks & confetti on payment success</Text>
+                    <Text style={styles.featureItem}>• Automatic 15-minute inactivity security lock</Text>
+                    <Text style={styles.featureItem}>• High-speed in-app auto updates with zero browser dependency</Text>
                 </View>
             </Animated.View>
         </View>
@@ -346,71 +323,252 @@ export default function ForceUpdateScreen({ currentVersion, latestVersion }: Pro
 }
 
 const styles = StyleSheet.create({
-    root: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-    decor1: { position:'absolute', top:-60,  right:-60, width:220, height:220, borderRadius:110, backgroundColor:'rgba(99,102,241,0.08)' },
-    decor2: { position:'absolute', bottom:-80, left:-80, width:280, height:280, borderRadius:140, backgroundColor:'rgba(245,158,11,0.06)' },
-
-    card: {
-        backgroundColor:'rgba(30,41,59,0.95)', borderRadius:28, padding:28,
-        width: Math.min(width - 32, 400), alignItems:'center',
-        borderWidth:1, borderColor:'rgba(99,102,241,0.3)',
-        shadowColor:'#6366f1', shadowOffset:{width:0,height:12}, shadowOpacity:0.3, shadowRadius:24, elevation:16,
+    root: {
+        flex: 1,
+        backgroundColor: COLORS.bg,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
     },
-    successCard: { borderColor:'rgba(34,197,94,0.4)', shadowColor:'#22c55e' },
+    ambientGlow: {
+        position: 'absolute',
+        top: '25%',
+        width: width * 0.8,
+        height: width * 0.8,
+        borderRadius: width * 0.4,
+        backgroundColor: 'rgba(16,185,129,0.08)',
+    },
+    card: {
+        width: Math.min(width - 32, 420),
+        backgroundColor: COLORS.card,
+        borderRadius: 26,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: COLORS.cardBorder,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.4,
+        shadowRadius: 20,
+        elevation: 8,
+    },
+    iconWrap: {
+        marginBottom: 14,
+    },
+    iconGrad: {
+        width: 68,
+        height: 68,
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.25)',
+    },
+    iconEmoji: {
+        fontSize: 32,
+    },
+    title: {
+        fontSize: 22,
+        fontWeight: '900',
+        color: '#ffffff',
+        letterSpacing: -0.3,
+    },
+    subtitle: {
+        fontSize: 12,
+        color: COLORS.textSub,
+        textAlign: 'center',
+        marginTop: 6,
+        lineHeight: 17,
+    },
+    versionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginTop: 18,
+        marginBottom: 16,
+    },
+    versionPill: {
+        backgroundColor: 'rgba(239,68,68,0.12)',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.25)',
+    },
+    versionPillGood: {
+        backgroundColor: 'rgba(16,185,129,0.15)',
+        borderColor: 'rgba(16,185,129,0.3)',
+    },
+    versionLabel: {
+        fontSize: 9,
+        fontWeight: '800',
+        color: '#f87171',
+        letterSpacing: 0.5,
+    },
+    versionBad: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: '#f87171',
+        marginTop: 1,
+    },
+    versionGood: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: '#34d399',
+        marginTop: 1,
+    },
+    arrowText: {
+        fontSize: 18,
+        color: COLORS.textDim,
+        fontWeight: '900',
+    },
 
-    iconWrap: { marginBottom:16 },
-    iconGrad: { width:72, height:72, borderRadius:22, alignItems:'center', justifyContent:'center', elevation:8 },
-    iconEmoji: { fontSize:36 },
+    // Progress
+    progressSection: {
+        width: '100%',
+        marginTop: 8,
+    },
+    progressHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    progressTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: COLORS.text,
+    },
+    progressPercentText: {
+        fontSize: 13,
+        fontWeight: '900',
+        color: COLORS.accent,
+    },
+    progressTrack: {
+        height: 8,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 4,
+        overflow: 'hidden',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: COLORS.accent,
+        borderRadius: 4,
+    },
+    progressFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    fastTag: {
+        fontSize: 10,
+        color: COLORS.accent,
+        fontWeight: '700',
+    },
+    mbText: {
+        fontSize: 11,
+        color: COLORS.textDim,
+        fontWeight: '600',
+    },
 
-    title:    { fontSize:24, fontWeight:'900', color:'#f8fafc', marginBottom:8, textAlign:'center' },
-    subtitle: { fontSize:13, color:'#94a3b8', textAlign:'center', lineHeight:20, marginBottom:20 },
+    // Status / Done / Error
+    statusBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 14,
+    },
+    statusText: {
+        fontSize: 12,
+        color: COLORS.textSub,
+        fontWeight: '600',
+    },
+    doneBox: {
+        width: '100%',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 12,
+    },
+    doneEmoji: {
+        fontSize: 34,
+    },
+    doneTitle: {
+        fontSize: 16,
+        fontWeight: '900',
+        color: COLORS.text,
+    },
+    doneSub: {
+        fontSize: 11,
+        color: COLORS.textSub,
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    installActionBtn: {
+        width: '100%',
+        borderRadius: 14,
+        overflow: 'hidden',
+        marginTop: 4,
+    },
+    installActionGrad: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    installActionText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.3,
+    },
+    errorSection: {
+        width: '100%',
+        alignItems: 'center',
+        marginTop: 10,
+    },
+    errorText: {
+        fontSize: 12,
+        color: '#f87171',
+        fontWeight: '700',
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    retryBtn: {
+        width: '100%',
+        borderRadius: 12,
+        overflow: 'hidden',
+    },
+    btnGrad: {
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    btnText: {
+        fontSize: 13,
+        fontWeight: '900',
+        color: '#fff',
+    },
 
-    versionRow: { flexDirection:'row', alignItems:'center', gap:12, marginBottom:20 },
-    versionPill: { backgroundColor:'rgba(239,68,68,0.12)', borderRadius:12, paddingHorizontal:14, paddingVertical:8, alignItems:'center', borderWidth:1, borderColor:'rgba(239,68,68,0.3)' },
-    versionPillGood: { backgroundColor:'rgba(16,185,129,0.12)', borderColor:'rgba(16,185,129,0.3)' },
-    versionLabel: { fontSize:9, color:'#64748b', fontWeight:'700', textTransform:'uppercase', marginBottom:2 },
-    versionBad:   { fontSize:15, fontWeight:'900', color:'#ef4444' },
-    versionGood:  { fontSize:15, fontWeight:'900', color:'#10b981' },
-    arrow: { fontSize:20, color:'#475569' },
-
-    divider: { width:'100%', height:1, backgroundColor:'#334155', marginBottom:20 },
-
-    // Progress bar
-    progressWrap:  { width:'100%', marginBottom:20 },
-    progressTrack: { width:'100%', height:16, backgroundColor:'rgba(255,255,255,0.08)', borderRadius:8, overflow:'hidden', marginBottom:8 },
-    progressFill:  { height:'100%', backgroundColor:'#6366f1', borderRadius:8 },
-    progressFillGreen: { backgroundColor:'#22c55e' },
-    progressRow:   { flexDirection:'row', justifyContent:'space-between' },
-    progressPct:   { fontSize:13, fontWeight:'700', color:'#a5b4fc' },
-    progressSize:  { fontSize:11, color:'#64748b' },
-
-    // Download button
-    downloadBtn: { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:10, paddingVertical:18, borderRadius:18, width:'100%', marginBottom:12, elevation:12 },
-    downloadBtnEmoji: { fontSize:22 },
-    downloadBtnText:  { fontSize:17, fontWeight:'900', color:'#fff', letterSpacing:0.5 },
-
-    errMsg: { fontSize:12, color:'#f87171', textAlign:'center', marginBottom:8 },
-    hint:   { fontSize:11, color:'#64748b', textAlign:'center', marginBottom:16, lineHeight:16 },
-
-    steps:      { width:'100%', gap:8 },
-    step:       { flexDirection:'row', alignItems:'center', gap:10 },
-    stepNum:    { width:26, height:26, borderRadius:8, backgroundColor:'rgba(99,102,241,0.2)', borderWidth:1, borderColor:'rgba(99,102,241,0.4)', alignItems:'center', justifyContent:'center' },
-    stepNumActive: { backgroundColor:'rgba(99,102,241,0.5)', borderColor:'#6366f1' },
-    stepNumText: { fontSize:11, fontWeight:'900', color:'#a5b4fc' },
-    stepText:    { fontSize:12, color:'#cbd5e1', fontWeight:'500', flex:1 },
-
-    // Success screen
-    checkWrap:   { marginBottom:20, alignItems:'center', justifyContent:'center' },
-    checkCircle: { width:100, height:100, borderRadius:50, alignItems:'center', justifyContent:'center', elevation:12 },
-    checkMark:   { fontSize:52, color:'white', fontWeight:'900', lineHeight:60 },
-    orbitRing:   { position:'absolute', width:120, height:120, borderRadius:60, borderWidth:2, borderColor:'rgba(34,197,94,0.3)', borderStyle:'dashed' },
-
-    successTitle: { fontSize:26, fontWeight:'900', color:'#f0fdf4', textAlign:'center', marginBottom:10 },
-    successSub:   { fontSize:14, color:'#86efac', textAlign:'center', lineHeight:22, marginBottom:20 },
-
-    confettiRow: { flexDirection:'row', flexWrap:'wrap', justifyContent:'center', gap:6, marginBottom:20 },
-    confettiEmoji: { fontSize:24 },
-
-    reinstallBtn: { backgroundColor:'rgba(34,197,94,0.15)', borderWidth:1, borderColor:'rgba(34,197,94,0.4)', paddingVertical:14, paddingHorizontal:24, borderRadius:14 },
-    reinstallBtnText: { color:'#4ade80', fontWeight:'700', fontSize:14 },
+    // Features
+    featuresBox: {
+        width: '100%',
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderRadius: 14,
+        padding: 12,
+        marginTop: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    featuresTitle: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: COLORS.textSub,
+        marginBottom: 6,
+        textTransform: 'uppercase',
+    },
+    featureItem: {
+        fontSize: 11,
+        color: COLORS.textDim,
+        lineHeight: 17,
+    },
 });
